@@ -4,6 +4,10 @@
 using namespace std;
 
 int main() {
-    cout << "Hello, World!" << endl;
+    std::hash<int> h1;
+    std::hash<int> h2;
+
+    cout << h1(12) << endl;
+    cout << h2(12) << endl;
     return 0;
 }
