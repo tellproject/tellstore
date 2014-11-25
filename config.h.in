@@ -1,0 +1,18 @@
+#include <cstddef>
+
+#pragma once
+
+namespace tell {
+namespace store {
+namespace impl {
+
+enum class Implementation {
+DELTA_MAIN_REWRITE
+};
+
+constexpr Implementation usedImplementation = Implementation::@IMPLEMENTATION@;
+constexpr size_t PAGE_SIZE = @PAGE_SIZE@;
+
+}
+}
+}
