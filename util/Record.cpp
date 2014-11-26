@@ -5,6 +5,31 @@ namespace tell {
 namespace store {
 namespace impl {
 
+size_t Field::staticSize() const {
+    switch (mType) {
+        case FieldType::SMALLINT:
+            return sizeof(int16_t);
+        case FieldType::INT:
+            return sizeof(int32_t);
+        case FieldType::BIGINT:
+            return sizeof(int64_t);
+        case FieldType::FLOAT:
+            return sizeof(float);
+        case FieldType::DOUBLE:
+            return sizeof(double);
+        case FieldType::TEXT:
+            LOG_DEBUG("Tried to get static size of TEXT Field, which does not have a static size");
+            return std::numeric_limits<size_t>::max();
+        case FieldType::BLOB:
+            LOG_DEBUG("Tried to get static size of BLOB Field, which does not have a static size");
+            return std::numeric_limits<size_t>::max();
+        case FieldType::NOTYPE:
+            assert(false);
+            LOG_ERROR("One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+    }
+}
+
 bool Schema::addField(FieldType type, const crossbow::string &name, bool notNull) {
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
         LOG_DEBUG("Field name with %d bytes are not supported", name.size());
@@ -59,7 +84,7 @@ inline char* serialize_field(const Field& field, char* ptr) {
     return ptr;
 }
 
-}
+} // namespace {}
 
 char *Schema::serialize(char *ptr) const {
     uint32_t sz = uint32_t(schemaSize());
@@ -101,6 +126,74 @@ Schema::Schema(const char *ptr) {
             mVarSizeFields.emplace_back(std::move(f));
         }
     }
+}
+
+Record::Record(const Schema &schema)
+        : mSchema(schema),
+          mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size())
+{
+    off_t headOffset = 4;
+    {
+        if (schema.varSizeFields().size() > 0) {
+            headOffset += (mFieldMetaData.size() + 7)/8;
+        }
+        // Padding
+        headOffset += 8 - (headOffset % 8);
+    }
+    off_t currOffset = headOffset;
+    size_t id = 0;
+    for (const auto& field : schema.fixedSizeFields()) {
+        mIdMap.insert(std::make_pair(field.name(), id));
+        mFieldMetaData[id++] = std::make_pair(field, currOffset);
+        currOffset += field.staticSize();
+    }
+    for (const auto& field : schema.varSizeFields()) {
+        mIdMap.insert(std::make_pair(field.name(), id));
+        mFieldMetaData[id++] = std::make_pair(field, currOffset);
+        // make sure, that all others are set to max
+        currOffset = std::numeric_limits<off_t>::max();
+    }
+}
+
+const char *Record::data(const char* const ptr, Record::id_t id, bool &isNull, FieldType* type /* = nullptr*/) const {
+    if (id > mFieldMetaData.size()) {
+        LOG_ERROR("Tried to get nonexistent id");
+        assert(false);
+        return nullptr;
+    }
+    uint32_t recSize = *reinterpret_cast<const uint32_t* const>(ptr);
+    using uchar = unsigned char;
+    isNull = false;
+    if (!mSchema.allNotNull()) {
+        // TODO: Check whether the compiler optimizes this correctly - otherwise this might be inefficient (but more readable)
+        uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + 4 + id/8);
+        unsigned char pos = uchar(id % 8);
+        isNull = (uchar(0x1 << pos) & bitmap) == 0;
+    }
+    const auto& p = mFieldMetaData[id];
+    if (type != nullptr) {
+        *type = p.first.type();
+    }
+    if (p.second > recSize) {
+        // we need to calc the position
+        auto baseId = mSchema.fixedSizeFields().size();
+        off_t pos = mFieldMetaData[baseId].second;
+        for (; baseId < id; ++baseId) {
+            // we know, that now all fields are variable length - that means the first two bytes are always the
+            // field size
+            pos += *reinterpret_cast<const uint16_t* const>(ptr + pos) + sizeof(uint16_t);
+        }
+        return ptr + pos;
+    } else {
+        return ptr + p.second;
+    }
+}
+
+bool Record::idOf(const crossbow::string &name, id_t& result) const {
+    auto iter = mIdMap.find(name);
+    if (iter == mIdMap.end()) return false;
+    result = iter->second;
+    return true;
 }
 } // namespace tell
 } // namespace store

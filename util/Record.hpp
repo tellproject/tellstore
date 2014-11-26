@@ -5,12 +5,15 @@
 #include <type_traits>
 #include <crossbow/string.hpp>
 #include <vector>
+#include <unordered_map>
+#include "Logging.hpp"
 
 namespace tell {
 namespace store {
 namespace impl {
 
 enum class FieldType : uint16_t {
+    NOTYPE = 0,
     SMALLINT = 1,
     INT,
     BIGINT,
@@ -25,6 +28,7 @@ private:
     FieldType mType;
     crossbow::string mName;
 public:
+    Field() : mType(FieldType::NOTYPE) {}
     Field(FieldType type, const crossbow::string& name)
             : mType(type),
               mName(name)
@@ -40,6 +44,10 @@ public:
             case FieldType::TEXT:
             case FieldType::BLOB:
                 return false;
+            case FieldType::NOTYPE:
+                assert(false);
+                LOG_ERROR("One should never use a field of type NOTYPE");
+                return false;
         }
     }
     const crossbow::string& name() const {
@@ -48,6 +56,7 @@ public:
     FieldType type() const {
         return mType;
     }
+    size_t staticSize() const;
 };
 
 template<typename Enum>
@@ -85,6 +94,9 @@ public:
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
     char* serialize(char* ptr) const;
     size_t schemaSize() const;
+    bool allNotNull() const { return mAllNotNull; }
+    const std::vector<Field>& fixedSizeFields() const { return mFixedSizeFields; }
+    const std::vector<Field>& varSizeFields() const { return mVarSizeFields; }
 };
 
 /**
@@ -96,6 +108,7 @@ public:
 * The format look as follows (in the following order):
 *  - 4 bytes: size of the tuple (including the header, padding, etc)
 *  - NULL bitmap (size of bitmap is (|Columns|+7)/8 bytes)
+*    This is omitted, if all columns are declared as NOT NULL
 *  - A padding to the next multiple of pointer size
 *  - The row Data - it is important to understand, that one needs to
 *    know the schema in order to be able to parse the record data.
@@ -103,8 +116,16 @@ public:
 *    first page of the table).
 */
 class Record {
+public:
+    using id_t = size_t;
 private:
-    char* data;
+    const Schema& mSchema;
+    std::unordered_map<crossbow::string, id_t> mIdMap;
+    std::vector<std::pair<Field, off_t>> mFieldMetaData;
+public:
+    Record(const Schema& schema);
+    bool idOf(const crossbow::string& name, id_t& result) const;
+    const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
 };
 
 
