@@ -195,6 +195,15 @@ bool Record::idOf(const crossbow::string &name, id_t& result) const {
     result = iter->second;
     return true;
 }
+
+bool Record::setNull(Record::id_t id, bool isNull) {
+    return false;
+}
+
+char* Record::data(char *const ptr, Record::id_t id, bool &isNull, FieldType *type /* = nullptr */) {
+    auto res = const_cast<const Record*>(this)->data(ptr, id, isNull, type);
+    return const_cast<char*>(res);
+}
 } // namespace tell
 } // namespace store
 } // namespace impl

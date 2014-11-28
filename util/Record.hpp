@@ -126,6 +126,32 @@ public:
     Record(const Schema& schema);
     bool idOf(const crossbow::string& name, id_t& result) const;
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
+    /**
+    * These methods are NOT thread safe.
+    */
+    char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
+
+    /**
+    * Sets the field at id to @isNull. Returns true iff the field
+    * was NULL before.
+    */
+    bool setNull(id_t id, bool isNull);
+};
+
+/**
+* This can be used for storages, where the versions used for snapshot isolation
+* are kept together. The format of a record is like follows:
+*
+* - 4 bytes: size of the tuples (including this field, headers, all versions etc)
+* - 4 bytes: number of versions
+* - An array of 8 byte integers of all version numbers
+* - An array of 4 byte integers, where integer at offset i is the offset to
+*   record with version[i].
+* - A 4 byte padding if |version| % 8 != 0
+*
+* The versions are ordered decremental - the means the newest version comes first
+*/
+struct MultiVersionRecord {
 };
 
 

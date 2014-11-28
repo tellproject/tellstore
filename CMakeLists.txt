@@ -29,5 +29,8 @@ set(SOURCE_FILES
     util/Record.hpp
     util/Record.cpp
     util/Logging.hpp
-    util/Logging.cpp)
+    util/Logging.cpp
+    util/StorageConfig.hpp
+    util/Log.hpp
+    util/Log.cpp)
 add_executable(TellStore ${SOURCE_FILES})
