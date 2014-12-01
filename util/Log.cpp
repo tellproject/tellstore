@@ -1,4 +1,3 @@
-#include <tclDecls.h>
 #include "Log.hpp"
 #include "Epoch.hpp"
 #include "Logging.hpp"
@@ -7,71 +6,137 @@ namespace tell {
 namespace store {
 namespace impl {
 
-const LogEntry* LogEntry::next() const {
-    const LogEntry* n = reinterpret_cast<const LogEntry*>(data + size);
-    if (n->size == 0) {
-        // we reached the end of the log
-        std::atomic<const LogEntry*>& atomic = *reinterpret_cast<std::atomic<const LogEntry*>*>(data + size + 8);
-        return atomic.load();
+std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
+    auto off = offset();
+    if (size == 0 && off == 0) {
+        LOG_FATAL("Tried to iterate over last page");
+        assert(false);
+        return std::make_pair(nullptr, nullptr);
     }
-    return n;
+    char* nPtr = data() + size;
+    LogEntry* next = reinterpret_cast<LogEntry*>(nPtr);
+    if (next->size != 0u) {
+        return std::make_pair(page, next);
+    }
+    // pointer to page
+    char* p = reinterpret_cast<char*>(this) - off;
+    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>*>(p)->load();
+    if (nextPage) {
+        return std::make_pair(nextPage, reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET));
+    } else {
+        // we reached the end of the log
+        return std::make_pair(page, next);
+    }
+}
+
+LogEntry* LogEntry::next() {
+    auto off = offset();
+    if (size == 0 && off == 0) {
+        LOG_FATAL("Tried to iterate over last page");
+        assert(false);
+        return nullptr;
+    }
+    char* nPtr = data() + size;
+    LogEntry* next = reinterpret_cast<LogEntry*>(nPtr);
+    if (next->size != 0u) {
+        return next;
+    }
+    // pointer to page
+    char* p = reinterpret_cast<char*>(this) - off;
+    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>*>(p)->load();
+    if (nextPage) {
+        return reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET);
+    } else {
+        // we reached the end of the log
+        return next;
+    }
 }
 
 Log::Log(PageManager& pageManager)
         : mPageManager(pageManager),
-          mCurrent(new (allocator::malloc(sizeof(LogPage))) LogPage())
+          mHead(new (allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()))),
+          mSealHead(mHead.load()->begin()),
+          mTail(std::make_pair(mHead.load(), mHead.load()->begin()))
 {
-    mCurrent.load()->next = nullptr;
-    mCurrent.load()->offset = 0;
-    mCurrent.load()->page = reinterpret_cast<char*>(mPageManager.alloc());
+}
+
+void Log::seal(LogEntry* entry) {
+    entry->seal();
+    auto head = mSealHead.load();
+    while (head->sealed()) {
+        auto next = head->next();
+        mSealHead.compare_exchange_strong(head, next);
+        head = mSealHead.load();
+    }
 }
 
 LogEntry* Log::append(uint32_t size) {
-    // align to 8 bytes
-    uint32_t fullSize = uint32_t(size + sizeof(LogEntry));
-    uint32_t padding = 8 - (fullSize % 8);
-    fullSize += padding;
-    size += padding;
-    if (fullSize > PAGE_SIZE) {
+    size += sizeof(LogEntry);
+    size += 8 - (size % 8);
+    assert(size % 8 == 0);
+    if (size > MAX_SIZE) {
+        LOG_FATAL("Tried to append %d bytes but %d bytes is max", size, MAX_SIZE);
         assert(false);
-        LOG_FATAL("Could not append %d bytes to the log - max size is %d", size - padding, PAGE_SIZE - sizeof(LogEntry));
         return nullptr;
     }
     while (true) {
-        LogPage* page = mCurrent.load();
-        if (page->next != nullptr) {
-            auto next = page->next;
-            mCurrent.compare_exchange_strong(page, next);
-            continue;
-        }
-        auto offset = page->offset.load();
-        if (offset + size > PAGE_SIZE) {
-            // TODO: Append new page here
-            // We first try to set the offset to infinite, to make
-            // sure that no one else will write into the page anymore
-            if (!page->offset.compare_exchange_strong(offset, std::numeric_limits<uint32_t>::max()))
+        auto head = mHead.load();
+        auto offset = head->offset().load();
+        if (offset + size > MAX_SIZE) {
+            // if the head already has a next pointer, we try to update the head
+            auto nextPtr = head->next().load();
+            if (nextPtr) {
+                mHead.compare_exchange_strong(head, nextPtr);
                 continue;
-            auto nPage = new (allocator::malloc(sizeof(LogPage))) LogPage();
-            nPage->offset =
+            }
+            // we first need to make sure, that no one else will still append to this
+            // page.
+            if (head->offset().compare_exchange_strong(offset, std::numeric_limits<uint32_t>::max()))
+                continue;
+            // Create a new page
+            auto nPage = new (allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
+            nPage->offset().store(size);
+            // now we try to install the new page
+            if (head->next().compare_exchange_strong(nextPtr, nPage)) {
+                // We don't check whether this succeeds - if it does not, it means another thread updated the head
+                mHead.compare_exchange_strong(head, nPage);
+                return new LogEntry(size, uint32_t(size - sizeof(LogEntry)));
+            } else {
+                // someone else already appended a new page - retry
+                mPageManager.free(nPage->page);
+                allocator::free_now(nPage);
+                continue;
+            }
         }
-        if (page->offset.compare_exchange_strong(offset, offset + fullSize)) {
-            // CAS succeeded
-            auto res = new (page->page + offset) LogEntry(size);
-            return res;
+        if (head->offset().compare_exchange_strong(offset, offset)) {
+            // append succeeded
+            return new (head->page + offset) LogEntry(offset, uint32_t(size - sizeof(LogEntry)));
         }
     }
 }
 
-void Log::seal(LogEntry& entry) {
+LogEntry* Log::tail() {
+    return mTail.second;
 }
 
-const LogEntry* Log::tail() const {
-    return nullptr;
+void Log::setTail(LogEntry* nTail) {
+    // the algorithm for setting the new tail works like this:
+    // 1. start at the current tail
+    // 2. iterate through the entries
+    // 3. whenever we change the page, free the old page
+    while (mTail.second != nTail) {
+        auto n = mTail.second->nextP(mTail.first);
+        if (n.first != mTail.first) {
+            auto pageToFree = mTail.first;
+            auto& pageManager = mPageManager;
+            allocator::free(mTail.first, [pageToFree, &pageManager](){
+                pageManager.free(pageToFree->page);
+            });
+        }
+        mTail = n;
+    }
 }
 
-const LogEntry* Log::head() const {
-    return nullptr;
-}
 } // namespace tell
 } // namespace store
 } // namespace impl

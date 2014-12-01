@@ -3,45 +3,86 @@
 #include "PageManager.hpp"
 #include <cstddef>
 #include <atomic>
+#include <assert.h>
 
 namespace tell {
 namespace store {
 namespace impl {
 
+struct LogPage;
+
 struct LogEntry {
+private:
+    std::atomic<uint32_t> mOffset;
+public:
     uint32_t size;
-    bool sealed = false;
-    char* data;
-    const LogEntry* next() const;
-    LogEntry(uint32_t sz) : size(sz) {
-        data = reinterpret_cast<char*>(this) + sizeof(LogEntry);
+    LogEntry(uint32_t offset, uint32_t size) : mOffset(offset + 1), size(size) {}
+    char* data() {
+        return reinterpret_cast<char*>(this) + sizeof(LogEntry);
     }
-    LogEntry(const LogEntry&) = delete;
-    LogEntry(LogEntry&&) = delete;
-    LogEntry& operator= (const LogEntry&) = delete;
-    LogEntry& operator= (LogEntry&&) = delete;
-};
-
-
-struct LogPage {
-    std::atomic<size_t> offset;
-    std::atomic<LogPage*> next;
-    char* page;
+    bool sealed() const {
+        return mOffset.load() % 2 == 0;
+    }
+    uint32_t offset() const {
+        auto offset = mOffset.load();
+        return offset - (offset % 2);
+    }
+    void seal() {
+        auto offset = mOffset.load();
+        while (offset % 2 != 0) {
+            mOffset.compare_exchange_strong(offset, offset - 1);
+            offset = mOffset.load();
+        }
+    }
+    std::pair<LogPage*, LogEntry*> nextP(LogPage* page);
+    LogEntry* next();
+    char* page() {
+        return reinterpret_cast<char*>(this) - offset();
+    }
 };
 
 /**
-* A generic log implementation which can be used
-* by other components of the system.
+* A Log-Page has the following form:
+*
+* -------------------------------------------------------------------------------
+* | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... |
+* -------------------------------------------------------------------------------
+*
+* This class, which only holds a pointer to the page, is mainly used
+* for memory management.
+*
+* The last entry in the log is set to 0 (size and offset). We make
+* use of the fact, that the PageManager only returns nulled pages.
 */
+struct LogPage {
+    char* page;
+    LogPage(char* page) : page(page) {
+    }
+    LogPage(const LogPage&) = delete;
+    std::atomic<LogPage*>& next() {
+        return *reinterpret_cast<std::atomic<LogPage*>*>(page);
+    }
+    std::atomic<uint32_t>& offset() {
+        return *reinterpret_cast<std::atomic<uint32_t>*>(page + sizeof(LogPage*));
+    }
+    LogEntry* begin() {
+        return reinterpret_cast<LogEntry*>(page + DATA_OFFSET);
+    }
+    constexpr static size_t DATA_OFFSET = 24;
+};
+
 class Log {
+    constexpr static uint32_t MAX_SIZE = PAGE_SIZE - LogPage::DATA_OFFSET - sizeof(LogPage);
     PageManager& mPageManager;
-    std::atomic<LogPage*> mCurrent;
+    std::atomic<LogPage*> mHead;
+    std::atomic<LogEntry*> mSealHead;
+    std::pair<LogPage*, LogEntry*> mTail;
 public:
     Log(PageManager& pageManager);
     LogEntry* append(uint32_t size);
-    void seal(LogEntry& entry);
-    const LogEntry* tail() const ;
-    const LogEntry* head() const;
+    void seal(LogEntry* entry);
+    LogEntry* tail();
+    void setTail(LogEntry* nTail);
 };
 
 } // namespace tell
