@@ -4,7 +4,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
     auto off = offset();
@@ -137,6 +136,5 @@ void Log::setTail(LogEntry* nTail) {
     }
 }
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

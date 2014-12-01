@@ -6,7 +6,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 /**
 * This class purpose is to store all pages
@@ -45,6 +44,5 @@ public:
     void free(void* page);
 };
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

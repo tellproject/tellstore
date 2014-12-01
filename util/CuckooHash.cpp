@@ -2,11 +2,10 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
-CuckooTable::CuckooTable(PageManager &pageManager, allocator& alloc)
+CuckooTable::CuckooTable(PageManager &pageManager)
     : mPageManager(pageManager),
-      mPages(1, new (alloc.malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc())),
+      mPages(1, new (allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc())),
       hash1(ENTRIES_PER_PAGE),
       hash2(ENTRIES_PER_PAGE),
       hash3(ENTRIES_PER_PAGE),
@@ -49,7 +48,7 @@ CuckooTable::CuckooTable(PageManager &pageManager,
 }
 
 CuckooTable Modifier::done() const {
-    return impl::CuckooTable(mTable.mPageManager, std::move(mPages), hash1, hash2, hash3, mSize);
+    return CuckooTable(mTable.mPageManager, std::move(mPages), hash1, hash2, hash3, mSize);
 }
 
 bool Modifier::insert(uint64_t key, void *value, bool replace /*= false*/) {
@@ -182,6 +181,6 @@ void Modifier::resize() {
         }
     }
 }
-} // namespace tell
+
 } // namespace store
-} // namespace impl
+} // namespace tell

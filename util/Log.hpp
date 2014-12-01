@@ -7,7 +7,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 struct LogPage;
 
@@ -72,7 +71,7 @@ struct LogPage {
 };
 
 class Log {
-    constexpr static uint32_t MAX_SIZE = PAGE_SIZE - LogPage::DATA_OFFSET - sizeof(LogPage);
+    constexpr static uint32_t MAX_SIZE = TELL_PAGE_SIZE - LogPage::DATA_OFFSET - sizeof(LogPage);
     PageManager& mPageManager;
     std::atomic<LogPage*> mHead;
     std::atomic<LogEntry*> mSealHead;
@@ -85,6 +84,5 @@ public:
     void setTail(LogEntry* nTail);
 };
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

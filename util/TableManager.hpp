@@ -13,7 +13,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 class NoGC {
 public:
@@ -47,14 +46,14 @@ private:
                 std::this_thread::sleep_for(begin + duration - now);
             }
             begin = Clock::now();
-            mGC.run();
+            mGC.run(mTables);
         }
     }
 public:
     TableManager(const StorageConfig& config, GC& gc)
             : mConfig(config),
               mGC(gc),
-              mGCThread(std::bind(TableManager::mGCThread, this)),
+              mGCThread(std::bind(&TableManager::gcThread, this)),
               // TODO: This is a hack, we need to think about a better wat to handle tables (this will evantually crash!!)
               mTables(1024, nullptr),
               mLastTableIdx(0)
@@ -70,7 +69,7 @@ public:
                      const Schema& schema, uint64_t& idx)
     {
         bool success = false;
-        mNames.exec_on(name, [this, &idx](size_t& val){
+        mNames.exec_on(name, [this, &idx, &success](size_t& val){
             if (val != 0) {
                 return true;
             }
@@ -92,6 +91,5 @@ public:
     }
 };
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

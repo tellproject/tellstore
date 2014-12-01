@@ -5,7 +5,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 template<class T>
 class FixedSizeStack {
@@ -61,7 +60,6 @@ public:
     }
 };
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell
 

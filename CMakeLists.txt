@@ -6,6 +6,7 @@ include_directories(${CMAKE_SOURCE_DIR})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
+set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 
 find_package(Crossbow REQUIRED)
 include_directories(${Crossbow_INCLUDE_DIRS})
@@ -18,6 +19,7 @@ set(SOURCE_FILES
     implementation.hpp
     tellstore.hpp
     deltamainrewrite/dmrewrite.hpp
+    deltamainrewrite/dmrewrite.cpp
     util/PageManager.cpp
     util/PageManager.hpp
     util/CuckooHash.cpp

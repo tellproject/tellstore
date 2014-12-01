@@ -9,7 +9,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 /**
 * TODO: investigate into hash functions (this here is probably not optimal)
@@ -39,7 +38,7 @@ class Modifier;
 
 class PageWrapper {
 public:
-    static constexpr size_t ENTRIES_PER_PAGE = PAGE_SIZE/(sizeof(uint64_t) + sizeof(void*));
+    static constexpr size_t ENTRIES_PER_PAGE = TELL_PAGE_SIZE/(sizeof(uint64_t) + sizeof(void*));
     using EntryT = std::pair<uint64_t, void*>;
 private:
     PageManager& mPageManager;
@@ -53,7 +52,7 @@ public:
             : mPageManager(other.mPageManager),
               mPage(reinterpret_cast<EntryT*>(mPageManager.alloc()))
     {
-        memcpy(mPage, other.mPage, PAGE_SIZE);
+        memcpy(mPage, other.mPage, TELL_PAGE_SIZE);
     }
     ~PageWrapper() {
         mPageManager.free(mPage);
@@ -89,7 +88,7 @@ private:
     cuckoo_hash_function hash3;
     size_t mSize;
 public:
-    CuckooTable(PageManager& pageManager, allocator& alloc);
+    CuckooTable(PageManager& pageManager);
     friend class Modifier;
 private:
     CuckooTable(PageManager& pageManager,
@@ -142,6 +141,5 @@ private:
     void resize();
 };
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

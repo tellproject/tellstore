@@ -6,11 +6,7 @@
 namespace tell {
 namespace store {
 
-class Store {
-private:
-    impl::StoreImpl<impl::usedImplementation> impl;
-
-};
+using Storage = StoreImpl<usedImplementation>;
 
 
 } // namespace store

@@ -3,7 +3,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 size_t Field::staticSize() const {
     switch (mType) {
@@ -204,6 +203,5 @@ char* Record::data(char *const ptr, Record::id_t id, bool &isNull, FieldType *ty
     auto res = const_cast<const Record*>(this)->data(ptr, id, isNull, type);
     return const_cast<char*>(res);
 }
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

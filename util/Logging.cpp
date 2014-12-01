@@ -2,7 +2,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 Logger logger;
 
@@ -12,6 +11,5 @@ LoggerT::~LoggerT() {
     }
 }
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

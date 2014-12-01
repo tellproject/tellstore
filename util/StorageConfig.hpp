@@ -4,12 +4,8 @@
 
 namespace tell {
 namespace store {
-namespace impl {
-
 struct StorageConfig {
-    uint16_t gcIntervall;
+    uint16_t gcIntervall = 60;
 };
-
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

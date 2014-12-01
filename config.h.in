@@ -4,15 +4,14 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 enum class Implementation {
 DELTA_MAIN_REWRITE
 };
 
 constexpr Implementation usedImplementation = Implementation::@IMPLEMENTATION@;
-constexpr size_t PAGE_SIZE = @PAGE_SIZE@;
+constexpr size_t TELL_PAGE_SIZE = @PAGE_SIZE@;
+constexpr size_t TOTAL_MEMORY = @TOTAL_MEMORY@;
 
-}
-}
-}
+} // namespace store
+} // namespace tell

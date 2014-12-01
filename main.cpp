@@ -1,13 +1,12 @@
 #include <iostream>
+#include <util/TableManager.hpp>
 #include "tellstore.hpp"
 
 using namespace std;
 
 int main() {
-    std::hash<int> h1;
-    std::hash<int> h2;
-
-    cout << h1(12) << endl;
-    cout << h2(12) << endl;
+    tell::store::StorageConfig config;
+    config.gcIntervall = 60;
+    tell::store::Storage storage(config);
     return 0;
 }

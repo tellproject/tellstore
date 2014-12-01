@@ -5,22 +5,21 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 PageManager::PageManager(size_t size)
     : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)),
       mSize(size),
-      mPages(size/PAGE_SIZE)
+      mPages(size/TELL_PAGE_SIZE)
 {
-    assert(size % PAGE_SIZE == 0);
-    auto numPages = size/PAGE_SIZE;
+    assert(size % TELL_PAGE_SIZE == 0);
+    auto numPages = size/TELL_PAGE_SIZE;
     memset(mData, 0, mSize);
     char* data = reinterpret_cast<char*>(mData);
-    data += size - PAGE_SIZE; // data does now point to the last page
+    data += size - TELL_PAGE_SIZE; // data does now point to the last page
     for (size_t i = 0ul; i < numPages; ++i) {
         bool res = mPages.push(data);
         assert(res);
-        data -= PAGE_SIZE;
+        data -= TELL_PAGE_SIZE;
     }
 }
 
@@ -36,9 +35,9 @@ void *PageManager::alloc() {
 }
 
 void PageManager::free(void *page) {
-    memset(page, 0, PAGE_SIZE);
+    memset(page, 0, TELL_PAGE_SIZE);
     while (!mPages.push(page));
 }
-} // namespace tell
+
 } // namespace store
-} // namespace impl
+} // namespace tell

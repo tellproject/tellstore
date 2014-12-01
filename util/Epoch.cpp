@@ -47,9 +47,9 @@ struct lists {
             } while (true);
         }
     };
-    std::array<list, tell::store::impl::NUM_LISTS> lists_;
+    std::array<list, tell::store::NUM_LISTS> lists_;
     void append(uint8_t* ptr, uint64_t mycnt, decltype(node::destruct) destruct) {
-        lists_[mycnt % tell::store::impl::NUM_LISTS].append(ptr, destruct);
+        lists_[mycnt % tell::store::NUM_LISTS].append(ptr, destruct);
     }
 };
 
@@ -63,7 +63,7 @@ std::atomic<lists*> oldest_list;
 
 namespace tell {
 namespace store {
-namespace impl {
+
 void* malloc(std::size_t size) {
     return allocator::malloc(size);
 }
@@ -151,6 +151,6 @@ void allocator::free_now(void *ptr)
     res -= sizeof(lists::node);
     ::free(res);
 }
-} // namespace tell
+
 } // namespace store
-} // namespace impl
+} // namespace tell

@@ -8,7 +8,6 @@
 
 namespace tell{
 namespace store {
-namespace impl {
 
 constexpr const unsigned NUM_LISTS = 64;
 
@@ -115,6 +114,5 @@ class object {
     }
 };
 
-} // namespace tel
 } // namespace store
-} // namespace impl
+} // namespace tell

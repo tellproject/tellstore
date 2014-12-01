@@ -10,7 +10,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 enum class LogLevel : unsigned char {
     TRACE = 0,
@@ -118,6 +117,5 @@ extern Logger logger;
 #define LOG_ERROR(...) logger->error(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 #define LOG_FATAL(...) logger->fatal(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell

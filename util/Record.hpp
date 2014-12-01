@@ -10,7 +10,6 @@
 
 namespace tell {
 namespace store {
-namespace impl {
 
 enum class FieldType : uint16_t {
     NOTYPE = 0,
@@ -155,6 +154,5 @@ struct MultiVersionRecord {
 };
 
 
-} // namespace tell
 } // namespace store
-} // namespace impl
+} // namespace tell
