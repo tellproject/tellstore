@@ -18,7 +18,7 @@ void GarbageCollector::run(const std::vector<Table*>& tables) {
 
 } // namespace tell
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-        : pageManager(TOTAL_MEMORY)
+        : pageManager(config.totalMemory)
         , tableManager(config, gc)
 {
 }
@@ -28,5 +28,6 @@ StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& co
         , tableManager(config, gc)
 {
 }
+
 } // namespace store
 } // namespace dmrewrite

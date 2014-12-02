@@ -81,6 +81,10 @@ public:
     LogEntry* append(uint32_t size);
     void seal(LogEntry* entry);
     LogEntry* tail();
+
+    /**
+    * Not thread safe
+    */
     void setTail(LogEntry* nTail);
 };
 

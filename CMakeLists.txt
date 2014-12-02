@@ -4,6 +4,7 @@ project(TellStore)
 include_directories(${CMAKE_SOURCE_DIR})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
@@ -34,5 +35,6 @@ set(SOURCE_FILES
     util/Logging.cpp
     util/StorageConfig.hpp
     util/Log.hpp
-    util/Log.cpp)
+    util/Log.cpp
+    util/SnapshotDescriptor.hpp)
 add_executable(TellStore ${SOURCE_FILES})

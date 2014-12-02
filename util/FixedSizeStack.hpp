@@ -16,7 +16,7 @@ private:
 public:
     FixedSizeStack(size_t size)
             : mVec(size, nullptr),
-              mHead(mVec.size()),
+              mHead(0),
               mWriteHead(0)
     {}
 
@@ -27,12 +27,12 @@ public:
     bool pop(T& result) {
         while (true) {
             auto head = mHead.load();
-            if (head == mVec.size()) {
+            if (head == 0) {
                 result = nullptr;
                 return false;
             }
-            result = mVec[head];
-            if (mHead.compare_exchange_strong(head, head + 1))
+            result = mVec[head - 1];
+            if (mHead.compare_exchange_strong(head, head - 1))
                 return true;
         }
     }
@@ -40,18 +40,19 @@ public:
     bool push(T element) {
         while (true) {
             auto wHead = mWriteHead.load();
-            if (wHead == 0) return false;
-            if (!mWriteHead.compare_exchange_strong(wHead, wHead - 1))
+            if (wHead == mVec.size()) return false;
+            if (!mWriteHead.compare_exchange_strong(wHead, wHead + 1))
                 continue;
-            mVec[--mWriteHead] = element;
+            mVec[wHead] = element;
             // element has been inserted, now we need to make sure,
             // the head gets forwarded to mWriteHead
             auto head = mHead.load();
-            while (head < wHead) {
-                if (head + 1 == wHead)
+            while (head <= wHead) {
+                if (head == wHead)
                     ++mHead;
                 head = mHead.load();
             }
+            return true;
         }
     }
 
