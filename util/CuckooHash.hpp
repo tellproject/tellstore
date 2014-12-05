@@ -4,6 +4,7 @@
 #include <config.h>
 #include <functional>
 #include <random>
+#include <memory.h>
 #include "PageManager.hpp"
 #include "Epoch.hpp"
 
