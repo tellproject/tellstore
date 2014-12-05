@@ -1,6 +1,5 @@
 #include <util/Record.hpp>
 #include <util/LogOperations.hpp>
-#include <ForceFeedback/ForceFeedback.h>
 #include "dmrewrite.hpp"
 
 namespace tell {
@@ -45,7 +44,9 @@ Table::Table(PageManager& pageManager, Schema const& schema)
       mRecord(schema),
       mLog(mPageManager),
       mInsertLog(mPageManager),
-      mHashMap(new(allocator::malloc(sizeof(CuckooTable))) CuckooTable(mPageManager)) {
+      mHashMap(new(allocator::malloc(sizeof(CuckooTable))) CuckooTable(mPageManager)),
+      mRootPage(nullptr)
+{
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables) {
@@ -124,12 +125,25 @@ bool Table::get(uint64_t key, const char*& data, const SnapshotDescriptor& desc,
 }
 
 bool Table::update(uint64_t key, const char* data, const SnapshotDescriptor& snapshot) {
-    auto& hMap = *mHashMap.load();
-    auto addr = reinterpret_cast<char*>(hMap.get(key));
     LoggedOperation loggedOperation;
     loggedOperation.operation = LogOperation::UPDATE;
     loggedOperation.key = key;
     loggedOperation.version = snapshot.version;
+    loggedOperation.tuple = data;
+    return generalUpdate(key, loggedOperation, snapshot);
+}
+
+bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
+    LoggedOperation loggedOperation;
+    loggedOperation.operation = LogOperation::DELETE;
+    loggedOperation.key = key;
+    loggedOperation.version = snapshot.version;
+    return generalUpdate(key, loggedOperation, snapshot);
+}
+
+bool Table::generalUpdate(uint64_t key, LoggedOperation& loggedOperation, SnapshotDescriptor const& snapshot) {
+    auto& hMap = *mHashMap.load();
+    auto addr = reinterpret_cast<char*>(hMap.get(key));
     if (addr) {
         // found it in the hash table
         std::atomic<LogEntry*>* newestPtr;
@@ -178,10 +192,10 @@ bool Table::update(uint64_t key, const char* data, const SnapshotDescriptor& sna
     return false;
 }
 
-bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
+void Table::runGC() {
 
-    return false;
 }
+
 } // namespace tell
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
     : pageManager(config.totalMemory), tableManager(config, gc) {

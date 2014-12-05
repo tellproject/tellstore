@@ -21,6 +21,8 @@ set(SOURCE_FILES
     tellstore.hpp
     deltamainrewrite/dmrewrite.hpp
     deltamainrewrite/dmrewrite.cpp
+    deltamainrewrite/Page.hpp
+    deltamainrewrite/Page.cpp
     util/PageManager.cpp
     util/PageManager.hpp
     util/CuckooHash.cpp

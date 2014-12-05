@@ -38,6 +38,7 @@ class Table {
     Log mLog;
     Log mInsertLog;
     std::atomic<CuckooTable*> mHashMap;
+    std::atomic<char*> mRootPage;
 public:
     Table(PageManager& pageManager, const Schema& schema);
 
@@ -51,6 +52,9 @@ public:
     bool update(uint64_t key, const char* data, const SnapshotDescriptor& snapshot);
 
     bool remove(uint64_t key, const SnapshotDescriptor& snapshot);
+    void runGC();
+private:
+    bool generalUpdate(uint64_t key, LoggedOperation& loggedOperation, const SnapshotDescriptor& snapshot);
 };
 
 class GarbageCollector {
