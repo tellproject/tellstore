@@ -29,6 +29,7 @@ public:
     * \pre {#size has to be a multiplication of #PAGE_SIZE}
     */
     PageManager(size_t size);
+
     ~PageManager();
 
     /**

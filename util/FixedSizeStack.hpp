@@ -15,10 +15,8 @@ private:
     std::atomic<size_t> mWriteHead;
 public:
     FixedSizeStack(size_t size)
-            : mVec(size, nullptr),
-              mHead(0),
-              mWriteHead(0)
-    {}
+        : mVec(size, nullptr), mHead(0), mWriteHead(0) {
+    }
 
     /**
     * \returns true if pop succeeded - result will be set

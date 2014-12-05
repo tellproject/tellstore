@@ -7,12 +7,10 @@ namespace tell {
 namespace store {
 
 PageManager::PageManager(size_t size)
-    : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)),
-      mSize(size),
-      mPages(size/TELL_PAGE_SIZE)
-{
+    : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)), mSize(size), mPages(
+    size / TELL_PAGE_SIZE) {
     assert(size % TELL_PAGE_SIZE == 0);
-    auto numPages = size/TELL_PAGE_SIZE;
+    auto numPages = size / TELL_PAGE_SIZE;
     memset(mData, 0, mSize);
     char* data = reinterpret_cast<char*>(mData);
     data += size - TELL_PAGE_SIZE; // data does now point to the last page
@@ -27,14 +25,14 @@ PageManager::~PageManager() {
     munmap(mData, mSize);
 }
 
-void *PageManager::alloc() {
+void* PageManager::alloc() {
     void* res = nullptr;
     bool success = mPages.pop(res);
     assert(success == (res != nullptr));
     return res;
 }
 
-void PageManager::free(void *page) {
+void PageManager::free(void* page) {
     memset(page, 0, TELL_PAGE_SIZE);
     while (!mPages.push(page));
 }

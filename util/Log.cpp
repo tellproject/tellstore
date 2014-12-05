@@ -52,11 +52,9 @@ LogEntry* LogEntry::next() {
 }
 
 Log::Log(PageManager& pageManager)
-        : mPageManager(pageManager),
-          mHead(new (allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()))),
-          mSealHead(mHead.load()->begin()),
-          mTail(std::make_pair(mHead.load(), mHead.load()->begin()))
-{
+    : mPageManager(pageManager), mHead(
+    new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()))), mSealHead(
+    mHead.load()->begin()), mTail(std::make_pair(mHead.load(), mHead.load()->begin())) {
 }
 
 void Log::seal(LogEntry* entry) {
@@ -93,7 +91,7 @@ LogEntry* Log::append(uint32_t size) {
             if (head->offset().compare_exchange_strong(offset, std::numeric_limits<uint32_t>::max()))
                 continue;
             // Create a new page
-            auto nPage = new (allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
+            auto nPage = new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
             nPage->offset().store(size);
             // now we try to install the new page
             if (head->next().compare_exchange_strong(nextPtr, nPage)) {
@@ -109,7 +107,7 @@ LogEntry* Log::append(uint32_t size) {
         }
         if (head->offset().compare_exchange_strong(offset, offset)) {
             // append succeeded
-            return new (head->page + offset) LogEntry(offset, uint32_t(size - sizeof(LogEntry)));
+            return new(head->page + offset) LogEntry(offset, uint32_t(size - sizeof(LogEntry)));
         }
     }
 }
@@ -128,7 +126,7 @@ void Log::setTail(LogEntry* nTail) {
         if (n.first != mTail.first) {
             auto pageToFree = mTail.first;
             auto& pageManager = mPageManager;
-            allocator::free(mTail.first, [pageToFree, &pageManager](){
+            allocator::free(mTail.first, [pageToFree, &pageManager]() {
                 pageManager.free(pageToFree->page);
             });
         }

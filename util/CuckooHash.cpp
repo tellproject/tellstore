@@ -3,17 +3,16 @@
 namespace tell {
 namespace store {
 
-CuckooTable::CuckooTable(PageManager &pageManager)
-    : mPageManager(pageManager),
-      mPages(1, new (allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc())),
-      hash1(ENTRIES_PER_PAGE),
-      hash2(ENTRIES_PER_PAGE),
-      hash3(ENTRIES_PER_PAGE),
-      mSize(0)
-{
+CuckooTable::CuckooTable(PageManager& pageManager)
+    : mPageManager(pageManager)
+      , mPages(1, new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc()))
+      , hash1(ENTRIES_PER_PAGE)
+      , hash2(ENTRIES_PER_PAGE)
+      , hash3(ENTRIES_PER_PAGE)
+      , mSize(0) {
 }
 
-void *CuckooTable::get(uint64_t key) const {
+void* CuckooTable::get(uint64_t key) const {
     for (auto& hasher : {hash1, hash2, hash3}) {
         auto idx = hasher(key);
         const EntryT& entry = at(idx);
@@ -24,34 +23,37 @@ void *CuckooTable::get(uint64_t key) const {
 
 auto CuckooTable::at(size_t idx) const -> const EntryT& {
     auto tIdx = idx / ENTRIES_PER_PAGE;
-    auto pIdx = idx - tIdx*ENTRIES_PER_PAGE;
+    auto pIdx = idx - tIdx * ENTRIES_PER_PAGE;
     return (*mPages[tIdx])[pIdx];
 }
 
-Modifier CuckooTable::modifier(allocator &alloc) {
+Modifier CuckooTable::modifier(allocator& alloc) {
     return Modifier(*this, alloc);
 }
 
-CuckooTable::CuckooTable(PageManager &pageManager,
+CuckooTable::CuckooTable(PageManager& pageManager,
                          std::vector<CuckooTable::PageT>&& pages,
                          cuckoo_hash_function hash1,
                          cuckoo_hash_function hash2,
                          cuckoo_hash_function hash3,
                          size_t size)
-    : mPageManager(pageManager),
-      mPages(std::move(pages)),
-      hash1(hash1),
-      hash2(hash2),
-      hash3(hash3),
-      mSize(size)
-{
+    : mPageManager(pageManager), mPages(std::move(pages)), hash1(hash1), hash2(hash2), hash3(hash3), mSize(size) {
 }
 
-CuckooTable Modifier::done() const {
-    return CuckooTable(mTable.mPageManager, std::move(mPages), hash1, hash2, hash3, mSize);
+Modifier::~Modifier() {
+    for (auto p : mToDelete) {
+        alloc.free(p, [p]() {
+            p->~PageWrapper();
+        });
+    }
 }
 
-bool Modifier::insert(uint64_t key, void *value, bool replace /*= false*/) {
+CuckooTable* Modifier::done() const {
+    return new(alloc.malloc(sizeof(CuckooTable))) CuckooTable(mTable.mPageManager, std::move(mPages), hash1, hash2,
+                                                              hash3, mSize);
+}
+
+bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
     while (true) {
         // we retry 20 times at the moment
         for (int i = 0; i < 20; ++i) {
@@ -105,9 +107,9 @@ bool Modifier::remove(uint64_t key) {
     return res;
 }
 
-Modifier::EntryT &Modifier::at(size_t idx, size_t& pageIdx) {
+Modifier::EntryT& Modifier::at(size_t idx, size_t& pageIdx) {
     pageIdx = idx / ENTRIES_PER_PAGE;
-    auto pIdx = idx - pageIdx*ENTRIES_PER_PAGE;
+    auto pIdx = idx - pageIdx * ENTRIES_PER_PAGE;
     return (*mPages[pageIdx])[pIdx];
 }
 
@@ -115,15 +117,15 @@ bool Modifier::cow(size_t idx) {
     if (pageWasModified[idx]) return false;
     pageWasModified[idx] = true;
     auto oldPage = mPages[idx];
-    auto newPage = new (alloc.malloc(sizeof(PageWrapper))) PageWrapper(*oldPage);
+    auto newPage = new(alloc.malloc(sizeof(PageWrapper))) PageWrapper(*oldPage);
     mPages[idx] = newPage;
-    alloc.free(mPages[idx], [oldPage](){oldPage->~PageWrapper();});
+    mToDelete.push_back(mPages[idx]);
     return true;
 }
 
 void Modifier::rehash() {
-    auto capacity = mPages.size()*ENTRIES_PER_PAGE;
-    if (5*mSize/4 > capacity || (mPages.size() > 1 && mSize/5 > capacity)) {
+    auto capacity = mPages.size() * ENTRIES_PER_PAGE;
+    if (5 * mSize / 4 > capacity || (mPages.size() > 1 && mSize / 5 > capacity)) {
         resize();
         return;
     }
@@ -143,7 +145,7 @@ void Modifier::rehash() {
                 insert(page[i].first, page[i].second);
         }
         if (pageWasModified[i])
-            alloc.free(p, [p](){p->~PageWrapper();});
+            mToDelete.push_back(p);
         else {
             alloc.free_now(p);
             pageWasModified[i];
@@ -152,9 +154,9 @@ void Modifier::rehash() {
 }
 
 void Modifier::resize() {
-    auto capacity = mPages.size()*ENTRIES_PER_PAGE;
+    auto capacity = mPages.size() * ENTRIES_PER_PAGE;
     auto numPages = mPages.size() * 2;
-    if (mSize/5 > capacity) {
+    if (mSize / 5 > capacity) {
         numPages /= 4;
     }
     if (numPages == 0) numPages = 1;
@@ -174,7 +176,7 @@ void Modifier::resize() {
                 insert(page[i].first, page[i].second);
         }
         if (pageWasModified[i])
-            alloc.free(p, [p](){p->~PageWrapper();});
+            mToDelete.push_back(p);
         else {
             alloc.free_now(p);
             pageWasModified[i];

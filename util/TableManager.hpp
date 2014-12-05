@@ -19,6 +19,7 @@ public:
     bool doRun() const {
         return false;
     }
+
     void run() {
         return;
     }
@@ -49,27 +50,25 @@ private:
             mGC.run(mTables);
         }
     }
+
 public:
     TableManager(const StorageConfig& config, GC& gc)
-            : mConfig(config),
-              mGC(gc),
-              mGCThread(std::bind(&TableManager::gcThread, this)),
-              // TODO: This is a hack, we need to think about a better wat to handle tables (this will evantually crash!!)
-              mTables(1024, nullptr),
-              mLastTableIdx(0)
-    {
+        : mConfig(config), mGC(gc), mGCThread(std::bind(&TableManager::gcThread, this)),
+        // TODO: This is a hack, we need to think about a better wat to handle tables (this will evantually crash!!)
+        mTables(1024, nullptr), mLastTableIdx(0) {
     }
+
     ~TableManager() {
         mShutDown = true;
         mGCThread.join();
     }
+
 public:
     bool createTable(allocator& alloc,
                      const crossbow::string& name,
-                     const Schema& schema, uint64_t& idx)
-    {
+                     const Schema& schema, uint64_t& idx) {
         bool success = false;
-        mNames.exec_on(name, [this, &idx, &success](size_t& val){
+        mNames.exec_on(name, [this, &idx, &success](size_t& val) {
             if (val != 0) {
                 return true;
             }
@@ -79,7 +78,7 @@ public:
             return false;
         });
         if (success) {
-            mTables[idx] = new (alloc.malloc(sizeof(Table))) Table(schema);
+            mTables[idx] = new(alloc.malloc(sizeof(Table))) Table(schema);
         }
         return success;
     }

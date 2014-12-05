@@ -15,17 +15,28 @@ private:
     std::atomic<uint32_t> mOffset;
 public:
     uint32_t size;
-    LogEntry(uint32_t offset, uint32_t size) : mOffset(offset + 1), size(size) {}
+
+    LogEntry(uint32_t offset, uint32_t size)
+        : mOffset(offset + 1), size(size) {
+    }
+
     char* data() {
         return reinterpret_cast<char*>(this) + sizeof(LogEntry);
     }
+
+    const char* data() const {
+        return reinterpret_cast<const char*>(this) + sizeof(LogEntry);
+    }
+
     bool sealed() const {
         return mOffset.load() % 2 == 0;
     }
+
     uint32_t offset() const {
         auto offset = mOffset.load();
         return offset - (offset % 2);
     }
+
     void seal() {
         auto offset = mOffset.load();
         while (offset % 2 != 0) {
@@ -33,8 +44,11 @@ public:
             offset = mOffset.load();
         }
     }
+
     std::pair<LogPage*, LogEntry*> nextP(LogPage* page);
+
     LogEntry* next();
+
     char* page() {
         return reinterpret_cast<char*>(this) - offset();
     }
@@ -55,18 +69,25 @@ public:
 */
 struct LogPage {
     char* page;
-    LogPage(char* page) : page(page) {
+
+    LogPage(char* page)
+        : page(page) {
     }
+
     LogPage(const LogPage&) = delete;
+
     std::atomic<LogPage*>& next() {
         return *reinterpret_cast<std::atomic<LogPage*>*>(page);
     }
+
     std::atomic<uint32_t>& offset() {
         return *reinterpret_cast<std::atomic<uint32_t>*>(page + sizeof(LogPage*));
     }
+
     LogEntry* begin() {
         return reinterpret_cast<LogEntry*>(page + DATA_OFFSET);
     }
+
     constexpr static size_t DATA_OFFSET = 24;
 };
 
@@ -78,8 +99,11 @@ class Log {
     std::pair<LogPage*, LogEntry*> mTail;
 public:
     Log(PageManager& pageManager);
+
     LogEntry* append(uint32_t size);
+
     void seal(LogEntry* entry);
+
     LogEntry* tail();
 
     /**

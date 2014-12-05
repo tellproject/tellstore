@@ -7,11 +7,13 @@
 #include <vector>
 #include <unordered_map>
 #include "Logging.hpp"
+#include "SnapshotDescriptor.hpp"
 
 namespace tell {
 namespace store {
 
-enum class FieldType : uint16_t {
+enum class FieldType
+    : uint16_t {
     NOTYPE = 0,
     SMALLINT = 1,
     INT,
@@ -27,11 +29,14 @@ private:
     FieldType mType;
     crossbow::string mName;
 public:
-    Field() : mType(FieldType::NOTYPE) {}
+    Field()
+        : mType(FieldType::NOTYPE) {
+    }
+
     Field(FieldType type, const crossbow::string& name)
-            : mType(type),
-              mName(name)
-    {}
+        : mType(type), mName(name) {
+    }
+
     bool isFixedSized() const {
         switch (mType) {
             case FieldType::SMALLINT:
@@ -49,18 +54,26 @@ public:
                 return false;
         }
     }
+
     const crossbow::string& name() const {
         return mName;
     }
+
     FieldType type() const {
         return mType;
     }
+
     size_t staticSize() const;
 };
 
 template<typename Enum>
-auto to_underlying(Enum e) -> typename std::underlying_type<Enum>::type {
+constexpr auto to_underlying(Enum e) -> typename std::underlying_type<Enum>::type {
     return static_cast<typename std::underlying_type<Enum>::type>(e);
+}
+
+template<typename Enum>
+constexpr Enum from_underlying(typename std::underlying_type<Enum>::type s) {
+    return static_cast<Enum>(s);
 }
 
 /**
@@ -88,14 +101,28 @@ private:
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
 public:
-    Schema() {}
+    Schema() {
+    }
+
     Schema(const char* ptr);
+
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
+
     char* serialize(char* ptr) const;
+
     size_t schemaSize() const;
-    bool allNotNull() const { return mAllNotNull; }
-    const std::vector<Field>& fixedSizeFields() const { return mFixedSizeFields; }
-    const std::vector<Field>& varSizeFields() const { return mVarSizeFields; }
+
+    bool allNotNull() const {
+        return mAllNotNull;
+    }
+
+    const std::vector<Field>& fixedSizeFields() const {
+        return mFixedSizeFields;
+    }
+
+    const std::vector<Field>& varSizeFields() const {
+        return mVarSizeFields;
+    }
 };
 
 /**
@@ -123,8 +150,11 @@ private:
     std::vector<std::pair<Field, off_t>> mFieldMetaData;
 public:
     Record(const Schema& schema);
+
     bool idOf(const crossbow::string& name, id_t& result) const;
+
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
+
     /**
     * These methods are NOT thread safe.
     */
@@ -151,6 +181,7 @@ public:
 * The versions are ordered decremental - the means the newest version comes first
 */
 struct MultiVersionRecord {
+    static const char* getRecord(const SnapshotDescriptor& desc, const char* record, bool& isNewest);
 };
 
 

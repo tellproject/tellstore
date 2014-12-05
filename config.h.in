@@ -6,7 +6,7 @@ namespace tell {
 namespace store {
 
 enum class Implementation {
-DELTA_MAIN_REWRITE
+    DELTA_MAIN_REWRITE
 };
 
 constexpr Implementation usedImplementation = Implementation::@IMPLEMENTATION@;

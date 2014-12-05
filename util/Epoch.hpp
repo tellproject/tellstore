@@ -1,4 +1,5 @@
 #pragma once
+
 #include <cstdint>
 #include <atomic>
 #include <limits>
@@ -6,15 +7,19 @@
 #include <functional>
 #include <mutex>
 
-namespace tell{
+namespace tell {
 namespace store {
 
 constexpr const unsigned NUM_LISTS = 64;
 
 extern void init();
+
 extern void destroy();
+
 extern void* malloc(std::size_t size);
+
 extern void free(void* ptr);
+
 extern void free_now(void* ptr);
 
 class allocator {
@@ -22,15 +27,23 @@ class allocator {
     static std::mutex mutex_;
 public:
     allocator();
+
     ~allocator();
+
     static void* malloc(std::size_t size);
-    static void free(void* ptr, std::function<void()> destruct = [](){});
+
+    static void free(void* ptr, std::function<void()> destruct = []() {
+    });
+
     static void free_now(void* ptr);
 };
 
 template<typename T>
 static void mark_for_deletion(T* ptr) {
-    if (ptr) allocator::free(ptr, [ptr](){ptr->~T();});
+    if (ptr)
+        allocator::free(ptr, [ptr]() {
+            ptr->~T();
+        });
 }
 
 template<typename T>
@@ -52,8 +65,7 @@ public:
         return reinterpret_cast<pointer>(&reinterpret_cast<uint8_t&>(x));
     }
 
-    pointer allocate(size_type n, void* hint = 0)
-    {
+    pointer allocate(size_type n, void* hint = 0) {
         return reinterpret_cast<pointer>(allocator::malloc(n * sizeof(T)));
     }
 
@@ -66,33 +78,31 @@ public:
     }
 
     void construct(pointer p, const_reference val) {
-        new (reinterpret_cast<void*>(p)) T(val);
+        new(reinterpret_cast<void*>(p)) T(val);
     }
 
     template<typename U, typename... Args>
-    void construct(U* p, Args&&... args) {
-        new (reinterpret_cast<void*>(p)) U(std::forward<Args>(args)...);
+    void construct(U* p, Args&& ... args) {
+        new(reinterpret_cast<void*>(p)) U(std::forward<Args>(args)...);
     }
 
-    void destroy(pointer p)
-    {
+    void destroy(pointer p) {
         p->~T();
     }
 
     template<typename U>
-    void destroy(U* p)
-    {
+    void destroy(U* p) {
         p->~U();
     }
 };
 
 template<typename T1, typename T2>
-bool operator== (const object_allocator<T1>&, const object_allocator<T2>&) {
+bool operator==(const object_allocator<T1>&, const object_allocator<T2>&) {
     return true;
 }
 
 template<typename T1, typename T2>
-bool operator!= (const object_allocator<T1>&, const object_allocator<T2>&) {
+bool operator!=(const object_allocator<T1>&, const object_allocator<T2>&) {
     return true;
 }
 
@@ -109,7 +119,7 @@ class object {
         allocator::free(ptr);
     }
 
-    void operator delete[] (void* ptr) {
+    void operator delete[](void* ptr) {
         allocator::free(ptr);
     }
 };

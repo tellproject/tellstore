@@ -36,5 +36,8 @@ set(SOURCE_FILES
     util/StorageConfig.hpp
     util/Log.hpp
     util/Log.cpp
-    util/SnapshotDescriptor.hpp)
+    util/SnapshotDescriptor.hpp
+    util/Request.hpp
+    util/LogOperations.hpp
+    util/LogOperations.cpp)
 add_executable(TellStore ${SOURCE_FILES})

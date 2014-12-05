@@ -3,13 +3,20 @@
 #include <array>
 #include <cstdlib>
 
-namespace  {
+namespace {
 struct lists {
     struct node {
         std::atomic<node*> next;
         std::function<void()> destruct;
-        node() : next(reinterpret_cast<node*>(0x1)) {}
-        ~node() {destruct();}
+
+        node()
+            : next(reinterpret_cast<node*>(0x1)) {
+        }
+
+        ~node() {
+            destruct();
+        }
+
         bool own(decltype(node::destruct) destruct) {
             while (true) {
                 auto n = next.load();
@@ -23,10 +30,13 @@ struct lists {
             }
         }
     };
+
     struct list {
-        list() : head_(reinterpret_cast<node*>(0x0)) {}
-        ~list()
-        {
+        list()
+            : head_(reinterpret_cast<node*>(0x0)) {
+        }
+
+        ~list() {
             node* head = head_.load();
             while (reinterpret_cast<uint64_t>(head) != 0x0) {
                 node* next = head->next.load();
@@ -35,7 +45,9 @@ struct lists {
                 head = next;
             }
         }
+
         std::atomic<node*> head_;
+
         void append(uint8_t* ptr, decltype(node::destruct) destruct) {
             ptr -= sizeof(node);
             auto nd = reinterpret_cast<node*>(ptr);
@@ -47,7 +59,9 @@ struct lists {
             } while (true);
         }
     };
+
     std::array<list, tell::store::NUM_LISTS> lists_;
+
     void append(uint8_t* ptr, uint64_t mycnt, decltype(node::destruct) destruct) {
         lists_[mycnt % tell::store::NUM_LISTS].append(ptr, destruct);
     }
@@ -96,8 +110,7 @@ void destroy() {
     delete active_cnt.load();
 }
 
-allocator::allocator()
-{
+allocator::allocator() {
     do {
         cnt_ = active_cnt.load();
         auto my_cnt_ = cnt_->load();
@@ -107,8 +120,7 @@ allocator::allocator()
     } while (true);
 }
 
-allocator::~allocator()
-{
+allocator::~allocator() {
     cnt_->fetch_sub(2);
     auto& oldcnt = *(old_cnt.load());
     auto& oldestcnt = *(oldest_cnt.load());
@@ -131,22 +143,19 @@ allocator::~allocator()
     }
 }
 
-void* allocator::malloc(std::size_t size)
-{
+void* allocator::malloc(std::size_t size) {
     uint8_t* res = reinterpret_cast<uint8_t*>(std::malloc(size + sizeof(lists::node)));
-    new (res) lists::node();
+    new(res) lists::node();
     return res + sizeof(lists::node);
 }
 
-void allocator::free(void* ptr, std::function<void()> destruct)
-{
+void allocator::free(void* ptr, std::function<void()> destruct) {
     unsigned long long int t;
     __asm__ volatile (".byte 0x0f, 0x31" : "=A" (t));
     active_list.load()->append(reinterpret_cast<uint8_t*>(ptr), t, destruct);
 }
 
-void allocator::free_now(void *ptr)
-{
+void allocator::free_now(void* ptr) {
     uint8_t* res = reinterpret_cast<uint8_t*>(ptr);
     res -= sizeof(lists::node);
     ::free(res);

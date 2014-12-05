@@ -29,7 +29,7 @@ size_t Field::staticSize() const {
     }
 }
 
-bool Schema::addField(FieldType type, const crossbow::string &name, bool notNull) {
+bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull) {
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
         LOG_DEBUG("Field name with %d bytes are not supported", name.size());
         return false;
@@ -85,7 +85,7 @@ inline char* serialize_field(const Field& field, char* ptr) {
 
 } // namespace {}
 
-char *Schema::serialize(char *ptr) const {
+char* Schema::serialize(char* ptr) const {
     uint32_t sz = uint32_t(schemaSize());
     memcpy(ptr, &sz, sizeof(sz));
     ptr += sizeof(sz);
@@ -104,7 +104,7 @@ char *Schema::serialize(char *ptr) const {
     return ptr;
 }
 
-Schema::Schema(const char *ptr) {
+Schema::Schema(const char* ptr) {
     // we can ignore the size
     ptr += sizeof(uint32_t);
     uint16_t numColumns = *reinterpret_cast<const uint16_t*>(ptr);
@@ -127,14 +127,12 @@ Schema::Schema(const char *ptr) {
     }
 }
 
-Record::Record(const Schema &schema)
-        : mSchema(schema),
-          mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size())
-{
+Record::Record(const Schema& schema)
+    : mSchema(schema), mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size()) {
     off_t headOffset = 4;
     {
         if (schema.varSizeFields().size() > 0) {
-            headOffset += (mFieldMetaData.size() + 7)/8;
+            headOffset += (mFieldMetaData.size() + 7) / 8;
         }
         // Padding
         headOffset += 8 - (headOffset % 8);
@@ -154,7 +152,7 @@ Record::Record(const Schema &schema)
     }
 }
 
-const char *Record::data(const char* const ptr, Record::id_t id, bool &isNull, FieldType* type /* = nullptr*/) const {
+const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {
     if (id > mFieldMetaData.size()) {
         LOG_ERROR("Tried to get nonexistent id");
         assert(false);
@@ -165,7 +163,7 @@ const char *Record::data(const char* const ptr, Record::id_t id, bool &isNull, F
     isNull = false;
     if (!mSchema.allNotNull()) {
         // TODO: Check whether the compiler optimizes this correctly - otherwise this might be inefficient (but more readable)
-        uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + 4 + id/8);
+        uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + 4 + id / 8);
         unsigned char pos = uchar(id % 8);
         isNull = (uchar(0x1 << pos) & bitmap) == 0;
     }
@@ -188,7 +186,7 @@ const char *Record::data(const char* const ptr, Record::id_t id, bool &isNull, F
     }
 }
 
-bool Record::idOf(const crossbow::string &name, id_t& result) const {
+bool Record::idOf(const crossbow::string& name, id_t& result) const {
     auto iter = mIdMap.find(name);
     if (iter == mIdMap.end()) return false;
     result = iter->second;
@@ -199,9 +197,24 @@ bool Record::setNull(Record::id_t id, bool isNull) {
     return false;
 }
 
-char* Record::data(char *const ptr, Record::id_t id, bool &isNull, FieldType *type /* = nullptr */) {
+char* Record::data(char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr */) {
     auto res = const_cast<const Record*>(this)->data(ptr, id, isNull, type);
     return const_cast<char*>(res);
+}
+
+const char* MultiVersionRecord::getRecord(const SnapshotDescriptor& desc, const char* record, bool& isNewest) {
+    isNewest = true;
+    uint32_t numVersions = *reinterpret_cast<const uint32_t*>(record + 4);
+    const uint64_t* versions = reinterpret_cast<const uint64_t*>(record + 8);
+    const uint32_t* offsets = reinterpret_cast<const uint32_t*>(record + 8 + 8 * numVersions);
+    for (uint32_t i = numVersions; i > 0; --i) {
+        if (desc.inReadSet(versions[i])) {
+            return (record + offsets[i]);
+        } else {
+            isNewest = false;
+        }
+    }
+    return nullptr;
 }
 } // namespace store
 } // namespace tell
