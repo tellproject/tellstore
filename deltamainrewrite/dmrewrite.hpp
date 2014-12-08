@@ -38,7 +38,7 @@ class Table {
     Log mLog;
     Log mInsertLog;
     std::atomic<CuckooTable*> mHashMap;
-    std::atomic<char*> mRootPage;
+    std::atomic<std::vector<char*>*> mPages;
 public:
     Table(PageManager& pageManager, const Schema& schema);
 

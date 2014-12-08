@@ -1,6 +1,10 @@
 #include <util/Record.hpp>
 #include <util/LogOperations.hpp>
+#include <util/chunk_allocator.hpp>
+#include <unordered_set>
+#include <map>
 #include "dmrewrite.hpp"
+#include "Page.hpp"
 
 namespace tell {
 namespace store {
@@ -45,7 +49,7 @@ Table::Table(PageManager& pageManager, Schema const& schema)
       mLog(mPageManager),
       mInsertLog(mPageManager),
       mHashMap(new(allocator::malloc(sizeof(CuckooTable))) CuckooTable(mPageManager)),
-      mRootPage(nullptr)
+      mPages(nullptr)
 {
 }
 
@@ -54,8 +58,6 @@ void GarbageCollector::run(const std::vector<Table*>& tables) {
 
 void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor& descr,
                    bool* succeeded /*=nullptr*/) {
-    // We just need to append to the log
-    auto logEn = mInsertLog.tail();
     if (mHashMap.load()->get(key) != nullptr) {
         if (succeeded != nullptr)
             *succeeded = false;
@@ -74,15 +76,15 @@ void Table::insert(uint64_t key, const char* const data, const SnapshotDescripto
     op.serialize(nEntry->data());
     nEntry->seal();
     if (succeeded != nullptr) {
-        auto iter = mInsertLog.tail();
-        while (iter != nEntry) {
-            while (!iter->sealed()) {
+        auto tail = mInsertLog.tail();
+        while (tail != nEntry) {
+            while (!tail->sealed()) {
             }
-            if (key == *reinterpret_cast<const uint64_t*>(iter->data() + 4)) {
+            if (key == *reinterpret_cast<const uint64_t*>(tail->data() + 4)) {
                 *succeeded = false;
                 return;
             }
-            iter = iter->next();
+            tail = tail->next();
         }
         *succeeded = true;
     }
@@ -193,7 +195,24 @@ bool Table::generalUpdate(uint64_t key, LoggedOperation& loggedOperation, Snapsh
 }
 
 void Table::runGC() {
-
+    crossbow::chunk_allocator<> allocator;
+    std::vector<char*>* currPages = mPages.load();
+    std::vector<char*>* newPages;
+    if (currPages) {
+        newPages = new(allocator::malloc(sizeof(std::vector<char *>))) std::vector<char *>(*currPages);
+    } else {
+        newPages = new(allocator::malloc(sizeof(std::vector<char *>))) std::vector<char *>();
+    }
+    using allocator_type = crossbow::non_copy_allocator<std::pair<const size_t, char*>>;
+    allocator_type alloc(allocator);
+    std::map<size_t, char*, allocator_type> freeMap(alloc);
+    auto& pageList = *currPages;
+    for (size_t i = 0; i < pageList.size(); ++i) {
+        Page page(mPageManager, pageList[i]);
+        for (auto iterator = page.begin(); iterator != page.end(); ++iterator) {
+            // TODO: Clean pages
+        }
+    }
 }
 
 } // namespace tell

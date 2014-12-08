@@ -41,5 +41,6 @@ set(SOURCE_FILES
     util/SnapshotDescriptor.hpp
     util/Request.hpp
     util/LogOperations.hpp
-    util/LogOperations.cpp)
+    util/LogOperations.cpp
+    util/chunk_allocator.hpp)
 add_executable(TellStore ${SOURCE_FILES})
