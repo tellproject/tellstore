@@ -28,7 +28,19 @@ struct DMRecord {
     const char* getRecordData(const SnapshotDescriptor& snapshot,
                               const char* data,
                               bool& isNewest,
-                              std::atomic<LogEntry*>** next = nullptr);
+                              std::atomic<LogEntry*>** next = nullptr) const;
+    bool needGCWork(const char* data, uint64_t minVersion) const;
+    LogEntry* getNewest(const char* data) const;
+    bool setNewest(LogEntry* old, LogEntry* n, const char* data);
+
+    /**
+    * This function will compact and merge the given tuple. It will return the following:
+    * - The size of the old tuple, or 0 if the tuple can be deleted
+    * - A pinter to an allocated chunk, if the tuple did not have enough room in the
+    *   provided space
+    */
+    template<class Allocator>
+    std::pair<size_t, char*> compactAndMerge(char* data, uint64_t minVersion, Allocator& allocator) const;
 };
 
 class Table {
@@ -52,7 +64,7 @@ public:
     bool update(uint64_t key, const char* data, const SnapshotDescriptor& snapshot);
 
     bool remove(uint64_t key, const SnapshotDescriptor& snapshot);
-    void runGC();
+    void runGC(uint64_t minVersion);
 private:
     bool generalUpdate(uint64_t key, LoggedOperation& loggedOperation, const SnapshotDescriptor& snapshot);
 };

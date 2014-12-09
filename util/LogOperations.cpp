@@ -59,9 +59,14 @@ const LogEntry* LoggedOperation::getPrevious(const char* data) {
     return res;
 }
 
-std::atomic<LogEntry*>* LoggedOperation::getNewest(const char* data) {
+LogEntry* LoggedOperation::getNewest(const char* data) {
     assert(getType(data) == LogOperation::INSERT);
-    return reinterpret_cast<std::atomic<LogEntry*>*>(const_cast<char*>(data + 20));
+    LogEntry* en = reinterpret_cast<std::atomic<LogEntry*>*>(const_cast<char*>(data + 20))->load();
+    unsigned long ptr = reinterpret_cast<unsigned long>(en);
+    if (ptr % 2 != 0) {
+
+    }
+    return en;
 }
 
 uint64_t LoggedOperation::getKey(const char* data) {

@@ -58,7 +58,7 @@ public: // Allocation and deallocation
 };
 
 template<class T, class Alloc = chunk_allocator<>>
-class non_copy_allocator {
+class copy_allocator {
 public:
     using value_type = T;
     using pointer = T*;
@@ -67,14 +67,22 @@ public:
     using const_reference = const T&;
     using size_type = std::size_t;
     using difference_type = std::ptrdiff_t;
+    //template<class U>
+    //struct rebind {
+    //    using other = copy_allocator<U, Alloc>;
+    //};
     template<class U>
-    struct rebind {
-        using other = non_copy_allocator<U, Alloc>;
-    };
-private:
+    using rebind = copy_allocator<U, Alloc>;
     Alloc& allocator;
 public:
-    non_copy_allocator(Alloc& allocator) : allocator(allocator) {}
+    copy_allocator(Alloc& allocator) : allocator(allocator) {}
+    template<class U>
+    copy_allocator(const copy_allocator<U, Alloc>& o)
+        : allocator(o.allocator)
+    {}
+    copy_allocator& operator= (copy_allocator& other) {
+        return *this;
+    }
     size_type max_size() const {
         return allocator.max_size();
     }
@@ -87,7 +95,7 @@ public:
         return reinterpret_cast<const_pointer>(&ref);
     }
     pointer allocate(size_type n, const void* hint = nullptr) {
-        return allocator.alloc(n*sizeof(value_type));
+        return reinterpret_cast<pointer>(allocator.alloc(n*sizeof(value_type)));
     }
     void deallocate(pointer p, size_type n) {
     }

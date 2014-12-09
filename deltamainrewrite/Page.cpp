@@ -6,7 +6,7 @@ namespace dmrewrite {
 
 
 Page::Iterator Page::begin() {
-    return Page::Iterator(mPage, 8);
+    return Page::Iterator(mPage, 0);
 }
 
 Page::Iterator Page::end() {

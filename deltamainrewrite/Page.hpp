@@ -40,7 +40,7 @@ public: // types
         using iterator_category = std::forward_iterator_tag;
     public:
         Iterator& operator++ () {
-            mOffset += *reinterpret_cast<const uint32_t*>(mPage + mOffset);
+            mOffset += *reinterpret_cast<const uint32_t*>(mPage + mOffset) + 8;
             if (*reinterpret_cast<const uint32_t*>(mPage + mOffset) == 0)
                 mOffset = TELL_PAGE_SIZE;
             return *this;
@@ -57,8 +57,8 @@ public: // types
             if (mPage != other.mPage) return true;
             return mOffset != other.mOffset;
         }
-        PageEntry operator*() const {
-            return PageEntry{mOffset};
+        size_t operator*() const {
+            return mOffset;
         }
     };
 public:
@@ -68,6 +68,9 @@ public:
 public: // Access
     Iterator begin();
     Iterator end();
+    char* getRecord(const Iterator& i) {
+        return (mPage + *i);
+    }
 };
 
 } // namespace dmrewrite

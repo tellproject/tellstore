@@ -56,7 +56,7 @@ struct LoggedOperation {
     * This should only be called if the log entry is an
     * insert
     */
-    static std::atomic<LogEntry*>* getNewest(const char* data);
+    static LogEntry* getNewest(const char* data);
 
     static const LogEntry* loggedOperationFromTuple(const char* tuple);
 };
