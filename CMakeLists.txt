@@ -16,7 +16,6 @@ configure_file("${CMAKE_SOURCE_DIR}/config.h.in" "${CMAKE_BINARY_DIR}/config.h")
 include_directories(${CMAKE_BINARY_DIR})
 
 set(SOURCE_FILES
-    main.cpp
     implementation.hpp
     tellstore.hpp
     deltamainrewrite/dmrewrite.hpp
@@ -43,4 +42,17 @@ set(SOURCE_FILES
     util/LogOperations.hpp
     util/LogOperations.cpp
     util/chunk_allocator.hpp)
-add_executable(TellStore ${SOURCE_FILES})
+add_library(TellStore SHARED ${SOURCE_FILES})
+
+###################
+# GTEST
+###################
+add_subdirectory(externals/gtest)
+enable_testing()
+include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
+###################
+# Unit tests
+###################
+add_executable(cuckooTest tests/testCuckooMap.cpp)
+target_link_libraries(cuckooTest TellStore gtest gtest_main)
+add_test(cuckooTest cuckooTest)

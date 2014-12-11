@@ -11,6 +11,11 @@
 namespace tell {
 namespace store {
 
+template<class T>
+constexpr T log2Of(T x, T tmp = 0) {
+    return x == 1 ? tmp : log2Of(x/2, tmp+1);
+}
+
 /**
 * TODO: investigate into hash functions (this here is probably not optimal)
 *
@@ -19,26 +24,35 @@ namespace store {
 */
 class cuckoo_hash_function {
     size_t mTableSize;
-    std::hash<uint64_t> hasher;
     uint64_t mSalt;
+    uint64_t w_M; // m==64 w_M = w - M
 public:
     cuckoo_hash_function(size_t tableSize)
-        : mTableSize(tableSize) {
+        : mTableSize(tableSize), mSalt(0) {
         std::random_device rd;
         std::uniform_int_distribution<uint64_t> dist;
-        mSalt = dist(rd);
+        while (mSalt == 0) {
+            mSalt = dist(rd);
+        }
+        uint64_t M = log2Of(uint64_t(tableSize));
+        w_M = 64 - M;
     }
 
     size_t operator()(uint64_t k) const {
-        return hasher(k + mSalt) & mTableSize;
+        return (mSalt*k) >> (w_M);
     }
 };
 
 class Modifier;
 
+constexpr bool isPowerOf2(size_t x) {
+    return x == 1 || (x % 2  == 0 && isPowerOf2(x/2));
+}
+
 class PageWrapper {
 public:
     static constexpr size_t ENTRIES_PER_PAGE = TELL_PAGE_SIZE / (sizeof(uint64_t) + sizeof(void*));
+    static_assert(isPowerOf2(ENTRIES_PER_PAGE), "Entries per page needs to be a power of two");
     using EntryT = std::pair<uint64_t, void*>;
 private:
     PageManager& mPageManager;
@@ -106,8 +120,10 @@ public:
 
     Modifier modifier(allocator& alloc);
 
+    size_t capacity() const;
+
 private: // helper functions
-    const EntryT& at(size_t idx) const;
+    const EntryT& at(unsigned h, size_t idx) const;
 };
 
 class Modifier {
@@ -128,12 +144,19 @@ private:
     std::vector<PageT> mToDelete;
 private:
     Modifier(CuckooTable& table, allocator& alloc)
-        : mTable(table), alloc(alloc), pageWasModified(0, false), hash1(table.hash1), hash2(table.hash2), hash3(
-        table.hash3) {
+        : mTable(table),
+          alloc(alloc),
+          pageWasModified(table.mPages.size(), false),
+          mPages(table.mPages),
+          hash1(table.hash1),
+          hash2(table.hash2),
+          hash3(table.hash3),
+          mSize(table.mSize)
+    {
     }
 
+public:
     ~Modifier();
-
     CuckooTable* done() const;
 
     /**
@@ -144,9 +167,12 @@ private:
 
     bool remove(uint64_t key);
 
-    EntryT& at(size_t idx, size_t& pageIdx);
+    EntryT& at(unsigned h, size_t idx, size_t& pageIdx);
 
-    bool cow(size_t idx);
+    size_t capacity() const;
+    size_t size() const;
+
+    bool cow(unsigned h, size_t idx);
 
     void rehash();
 

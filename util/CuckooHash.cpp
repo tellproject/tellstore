@@ -5,26 +5,32 @@ namespace store {
 
 CuckooTable::CuckooTable(PageManager& pageManager)
     : mPageManager(pageManager)
-      , mPages(1, new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc()))
+      , mPages(3, nullptr)
       , hash1(ENTRIES_PER_PAGE)
       , hash2(ENTRIES_PER_PAGE)
       , hash3(ENTRIES_PER_PAGE)
-      , mSize(0) {
+      , mSize(0)
+{
+    mPages[0] = new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc());
+    mPages[1] = new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc());
+    mPages[2] = new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc());
 }
 
 void* CuckooTable::get(uint64_t key) const {
+    unsigned cnt = 0;
     for (auto& hasher : {hash1, hash2, hash3}) {
         auto idx = hasher(key);
-        const EntryT& entry = at(idx);
+        const EntryT& entry = at(cnt, idx);
         if (entry.first == key) return entry.second;
+        ++cnt;
     }
     return nullptr;
 }
 
-auto CuckooTable::at(size_t idx) const -> const EntryT& {
+auto CuckooTable::at(unsigned h, size_t idx) const -> const EntryT& {
     auto tIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - tIdx * ENTRIES_PER_PAGE;
-    return (*mPages[tIdx])[pIdx];
+    return (*mPages[3*tIdx+h])[pIdx];
 }
 
 Modifier CuckooTable::modifier(allocator& alloc) {
@@ -38,6 +44,10 @@ CuckooTable::CuckooTable(PageManager& pageManager,
                          cuckoo_hash_function hash3,
                          size_t size)
     : mPageManager(pageManager), mPages(std::move(pages)), hash1(hash1), hash2(hash2), hash3(hash3), mSize(size) {
+}
+
+size_t CuckooTable::capacity() const {
+    return ENTRIES_PER_PAGE * mPages.size();
 }
 
 Modifier::~Modifier() {
@@ -54,46 +64,78 @@ CuckooTable* Modifier::done() const {
 }
 
 bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
+    // we first check, whether the value exists
+    bool res = false;
+    bool increment = true;
+    unsigned cnt = 0;
+    for (auto& h : {hash1, hash2, hash3}) {
+        size_t pageIdx;
+        auto idx = h(key);
+        auto& entry = at(cnt, idx, pageIdx);
+        if (entry.first == key) {
+            if (!replace) {
+                goto END;
+            }
+            break;
+        }
+        ++cnt;
+    }
+    // actual insert comes here
     while (true) {
         // we retry 20 times at the moment
         for (int i = 0; i < 20; ++i) {
+            cnt = 0;
             for (auto& h : {hash1, hash2, hash3}) {
                 size_t pageIdx;
                 auto idx = h(key);
-                auto& entry = at(idx, pageIdx);
+                auto& entry = at(cnt, idx, pageIdx);
                 auto e = &entry;
-                if (cow(pageIdx)) {
-                    e = &at(idx, pageIdx);
-                }
-                if (e->first == key) {
-                    if (replace) e->second = value;
-                    return true;
-                } else if (e->second == nullptr) {
+                if (e->second == nullptr) {
+                    if (cow(cnt, pageIdx)) {
+                        e = &at(cnt, idx, pageIdx);
+                    }
                     e->first = key;
                     e->second = value;
-                    return false;
+                    res = true;
+                    goto END;
+                } else if (e->first == key) {
+                    assert(replace);
+                    if (cow(cnt, pageIdx)) {e = &at(cnt, idx, pageIdx);}
+                    increment = false;
+                    e->second = value;
+                    res = true;
+                    goto END;
                 } else {
+                    if (cow(cnt, pageIdx)) {
+                        e = &at(cnt, idx, pageIdx);
+                    }
                     std::pair<uint64_t, void*> p = *e;
                     e->first = key;
                     e->second = value;
                     key = p.first;
                     value = p.second;
                 }
+                ++cnt;
             }
         }
         rehash();
     }
+END:
+    if (res && increment)
+        ++mSize;
+    return res;
 }
 
 bool Modifier::remove(uint64_t key) {
     size_t pIdx;
     bool res = false;
+    unsigned cnt = 0;
     for (auto& hash : {hash1, hash2, hash3}) {
         auto idx = hash(key);
-        auto& entry = at(idx, pIdx);
+        auto& entry = at(cnt, idx, pIdx);
         if (entry.first == key) {
-            if (cow(pIdx)) {
-                auto& e = at(idx, pIdx);
+            if (cow(cnt, pIdx)) {
+                auto& e = at(cnt, idx, pIdx);
                 res = e.second != nullptr;
                 e.second = nullptr;
             } else {
@@ -101,30 +143,33 @@ bool Modifier::remove(uint64_t key) {
                 entry.second = nullptr;
             }
             --mSize;
-            return res;
+            goto END;
         }
+        ++cnt;
     }
+END:
+    if (res) --mSize;
     return res;
 }
 
-Modifier::EntryT& Modifier::at(size_t idx, size_t& pageIdx) {
+Modifier::EntryT& Modifier::at(unsigned h, size_t idx, size_t& pageIdx) {
     pageIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - pageIdx * ENTRIES_PER_PAGE;
-    return (*mPages[pageIdx])[pIdx];
+    return (*mPages[3*pageIdx + h])[pIdx];
 }
 
-bool Modifier::cow(size_t idx) {
-    if (pageWasModified[idx]) return false;
-    pageWasModified[idx] = true;
-    auto oldPage = mPages[idx];
+bool Modifier::cow(unsigned h, size_t idx) {
+    if (pageWasModified[3*idx + h]) return false;
+    pageWasModified[3*idx + h] = true;
+    auto oldPage = mPages[3*idx + h];
     auto newPage = new(alloc.malloc(sizeof(PageWrapper))) PageWrapper(*oldPage);
-    mPages[idx] = newPage;
-    mToDelete.push_back(mPages[idx]);
+    mPages[3*idx + h] = newPage;
+    mToDelete.push_back(mPages[3*idx + h]);
     return true;
 }
 
 void Modifier::rehash() {
-    auto capacity = mPages.size() * ENTRIES_PER_PAGE;
+    auto capacity = mPages.size()/3 * ENTRIES_PER_PAGE;
     if (5 * mSize / 4 > capacity || (mPages.size() > 1 && mSize / 5 > capacity)) {
         resize();
         return;
@@ -154,12 +199,17 @@ void Modifier::rehash() {
 }
 
 void Modifier::resize() {
-    auto capacity = mPages.size() * ENTRIES_PER_PAGE;
-    auto numPages = mPages.size() * 2;
+    auto capacity = mPages.size()/3 * ENTRIES_PER_PAGE;
+    auto numPages = mPages.size();
     if (mSize / 5 > capacity) {
-        numPages /= 4;
+        numPages /= 2;
+    } else {
+        numPages *= 2;
     }
+    assert(numPages % 3 == 0);
+    capacity = numPages/3 * ENTRIES_PER_PAGE;
     if (numPages == 0) numPages = 1;
+    assert(isPowerOf2(numPages/3 * ENTRIES_PER_PAGE));
     std::vector<PageT> oldPages = std::move(mPages);
     mPages = std::vector<PageT>(numPages, nullptr);
     for (auto& e : mPages) {
@@ -184,5 +234,12 @@ void Modifier::resize() {
     }
 }
 
+size_t Modifier::capacity() const {
+    return mPages.size() * ENTRIES_PER_PAGE;
+}
+
+size_t Modifier::size() const {
+    return mSize;
+}
 } // namespace store
 } // namespace tell
