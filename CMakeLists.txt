@@ -22,6 +22,10 @@ set(SOURCE_FILES
     deltamainrewrite/dmrewrite.cpp
     deltamainrewrite/Page.hpp
     deltamainrewrite/Page.cpp
+    deltamainrewrite/DMRecord.cpp
+    deltamainrewrite/DMRecord.hpp
+    util/CommitManager.hpp
+    util/CommitManager.cpp
     util/PageManager.cpp
     util/PageManager.hpp
     util/CuckooHash.cpp
@@ -41,7 +45,8 @@ set(SOURCE_FILES
     util/Request.hpp
     util/LogOperations.hpp
     util/LogOperations.cpp
-    util/chunk_allocator.hpp)
+    util/chunk_allocator.hpp
+    util/functional.hpp)
 add_library(TellStore SHARED ${SOURCE_FILES})
 
 ###################
@@ -53,6 +58,7 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 ###################
 # Unit tests
 ###################
-add_executable(cuckooTest tests/testCuckooMap.cpp)
-target_link_libraries(cuckooTest TellStore gtest gtest_main)
-add_test(cuckooTest cuckooTest)
+set(TEST_SRCS tests/testCuckooMap.cpp)
+add_executable(tests tests/main.cpp ${TEST_SRCS})
+target_link_libraries(tests TellStore gtest gtest_main)
+add_test(tests cuckooTest)

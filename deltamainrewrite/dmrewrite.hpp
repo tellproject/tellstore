@@ -9,48 +9,24 @@
 #include <util/Log.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/LogOperations.hpp>
+#include "DMRecord.hpp"
 
 namespace tell {
 namespace store {
 namespace dmrewrite {
 
-/**
-* A record in this approach has the following form:
-* - 8 bytes: pointer to an entry on the log (atomic)
-* - A multi-version record
-*/
-struct DMRecord {
-    MultiVersionRecord multiVersionRecord;
-    Record record;
-
-    DMRecord(const Schema& schema);
-
-    const char* getRecordData(const SnapshotDescriptor& snapshot,
-                              const char* data,
-                              bool& isNewest,
-                              std::atomic<LogEntry*>** next = nullptr) const;
-    bool needGCWork(const char* data, uint64_t minVersion) const;
-    LogEntry* getNewest(const char* data) const;
-    bool setNewest(LogEntry* old, LogEntry* n, const char* data);
-
-    /**
-    * This function will compact and merge the given tuple. It will return the following:
-    * - The size of the old tuple, or 0 if the tuple can be deleted
-    * - A pinter to an allocated chunk, if the tuple did not have enough room in the
-    *   provided space
-    */
-    template<class Allocator>
-    std::pair<size_t, char*> compactAndMerge(char* data, uint64_t minVersion, Allocator& allocator) const;
-};
-
 class Table {
+    struct PageHolder {
+        char* page;
+        PageHolder(char* page) : page(page) {}
+    };
     PageManager& mPageManager;
     Schema mSchema;
     DMRecord mRecord;
     Log mLog;
     Log mInsertLog;
     std::atomic<CuckooTable*> mHashMap;
-    std::atomic<std::vector<char*>*> mPages;
+    std::atomic<std::vector<PageHolder*>*> mPages;
 public:
     Table(PageManager& pageManager, const Schema& schema);
 

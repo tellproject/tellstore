@@ -15,17 +15,11 @@ struct PageEntry {
 * Helper class to manipulate pages
 */
 class Page {
-    PageManager& mPageManager;
     char* mPage;
-    // This flag is used to do copy-on write. While mReadOnly
-    // is true, we are not allowed to write to mPage. A write
-    // operation will therefore copy the page and set the flag
-    // to null
-    bool mReadOnly = true;
 public: // types
     class Iterator {
         friend class Page;
-        const char* const mPage;
+        const char* mPage;
         size_t mOffset;
         Iterator(const char* const page, size_t offset)
             : mPage(page),
@@ -62,12 +56,11 @@ public: // types
         }
     };
 public:
-    Page(PageManager& pageManager, char* p)
-            : mPageManager(pageManager),
-              mPage(p) {}
+    Page(char* p) : mPage(p) {}
 public: // Access
     Iterator begin();
     Iterator end();
+    Iterator fromPosition(const Iterator& pos);
     char* getRecord(const Iterator& i) {
         return (mPage + *i);
     }

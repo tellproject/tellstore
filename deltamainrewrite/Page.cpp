@@ -12,6 +12,10 @@ Page::Iterator Page::begin() {
 Page::Iterator Page::end() {
     return Page::Iterator(mPage, TELL_PAGE_SIZE);
 }
+
+Page::Iterator Page::fromPosition(const Iterator& pos) {
+    return Page::Iterator(mPage, pos.mOffset);
+}
 } // namespace dmrewrite
 } // namespace store
 } // namespace tell

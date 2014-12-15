@@ -177,7 +177,7 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
         auto baseId = mSchema.fixedSizeFields().size();
         off_t pos = mFieldMetaData[baseId].second;
         for (; baseId < id; ++baseId) {
-            // we know, that now all fields are variable length - that means the first two bytes are always the
+            // we know, that now all fields are variable mLength - that means the first two bytes are always the
             // field size
             pos += *reinterpret_cast<const uint16_t* const>(ptr + pos) + sizeof(uint16_t);
         }

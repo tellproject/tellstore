@@ -7,50 +7,59 @@ namespace tell {
 namespace store {
 
 struct SnapshotDescriptor {
-    uint64_t version;
-    char* descriptor;
-    size_t length;
-
-    SnapshotDescriptor(char* desc, size_t len, uint64_t version)
-        : version(version), descriptor(desc), length(len) {
+private:
+    uint64_t mVersion;
+    unsigned char* mDescriptor;
+    size_t mLength;
+public:
+    SnapshotDescriptor(unsigned char* desc, size_t len, uint64_t version)
+        : mVersion(version), mDescriptor(desc), mLength(len) {
     }
 
     ~SnapshotDescriptor() {
-        if (descriptor) delete descriptor;
+        if (mDescriptor) delete mDescriptor;
     }
 
     SnapshotDescriptor(const SnapshotDescriptor&) = delete;
 
     SnapshotDescriptor(SnapshotDescriptor&& o)
-        : descriptor(o.descriptor), length(o.length) {
-        o.descriptor = nullptr;
+        : mDescriptor(o.mDescriptor), mLength(o.mLength) {
+        o.mDescriptor = nullptr;
     }
 
     SnapshotDescriptor& operator=(const SnapshotDescriptor&) = delete;
 
     SnapshotDescriptor& operator=(SnapshotDescriptor&& o) {
-        delete descriptor;
-        descriptor = o.descriptor;
-        o.descriptor = nullptr;
-        length = o.length;
+        delete mDescriptor;
+        mDescriptor = o.mDescriptor;
+        o.mDescriptor = nullptr;
+        mLength = o.mLength;
         return *this;
     }
 
+    uint64_t version() const {
+        return mVersion;
+    }
+
     uint64_t baseVersion() const {
-        return *reinterpret_cast<uint64_t*>(descriptor);
+        return *reinterpret_cast<uint64_t*>(mDescriptor);
+    }
+
+    uint64_t lowestActiveVersion() const {
+        return *(reinterpret_cast<const uint64_t*>(mDescriptor) + 1);
     }
 
     bool inReadSet(uint64_t version) const {
         auto base = baseVersion();
         if (base >= version)
             return true;
-        if ((length - 8) * 8 > version - base) {
+        if ((mLength - 16) * 8 > version - base) {
             // in this case, the version is not in the
-            // descriptor -> false
+            // mDescriptor -> false
             return false;
         }
         unsigned char byteIdx = (unsigned char) (1 << (8 - ((version - base) % 8)));
-        return descriptor[8 + (version - base) / 8] & byteIdx;
+        return mDescriptor[16 + (version - base) / 8] & byteIdx;
     }
 };
 

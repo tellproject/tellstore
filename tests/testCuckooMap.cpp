@@ -130,10 +130,3 @@ TEST_F(CuckooTestFilled, TestResize) {
         ASSERT_EQ(*ptr, oVal);
     }
 }
-
-int main(int argc, char** argv) {
-    init();
-    table.store(nullptr);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
