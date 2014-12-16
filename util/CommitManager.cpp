@@ -43,7 +43,7 @@ SnapshotDescriptor DummyManager::startTx() {
         mActiveBaseVersionsCount *= 2;
     }
     mActiveBaseVersions[mBase] += 1;
-    return store::SnapshotDescriptor(resBuffer.get(), bufferLen, version);
+    return store::SnapshotDescriptor(resBuffer.release(), bufferLen, version);
 }
 
 void DummyManager::abortTx(const SnapshotDescriptor& version) {

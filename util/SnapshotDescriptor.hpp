@@ -30,7 +30,7 @@ public:
     SnapshotDescriptor& operator=(const SnapshotDescriptor&) = delete;
 
     SnapshotDescriptor& operator=(SnapshotDescriptor&& o) {
-        delete mDescriptor;
+        delete[] mDescriptor;
         mDescriptor = o.mDescriptor;
         o.mDescriptor = nullptr;
         mLength = o.mLength;
