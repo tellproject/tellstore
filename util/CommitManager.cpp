@@ -37,12 +37,13 @@ SnapshotDescriptor DummyManager::startTx() {
     auto version = ++mLastVersion;
     if (mActiveBaseVersionsCount < mBase - mLowestActiveVersion) {
         auto n = new uint32_t[mActiveBaseVersionsCount*2];
+        memset(n, 0, mActiveBaseVersionsCount * 2 * sizeof(uint32_t));
         memcpy(n, mActiveBaseVersions, mActiveBaseVersionsCount*sizeof(uint32_t));
         delete[] mActiveBaseVersions;
         mActiveBaseVersions = n;
         mActiveBaseVersionsCount *= 2;
     }
-    mActiveBaseVersions[mBase] += 1;
+    mActiveBaseVersions[mBase - mLowestActiveVersion] += 1;
     return store::SnapshotDescriptor(resBuffer.release(), bufferLen, version);
 }
 
@@ -53,8 +54,8 @@ void DummyManager::abortTx(const SnapshotDescriptor& version) {
 void DummyManager::commitTx(const SnapshotDescriptor& v) {
     auto version = v.version();
     Lock _(mMutex);
-    unsigned char byteIdx = (unsigned char)(1 << ((version - mBase) % 8));
-    mVersions[(version - mBase)/8] |= byteIdx;
+    unsigned char byteIdx = (unsigned char)(1 << ((version - mBase - 1) % 8));
+    mVersions[(version - mBase - 1)/8] |= byteIdx;
     size_t moveIdx = 0u;
     while (mVersions[moveIdx] == (unsigned char)(0xff)) {
         ++moveIdx;
@@ -63,10 +64,10 @@ void DummyManager::commitTx(const SnapshotDescriptor& v) {
         mBase += 8*moveIdx;
         auto last = (mLastVersion - mBase - 1)/8 + 1;
         memmove(mVersions, mVersions + moveIdx, last);
-        memset(mVersions + last, 0, INITAL_BUFFER_SIZE - last);
+        memset(mVersions + last, 0, mVersionsLength - last);
     }
     // handle lowest active version
-    mActiveBaseVersions[v.lowestActiveVersion() - mLastVersion] -= 1;
+    mActiveBaseVersions[v.baseVersion() - mLowestActiveVersion] -= 1;
     size_t moveCount = 0u;
     while (mActiveBaseVersions[0] == 0 && mLowestActiveVersion < mBase) {
         ++mLowestActiveVersion;

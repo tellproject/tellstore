@@ -19,6 +19,8 @@ TEST(commit_manager_test, simple) {
     ASSERT_FALSE(oldDescriptor.inReadSet(newDescriptor.version()));
     ASSERT_TRUE(newDescriptor.inReadSet(newV));
     ASSERT_FALSE(newDescriptor.inReadSet(oldDescriptor.version()));
+    commitManager.commitTx(oldDescriptor);
+    commitManager.commitTx(newDescriptor);
 }
 
 TEST(commit_manager_test, many_transactions) {
@@ -50,7 +52,7 @@ TEST(commit_manager_test, many_transactions) {
         ASSERT_EQ(snapshot.inReadSet(versions[i]), i % 2 == 0);
         ASSERT_TRUE(allCommitted.inReadSet(versions[i]));
     }
-    ASSERT_TRUE(allCommitted.baseVersion() == 1023);
+    ASSERT_TRUE(allCommitted.baseVersion() == 1024);
 }
 
 }

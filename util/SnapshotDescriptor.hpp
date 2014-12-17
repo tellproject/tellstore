@@ -59,8 +59,8 @@ public:
             // mDescriptor -> false
             return false;
         }
-        unsigned char byteIdx = (unsigned char) (1 << ((version - base) % 8));
-        if (!(mDescriptor[16 + (version - base) / 8] & byteIdx)) {
+        unsigned char byteIdx = (unsigned char) (1 << ((version - base - 1) % 8));
+        if (!(mDescriptor[16 + (version - base - 1) / 8] & byteIdx)) {
             return version == mVersion;
         }
         return true;
