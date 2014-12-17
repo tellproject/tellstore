@@ -23,14 +23,15 @@ public:
     SnapshotDescriptor(const SnapshotDescriptor&) = delete;
 
     SnapshotDescriptor(SnapshotDescriptor&& o)
-        : mDescriptor(o.mDescriptor), mLength(o.mLength) {
+        : mVersion(o.mVersion), mDescriptor(o.mDescriptor), mLength(o.mLength) {
         o.mDescriptor = nullptr;
     }
 
     SnapshotDescriptor& operator=(const SnapshotDescriptor&) = delete;
 
     SnapshotDescriptor& operator=(SnapshotDescriptor&& o) {
-        delete[] mDescriptor;
+        if (mDescriptor) delete[] mDescriptor;
+        mVersion = o.mVersion;
         mDescriptor = o.mDescriptor;
         o.mDescriptor = nullptr;
         mLength = o.mLength;
@@ -53,13 +54,16 @@ public:
         auto base = baseVersion();
         if (base >= version)
             return true;
-        if ((mLength - 16) * 8 > version - base) {
+        if ((mLength - 16) * 8 <= version - base) {
             // in this case, the version is not in the
             // mDescriptor -> false
             return false;
         }
-        unsigned char byteIdx = (unsigned char) (1 << (8 - ((version - base) % 8)));
-        return mDescriptor[16 + (version - base) / 8] & byteIdx;
+        unsigned char byteIdx = (unsigned char) (1 << ((version - base) % 8));
+        if (!(mDescriptor[16 + (version - base) / 8] & byteIdx)) {
+            return version == mVersion;
+        }
+        return true;
     }
 };
 

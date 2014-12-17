@@ -53,7 +53,7 @@ void DummyManager::abortTx(const SnapshotDescriptor& version) {
 void DummyManager::commitTx(const SnapshotDescriptor& v) {
     auto version = v.version();
     Lock _(mMutex);
-    unsigned char byteIdx = (unsigned char)(1 << (version - mBase));
+    unsigned char byteIdx = (unsigned char)(1 << ((version - mBase) % 8));
     mVersions[(version - mBase)/8] |= byteIdx;
     size_t moveIdx = 0u;
     while (mVersions[moveIdx] == (unsigned char)(0xff)) {
