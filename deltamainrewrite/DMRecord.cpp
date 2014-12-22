@@ -13,10 +13,10 @@ DMRecord::DMRecord(const Schema& schema)
 const char* DMRecord::getRecordData(const SnapshotDescriptor& snapshot,
                                     const char* data,
                                     bool& isNewest,
-                                    std::atomic<LogEntry*>** next /*= nullptr*/) const {
+                                    LogEntry** next /*= nullptr*/) const {
     const char* res = multiVersionRecord.getRecord(snapshot, data + 8, isNewest);
     if (next) {
-        *next = reinterpret_cast<std::atomic<LogEntry*>*>(const_cast<char*>(data));
+        *next = getNewest(data);
     }
     if (isNewest) {
         // if the newest record is valid in the given snapshot, we need to check whether

@@ -3,6 +3,8 @@
 #include <util/chunk_allocator.hpp>
 #include <unordered_set>
 #include <map>
+#include <tclDecls.h>
+#include <Foundation/Foundation.h>
 #include "dmrewrite.hpp"
 #include "Page.hpp"
 
@@ -116,23 +118,22 @@ bool Table::generalUpdate(uint64_t key, LoggedOperation& loggedOperation, Snapsh
     auto addr = reinterpret_cast<char*>(hMap.get(key));
     if (addr) {
         // found it in the hash table
-        std::atomic<LogEntry*>* newestPtr;
+        LogEntry* newestPtr;
         bool isNewest;
         auto rec = mRecord.getRecordData(snapshot, addr, isNewest, &newestPtr);
         if (!isNewest) {
             // We got a conflict
             return false;
         }
-        auto newestOp = newestPtr->load();
-        if (newestOp != nullptr && newestOp != LoggedOperation::loggedOperationFromTuple(rec)) {
+        if (newestPtr != nullptr && newestPtr != LoggedOperation::loggedOperationFromTuple(rec)) {
             // Someone did an update in the mean time
             return false;
         }
-        loggedOperation.previous = newestPtr->load();
+        loggedOperation.previous = newestPtr;
         auto logEntry = mLog.append(uint32_t(loggedOperation.serializedSize()));
         loggedOperation.serialize(logEntry->data());
         logEntry->seal();
-        return newestPtr->compare_exchange_strong(newestOp, logEntry);
+        return mRecord.setNewest(newestPtr, logEntry, addr);
     }
     auto iterator = mInsertLog.tail();
     while (iterator->sealed() && iterator->size > 0) {
@@ -177,24 +178,39 @@ void Table::runGC(uint64_t minVersion) {
     allocator_type alloc(allocator);
     std::map<size_t, char*, std::less<size_t>, allocator_type> freeMap(alloc);
     std::vector<PageHolder*, typename allocator_type::rebind<PageHolder*>> pagesToDelete(alloc);
+    // tuple of pointers to the newest tuple, format is from -> to
+    using charVecAllocator = allocator_type::rebind<std::pair<char*, char*>>;
+    std::vector<std::pair<char*, char*>, charVecAllocator> newestPointersToChange(alloc);
     auto& pageList = *newPages;
     for (size_t i = 0; i < pageList.size(); ++i) {
         Page page(pageList[i]->page);
+        Page nPage(pageList[i]->page);
         // we need to iterate over both pages to make sure we change the newest pointer in the old records
         auto old_iterator = page.begin();
         for (auto iterator = page.begin(); iterator != page.end(); ++iterator) {
-            // TODO: Clean pages
             auto record = page.getRecord(iterator);
-            if (!mRecord.needGCWork(record, minVersion)) continue;
+            if (!mRecord.needGCWork(record, minVersion)) {
+                if ((*currPages)[i] != (*newPages)[i]) {
+                    newestPointersToChange.emplace_back(page.getRecord(old_iterator), nPage.getRecord(iterator));
+                }
+                continue;
+            }
             if ((*currPages)[i] == (*newPages)[i]) {
                 // To clean a page, we need to copy it
                 auto newPage = reinterpret_cast<char*>(mPageManager.alloc());
                 memcpy(newPage, pageList[i]->page, TELL_PAGE_SIZE);
                 pagesToDelete.push_back(pageList[i]);
                 pageList[i] = new (tell::store::allocator::malloc(sizeof(PageHolder))) PageHolder(newPage);
+                nPage = Page(newPage);
+                // fill the pointers to change map up to the current position
+                for (auto k = page.begin(), j = nPage.begin(); k != iterator; ++k) {
+                    newestPointersToChange.emplace_back(page.getRecord(k), nPage.getRecord(j));
+                    ++j;
+                }
                 // at this moment, we need to set the new iterator
                 page = Page(pageList[i]->page);
                 iterator = page.fromPosition(iterator);
+                record = page.getRecord(iterator);
             }
             // we need to clean this page. This means, that there is either a newer version availabel,
             // there are versions which can be deleted, or both.
@@ -206,6 +222,23 @@ void Table::runGC(uint64_t minVersion) {
             }
             ++old_iterator;
         }
+        // TODO: fill page up
+        // Change the newest pointers
+        for (auto& p : newestPointersToChange) {
+            auto from = reinterpret_cast<std::atomic<char*>*>(p.first);
+            auto to = reinterpret_cast<std::atomic<char*>*>(p.second);
+            while (true) {
+                auto fromPtr = from->load();
+                auto toPtr = to->load();
+                auto fromPtrVal = reinterpret_cast<unsigned long>(fromPtr);
+                if (fromPtrVal % 4 == 0 && fromPtr != toPtr) {
+                    to->store(fromPtr);
+                    continue;
+                }
+                if (from->compare_exchange_strong(fromPtr, reinterpret_cast<char*>(to) + 1)) break;
+            }
+        }
+        newestPointersToChange.clear();
     }
     for (auto p : pagesToDelete) {
         tell::store::allocator::free(p, [this, p]{

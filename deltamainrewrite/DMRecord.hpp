@@ -26,7 +26,7 @@ struct DMRecord {
     const char* getRecordData(const SnapshotDescriptor& snapshot,
                               const char* data,
                               bool& isNewest,
-                              std::atomic<LogEntry*>** next = nullptr) const;
+                              LogEntry** next = nullptr) const;
     bool needGCWork(const char* data, uint64_t minVersion) const;
     LogEntry* getNewest(const char* data) const;
     bool setNewest(LogEntry* old, LogEntry* n, const char* data);
@@ -80,9 +80,8 @@ std::pair<size_t, char*> DMRecord::compactAndMerge(char* data, uint64_t minVersi
             // we need to allocate a block, since we ran out of space here
             ptr = alloc.allocate(res.first);
             res.second = ptr;
-        } else {
-            // set the first 8 bytes (pointer to newest version, to 0
-            memset(data, 0, 8);
+            memcpy(ptr, data, 8);
+            memcpy(res.second + 8, data + 8, multiVersionRecord.getSize(data + 8));
         }
         *reinterpret_cast<uint32_t*>(ptr) = uint32_t(res.first);
         *reinterpret_cast<uint32_t*>(ptr + 4) = uint32_t(versions.size());
@@ -124,11 +123,10 @@ std::pair<size_t, char*> DMRecord::compactAndMerge(char* data, uint64_t minVersi
         auto ptr = data + 8;
         if (res.first > oldSize) {
             // the tuple got too big and will not fit into the space anymore
-            ptr = alloc.allocate(res.first);
-            res.second = ptr;
-            memcpy(res.second, data + 8, multiVersionRecord.getSize(data + 8));
-        } else {
-            memset(data, 0, 8);
+            res.second = alloc.allocate(res.first + 8);
+            ptr = res.second + 8;
+            memcpy(res.second, data, 8);
+            memcpy(res.second + 8, data + 8, multiVersionRecord.getSize(data + 8));
         }
         // We can make use of the fact, that all versions in the log will be
         // newer than the newest version in the record

@@ -5,6 +5,9 @@
 namespace tell {
 namespace store {
 
+static_assert(ATOMIC_POINTER_LOCK_FREE, "atomic pointer operations not supported");
+static_assert(sizeof(LogPage*) == sizeof(std::atomic<LogPage*>), "atomics won't work correctly");
+
 std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
     auto off = offset();
     if (size == 0 && off == 0) {
@@ -19,7 +22,7 @@ std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
     }
     // pointer to page
     char* p = reinterpret_cast<char*>(this) - off;
-    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>*>(p)->load();
+    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>&>(p).load();
     if (nextPage) {
         return std::make_pair(nextPage, reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET));
     } else {
