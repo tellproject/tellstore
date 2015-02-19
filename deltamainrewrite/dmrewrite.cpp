@@ -3,8 +3,6 @@
 #include <util/chunk_allocator.hpp>
 #include <unordered_set>
 #include <map>
-#include <tclDecls.h>
-#include <Foundation/Foundation.h>
 #include "dmrewrite.hpp"
 #include "Page.hpp"
 
@@ -23,10 +21,13 @@ Table::Table(PageManager& pageManager, Schema const& schema)
 {
 }
 
-void GarbageCollector::run(const std::vector<Table*>& tables) {
+void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
+    for (Table* table : tables) {
+        table->runGC(minVersion);
+    }
 }
 
-void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor& descr,
+void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor&,
                    bool* succeeded /*=nullptr*/) {
     if (mHashMap.load()->get(key) != nullptr) {
         if (succeeded != nullptr)
@@ -180,7 +181,7 @@ void Table::runGC(uint64_t minVersion) {
     std::vector<PageHolder*, typename allocator_type::rebind<PageHolder*>> pagesToDelete(alloc);
     // tuple of pointers to the newest tuple, format is from -> to
     using charVecAllocator = allocator_type::rebind<std::pair<char*, char*>>;
-    std::vector<std::pair<char*, char*>, charVecAllocator> newestPointersToChange(alloc);
+    std::vector<std::pair<char*, char*>, charVecAllocator> newestPointersToChange{charVecAllocator(allocator)};
     auto& pageList = *newPages;
     for (size_t i = 0; i < pageList.size(); ++i) {
         Page page(pageList[i]->page);
@@ -245,7 +246,7 @@ void Table::runGC(uint64_t minVersion) {
             mPageManager.free(p->page);
         });
     }
-}
+};
 } // namespace tell
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
     : pageManager(config.totalMemory), tableManager(config, gc) {

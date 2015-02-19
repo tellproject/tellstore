@@ -97,7 +97,7 @@ char* Schema::serialize(char* ptr) const {
     memcpy(ptr, &allNotNull, sizeof(allNotNull));
     ptr += 2;
     for (auto& field : mFixedSizeFields) {
-        ptr = serialize(ptr);
+        ptr = serialize_field(field, ptr);
     }
     for (auto& field : mVarSizeFields) {
         ptr = serialize_field(field, ptr);

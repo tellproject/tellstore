@@ -47,7 +47,7 @@ private:
 
 class GarbageCollector {
 public:
-    void run(const std::vector<Table*>& tables);
+    void run(const std::vector<Table*>& tables, uint64_t minVersion);
 };
 
 }

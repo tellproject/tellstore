@@ -3,6 +3,7 @@
 #include "StorageConfig.hpp"
 #include "Epoch.hpp"
 #include "Record.hpp"
+#include "CommitManager.hpp"
 
 #include <crossbow/concurrent_map.hpp>
 #include <crossbow/string.hpp>
@@ -16,13 +17,6 @@ namespace store {
 
 class NoGC {
 public:
-    bool doRun() const {
-        return false;
-    }
-
-    void run() {
-        return;
-    }
 };
 
 template<class Table, class GC>
@@ -33,6 +27,7 @@ private:
     StorageConfig mConfig;
     GC& mGC;
     std::thread mGCThread;
+    CommitManager mCommitManager;
     bool mShutDown = false;
     crossbow::concurrent_map<crossbow::string, uint64_t> mNames;
     std::vector<Table*> mTables;
@@ -47,15 +42,16 @@ private:
                 std::this_thread::sleep_for(begin + duration - now);
             }
             begin = Clock::now();
-            mGC.run(mTables);
+            // TODO: Get correct min version
+            mGC.run(mTables, mCommitManager.getLowestActiveVersion());
         }
     }
 
 public:
     TableManager(const StorageConfig& config, GC& gc)
         : mConfig(config), mGC(gc), mGCThread(std::bind(&TableManager::gcThread, this)),
-        // TODO: This is a hack, we need to think about a better wat to handle tables (this will evantually crash!!)
-        mTables(1024, nullptr), mLastTableIdx(0) {
+          // TODO: This is a hack, we need to think about a better wat to handle tables (this will eventually crash!!)
+          mTables(1024, nullptr), mLastTableIdx(0) {
     }
 
     ~TableManager() {

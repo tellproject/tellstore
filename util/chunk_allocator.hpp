@@ -80,7 +80,7 @@ public:
     copy_allocator(const copy_allocator<U, Alloc>& o)
         : allocator(o.allocator)
     {}
-    copy_allocator& operator= (copy_allocator& other) {
+    copy_allocator& operator= (copy_allocator&) {
         return *this;
     }
     size_type max_size() const {
@@ -94,10 +94,10 @@ public:
         const char& ref = reinterpret_cast<char&>(x);
         return reinterpret_cast<const_pointer>(&ref);
     }
-    pointer allocate(size_type n, const void* hint = nullptr) {
+    pointer allocate(size_type n, const void*  = nullptr) {
         return reinterpret_cast<pointer>(allocator.alloc(n*sizeof(value_type)));
     }
-    void deallocate(pointer p, size_type n) {
+    void deallocate(pointer, size_type) {
     }
     template<class U, class... Args>
     void construct(U* p, Args&&... args) {

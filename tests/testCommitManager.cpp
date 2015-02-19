@@ -5,10 +5,8 @@ using namespace tell::store;
 
 namespace {
 
-CommitManager commitManager;
-
-
 TEST(commit_manager_test, simple) {
+    CommitManager commitManager;
     auto oldDescriptor = commitManager.startTx();
     auto newDescriptor = commitManager.startTx();
     auto newV = newDescriptor.version();
@@ -24,6 +22,7 @@ TEST(commit_manager_test, simple) {
 }
 
 TEST(commit_manager_test, many_transactions) {
+    CommitManager commitManager;
     std::vector<SnapshotDescriptor> descriptors;
     descriptors.reserve(1024);
     // start 1024 transactions
@@ -52,7 +51,8 @@ TEST(commit_manager_test, many_transactions) {
         ASSERT_EQ(snapshot.inReadSet(versions[i]), i % 2 == 0);
         ASSERT_TRUE(allCommitted.inReadSet(versions[i]));
     }
-    ASSERT_TRUE(allCommitted.baseVersion() == 1024);
+    ASSERT_EQ(allCommitted.baseVersion(), 1024);
+    ASSERT_EQ(allCommitted.lowestActiveVersion(), 1023);
 }
 
 }

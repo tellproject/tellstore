@@ -8,7 +8,7 @@
 namespace tell {
 namespace store {
 
-class LogEntry;
+struct LogEntry;
 
 namespace dmrewrite {
 

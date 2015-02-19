@@ -65,11 +65,11 @@ public:
         return reinterpret_cast<pointer>(&reinterpret_cast<uint8_t&>(x));
     }
 
-    pointer allocate(size_type n, void* hint = 0) {
+    pointer allocate(size_type n, void* = 0) {
         return reinterpret_cast<pointer>(allocator::malloc(n * sizeof(T)));
     }
 
-    void deallocate(pointer p, size_type n) {
+    void deallocate(pointer p, size_type) {
         allocator::free(p);
     }
 
