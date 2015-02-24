@@ -97,7 +97,7 @@ bool Table::get(uint64_t key, const char*& data, const SnapshotDescriptor& desc,
     return false;
 }
 
-bool Table::update(uint64_t key, const char* data, const SnapshotDescriptor& snapshot) {
+bool Table::update(uint64_t key, const char* const data, const SnapshotDescriptor& snapshot) {
     LoggedOperation loggedOperation;
     loggedOperation.operation = LogOperation::UPDATE;
     loggedOperation.key = key;
@@ -249,11 +249,11 @@ void Table::runGC(uint64_t minVersion) {
 };
 } // namespace tell
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : pageManager(config.totalMemory), tableManager(config, gc) {
+    : pageManager(config.totalMemory), tableManager(pageManager, config, gc) {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : pageManager(totalMem), tableManager(config, gc) {
+    : pageManager(totalMem), tableManager(pageManager, config, gc) {
 }
 
 } // namespace store

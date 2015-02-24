@@ -1,4 +1,5 @@
 #include "CommitManager.hpp"
+#include <algorithm>
 
 namespace tell {
 namespace store {
@@ -11,8 +12,12 @@ DummyManager::DummyManager()
       mLowestActiveVersion(0u),
       mActiveBaseVersions(new uint32_t[INITAL_BUFFER_SIZE]),
       mActiveBaseVersionsCount(INITAL_BUFFER_SIZE)
+#ifndef NDEBUG
+      , mRunningTransactions(0)
+#endif
 {
     memset(mVersions, 0, INITAL_BUFFER_SIZE);
+    memset(mActiveBaseVersions, 0, sizeof(uint32_t)*INITAL_BUFFER_SIZE);
 }
 
 DummyManager::~DummyManager() {
@@ -21,6 +26,9 @@ DummyManager::~DummyManager() {
 
 SnapshotDescriptor DummyManager::startTx() {
     Lock _(mMutex);
+#ifndef NDEBUG
+    ++mRunningTransactions;
+#endif
     const size_t bufferLen = (mLastVersion - mBase)/8 + 1 + 16;
     if (bufferLen - 16 > mVersionsLength) {
         unsigned char* newVersions = new unsigned char[mVersionsLength * 2];
@@ -54,6 +62,9 @@ void DummyManager::abortTx(const SnapshotDescriptor& version) {
 void DummyManager::commitTx(const SnapshotDescriptor& v) {
     auto version = v.version();
     Lock _(mMutex);
+#ifndef NDEBUG
+    --mRunningTransactions;
+#endif
     unsigned char byteIdx = (unsigned char)(1 << ((version - mBase - 1) % 8));
     mVersions[(version - mBase - 1)/8] |= byteIdx;
     size_t moveIdx = 0u;
@@ -69,7 +80,7 @@ void DummyManager::commitTx(const SnapshotDescriptor& v) {
     // handle lowest active version
     mActiveBaseVersions[v.baseVersion() - mLowestActiveVersion] -= 1;
     size_t moveCount = 0u;
-    while (mActiveBaseVersions[0] == 0 && mLowestActiveVersion < mBase) {
+    while (mActiveBaseVersions[moveCount] == 0 && mLowestActiveVersion < std::max(decltype(mBase)(1), mBase) - 1) {
         ++mLowestActiveVersion;
         ++moveCount;
     }

@@ -52,7 +52,8 @@ TEST(commit_manager_test, many_transactions) {
         ASSERT_TRUE(allCommitted.inReadSet(versions[i]));
     }
     ASSERT_EQ(allCommitted.baseVersion(), 1024);
-    ASSERT_EQ(allCommitted.lowestActiveVersion(), 1023);
+    commitManager.commitTx(snapshot);
+    ASSERT_EQ(commitManager.getLowestActiveVersion(), 1023);
 }
 
 }

@@ -61,7 +61,8 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 ###################
 set(TEST_SRCS
     tests/testCuckooMap.cpp
-    tests/testCommitManager.cpp)
+    tests/testCommitManager.cpp
+    tests/simpleTests.cpp)
 add_executable(tests tests/main.cpp ${TEST_SRCS})
 target_link_libraries(tests TellStore gtest gtest_main)
 add_test(tests tests)

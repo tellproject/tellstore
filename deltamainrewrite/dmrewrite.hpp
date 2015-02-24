@@ -37,7 +37,7 @@ public:
 
     bool get(uint64_t key, const char*& data, const SnapshotDescriptor& desc, bool& isNewest);
 
-    bool update(uint64_t key, const char* data, const SnapshotDescriptor& snapshot);
+    bool update(uint64_t key, const char* const data, const SnapshotDescriptor& snapshot);
 
     bool remove(uint64_t key, const SnapshotDescriptor& snapshot);
     void runGC(uint64_t minVersion);
@@ -63,6 +63,59 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     StoreImpl(const StorageConfig& config);
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
+    bool creteTable(const crossbow::string &name,
+                    const Schema& schema,
+                    uint64_t& idx)
+    {
+        return tableManager.createTable(name, schema, idx);
+    }
+
+    bool getTableId(const crossbow::string&name, uint64_t& id) {
+        return tableManager.getTableId(name, id);
+    }
+
+    bool get(uint64_t tableId,
+             uint64_t key,
+             const char*& data,
+             const SnapshotDescriptor& snapshot,
+             bool& isNewest)
+    {
+        return tableManager.get(tableId, key, data, snapshot, isNewest);
+    }
+
+    bool update(uint64_t tableId,
+                uint64_t key,
+                const char* const data,
+                const SnapshotDescriptor& snapshot)
+    {
+        return tableManager.update(tableId, key, data, snapshot);
+    }
+
+    void insert(uint64_t tableId,
+                uint64_t key,
+                const char* const data,
+                const SnapshotDescriptor& snapshot,
+                bool* succeeded = nullptr)
+    {
+        return tableManager.insert(tableId, key, data, snapshot, succeeded);
+    }
+
+    bool remove(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        return tableManager.remove(tableId, key, snapshot);
+    }
+
+    /**
+     * We use this method mostly for test purposes. But
+     * it might be handy in the future as well. If possible,
+     * this should be implemented in an efficient way.
+     */
+    void forceGC()
+    {
+        tableManager.forceGC();
+    }
 };
 
 } // namespace store

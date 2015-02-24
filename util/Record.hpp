@@ -15,7 +15,8 @@ namespace store {
 enum class FieldType
     : uint16_t {
     NOTYPE = 0,
-    SMALLINT = 1,
+    NULLTYPE = 1,
+    SMALLINT = 2,
     INT,
     BIGINT,
     FLOAT,
@@ -24,21 +25,35 @@ enum class FieldType
     BLOB
 };
 
+class Record;
+
 class Field {
+    friend class Record;
 private:
     FieldType mType;
     crossbow::string mName;
+    bool mNotNull = false;
+    char* mData = nullptr;
 public:
     Field()
         : mType(FieldType::NOTYPE) {
     }
 
-    Field(FieldType type, const crossbow::string& name)
-        : mType(type), mName(name) {
+    Field(FieldType type, const crossbow::string& name, bool notNull)
+        : mType(type), mName(name), mNotNull(notNull) {
     }
+
+    Field(Field&& f);
+    Field(const Field& f);
+
+    Field& operator=(Field&& other);
+    Field& operator=(const Field& other);
+public:
 
     bool isFixedSized() const {
         switch (mType) {
+            case FieldType::NULLTYPE:
+                return true;
             case FieldType::SMALLINT:
             case FieldType::INT:
             case FieldType::BIGINT:
@@ -64,6 +79,12 @@ public:
     }
 
     size_t staticSize() const;
+
+    bool isNotNull() const {
+        return mNotNull;
+    }
+
+    crossbow::string stringValue() const;
 };
 
 template<typename Enum>
@@ -160,11 +181,9 @@ public:
     */
     char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
 
-    /**
-    * Sets the field at id to @isNull. Returns true iff the field
-    * was NULL before.
-    */
-    bool setNull(id_t id, bool isNull);
+    Field getField(char* const ptr, id_t id);
+    Field getField(char* const ptr, const crossbow::string& name);
+
     uint32_t getSize(const char* data) const {
         return *reinterpret_cast<const uint32_t*>(data);
     }

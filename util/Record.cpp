@@ -5,8 +5,44 @@
 namespace tell {
 namespace store {
 
+
+Field::Field(Field&& other)
+    : mType(other.mType)
+    , mName(std::move(other.mName))
+    , mNotNull(other.mNotNull)
+    , mData(other.mData)
+{}
+
+Field::Field(const Field& other)
+    : mType(other.mType)
+    , mName(other.mName)
+    , mNotNull(other.mNotNull)
+    , mData(other.mData)
+{}
+
+Field& Field::operator=(Field&& other)
+{
+    mType = other.mType;
+    mName = std::move(other.mName);
+    mNotNull = other.mNotNull;
+    mData = other.mData;
+    return *this;
+}
+
+Field& Field::operator=(const Field& other)
+{
+    mType = other.mType;
+    mName = other.mName;
+    mNotNull = other.mNotNull;
+    mData = other.mData;
+    return *this;
+}
+
+
 size_t Field::staticSize() const {
     switch (mType) {
+        case FieldType::NULLTYPE:
+            return 0;
         case FieldType::SMALLINT:
             return sizeof(int16_t);
         case FieldType::INT:
@@ -51,7 +87,7 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         return res;
     }
     mAllNotNull &= notNull;
-    Field f(type, name);
+    Field f(type, name, notNull);
     if (f.isFixedSized()) {
         mFixedSizeFields.emplace_back(f);
     } else {
@@ -75,6 +111,9 @@ inline char* serialize_field(const Field& field, char* ptr) {
     uint16_t fieldType = to_underlying(field.type());
     memcpy(ptr, &fieldType, sizeof(fieldType));
     ptr += sizeof(fieldType);
+    bool isNotNull = field.isNotNull();
+    memcpy(ptr, &isNotNull, sizeof(isNotNull));
+    ptr += sizeof(isNotNull);
     const crossbow::string& name = field.name();
     uint16_t nameSize = uint16_t(name.size());
     memcpy(ptr, &nameSize, sizeof(nameSize));
@@ -116,9 +155,11 @@ Schema::Schema(const char* ptr) {
     for (uint16_t i = 0; i < numColumns; ++i) {
         FieldType type = *reinterpret_cast<const FieldType*>(ptr);
         ptr += sizeof(type);
+        bool isNotNull = *reinterpret_cast<const bool*>(ptr);
+        ptr += sizeof(isNotNull);
         uint16_t nameSize = *reinterpret_cast<const uint16_t*>(ptr);
         ptr += sizeof(nameSize);
-        Field f(type, crossbow::string(ptr, nameSize));
+        Field f(type, crossbow::string(ptr, nameSize), isNotNull);
         ptr += nameSize;
         if (f.isFixedSized()) {
             mFixedSizeFields.emplace_back(std::move(f));
@@ -194,13 +235,35 @@ bool Record::idOf(const crossbow::string& name, id_t& result) const {
     return true;
 }
 
-bool Record::setNull(Record::id_t id, bool isNull) {
-    return false;
-}
-
 char* Record::data(char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr */) {
     auto res = const_cast<const Record*>(this)->data(ptr, id, isNull, type);
     return const_cast<char*>(res);
+}
+
+Field Record::getField(char* const ptr, id_t id) {
+    if (id >= mFieldMetaData.size()) {
+        LOG_ERROR("Tried to read non-existent field");
+        assert(false);
+        return Field();
+    }
+    bool isNull;
+    FieldType type;
+    auto dPtr = data(ptr, id, isNull, &type);
+    if (isNull)
+        return Field();
+    auto res = mFieldMetaData[id].first;
+    res.mData = dPtr;
+    return res;
+}
+
+Field Record::getField(char* const ptr, const crossbow::string& name)
+{
+    id_t i;
+    if (!idOf(name, i)) {
+        LOG_ERROR("Unknown Field %s", name);
+        return Field();
+    }
+    return getField(ptr, i);
 }
 
 const char* MultiVersionRecord::getRecord(const SnapshotDescriptor& desc, const char* record, bool& isNewest) {

@@ -17,6 +17,9 @@ class DummyManager {
     uint64_t mLowestActiveVersion;
     uint32_t* mActiveBaseVersions;
     size_t mActiveBaseVersionsCount;
+#ifndef NDEBUG
+    size_t mRunningTransactions;
+#endif
     mutable std::mutex mMutex;
     using Lock = std::lock_guard<std::mutex>;
 public:
