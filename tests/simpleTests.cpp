@@ -28,6 +28,12 @@ TEST(simple, insert_and_get)
     auto res = storage.creteTable(tableName, schema, tId);
     ASSERT_TRUE(res) << "creating table failed";
     EXPECT_TRUE(correctTableId(tableName, tId, storage));
+    // Force GC - since we did not do anything yet, this should
+    // just return. We can not really test whether it worked
+    // correctly, but at least it must not segfault
+    storage.forceGC();
+    auto tx = storage.startTx();
+    //storage.insert(tId, 12, snapshot);
 }
 
 }

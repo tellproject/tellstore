@@ -9,6 +9,7 @@
 #include <util/Log.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/LogOperations.hpp>
+#include <util/TransactionImpl.hpp>
 #include "DMRecord.hpp"
 
 namespace tell {
@@ -56,13 +57,23 @@ template<>
 struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using Table = dmrewrite::Table;
     using GC = dmrewrite::GarbageCollector;
+    using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
+    using Transaction = TransactionImpl<StorageType>;
     PageManager pageManager;
     GC gc;
+    CommitManager commitManager;
     TableManager<Table, GC> tableManager;
 
     StoreImpl(const StorageConfig& config);
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
+
+
+    Transaction startTx()
+    {
+        return Transaction(*this, commitManager.startTx());
+    }
+
     bool creteTable(const crossbow::string &name,
                     const Schema& schema,
                     uint64_t& idx)
@@ -116,6 +127,23 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     {
         tableManager.forceGC();
     }
+
+    template<class T>
+    void commit(T& transaction)
+    {
+        commitManager.commitTx(transaction.mDescriptor);
+        transaction.mCommitted = true;
+    }
+
+    void abort(Transaction& transaction)
+    {
+        // TODO: Roll-back. I am not sure whether this would generally
+        // work. Probably not (since we might also need to roll back the
+        // index which has to be done in the processing layer).
+        commitManager.abortTx(transaction.mDescriptor);
+        transaction.mCommitted = true;
+    }
+
 };
 
 } // namespace store

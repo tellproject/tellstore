@@ -249,11 +249,11 @@ void Table::runGC(uint64_t minVersion) {
 };
 } // namespace tell
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : pageManager(config.totalMemory), tableManager(pageManager, config, gc) {
+    : pageManager(config.totalMemory), tableManager(pageManager, config, gc, commitManager) {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : pageManager(totalMem), tableManager(pageManager, config, gc) {
+    : pageManager(totalMem), tableManager(pageManager, config, gc, commitManager) {
 }
 
 } // namespace store

@@ -25,6 +25,7 @@ set(SOURCE_FILES
     deltamainrewrite/Page.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
+    util/TransactionImpl.hpp
     util/CommitManager.hpp
     util/CommitManager.cpp
     util/PageManager.cpp

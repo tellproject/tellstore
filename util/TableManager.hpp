@@ -31,8 +31,8 @@ private:
     StorageConfig mConfig;
     GC& mGC;
     PageManager& mPageManager;
+    CommitManager& mCommitManager;
     std::thread mGCThread;
-    CommitManager mCommitManager;
     bool mShutDown = false;
     crossbow::concurrent_map<crossbow::string, uint64_t> mNames;
     std::vector<Table*> mTables;
@@ -46,7 +46,7 @@ private:
         auto duration = std::chrono::seconds(mConfig.gcIntervall);
         while (!mShutDown) {
             auto now = Clock::now();
-            if (begin + duration >= now) {
+            if (begin + duration > now) {
                 mStopCondition.wait_for(lock, begin + duration - now);
             }
             if (mShutDown) return;
@@ -56,11 +56,16 @@ private:
     }
 
 public:
-    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc)
-        : mConfig(config), mGC(gc), mGCThread(std::bind(&TableManager::gcThread, this)),
-          mPageManager(pageManager),
-          // TODO: This is a hack, we need to think about a better wat to handle tables (this will eventually crash!!)
-          mTables(1024, nullptr), mLastTableIdx(0) {
+    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc, CommitManager& commitManager)
+        : mConfig(config)
+        , mGC(gc)
+        , mCommitManager(commitManager)
+        , mGCThread(std::bind(&TableManager::gcThread, this))
+        , mPageManager(pageManager)
+        // TODO: This is a hack, we need to think
+        // about a better wat to handle tables (this will eventually crash!!)
+        , mTables(1024, nullptr), mLastTableIdx(0)
+    {
     }
 
     ~TableManager() {
