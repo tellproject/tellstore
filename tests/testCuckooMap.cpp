@@ -1,5 +1,6 @@
 #include <util/CuckooHash.hpp>
 #include <gtest/gtest.h>
+#include <memory>
 #include <random>
 #include <set>
 

@@ -1,5 +1,7 @@
 #include "CommitManager.hpp"
 #include <algorithm>
+#include <cstring>
+#include <memory>
 
 namespace tell {
 namespace store {
