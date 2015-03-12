@@ -17,7 +17,7 @@ public:
     }
 
     ~SnapshotDescriptor() {
-        if (mDescriptor) delete mDescriptor;
+        if (mDescriptor) delete[] mDescriptor;
     }
 
     SnapshotDescriptor(const SnapshotDescriptor&) = delete;
