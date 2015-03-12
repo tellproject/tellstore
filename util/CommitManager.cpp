@@ -31,8 +31,8 @@ SnapshotDescriptor DummyManager::startTx() {
 #ifndef NDEBUG
     ++mRunningTransactions;
 #endif
-    const size_t bufferLen = (mLastVersion - mBase)/8 + 1 + 16;
-    if (bufferLen - 16 > mVersionsLength) {
+    const size_t bufferLen = (mLastVersion - mBase)/8 + 1;
+    if (bufferLen > mVersionsLength) {
         unsigned char* newVersions = new unsigned char[mVersionsLength * 2];
         memset(newVersions, 0, mVersionsLength*2);
         memcpy(newVersions, mVersions, mVersionsLength);
@@ -40,10 +40,10 @@ SnapshotDescriptor DummyManager::startTx() {
         delete[] mVersions;
         mVersions = newVersions;
     }
-    std::unique_ptr<unsigned char[]> resBuffer(new unsigned char[bufferLen]);
+    std::unique_ptr<unsigned char[]> resBuffer(new unsigned char[bufferLen + 16]);
     memcpy(resBuffer.get(), &mBase, sizeof(mBase));
-    memcpy(resBuffer.get() + 8, &mLowestActiveVersion, 8);
-    memcpy(resBuffer.get() + 16, mVersions, bufferLen - 8);
+    memcpy(resBuffer.get() + 8, &mLowestActiveVersion, sizeof(mLowestActiveVersion));
+    memcpy(resBuffer.get() + 16, mVersions, bufferLen);
     auto version = ++mLastVersion;
     if (mActiveBaseVersionsCount < mBase - mLowestActiveVersion) {
         auto n = new uint32_t[mActiveBaseVersionsCount*2];
@@ -54,7 +54,7 @@ SnapshotDescriptor DummyManager::startTx() {
         mActiveBaseVersionsCount *= 2;
     }
     mActiveBaseVersions[mBase - mLowestActiveVersion] += 1;
-    return store::SnapshotDescriptor(resBuffer.release(), bufferLen, version);
+    return store::SnapshotDescriptor(resBuffer.release(), bufferLen + 16, version);
 }
 
 void DummyManager::abortTx(const SnapshotDescriptor& version) {
