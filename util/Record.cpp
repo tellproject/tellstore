@@ -66,6 +66,48 @@ size_t Field::staticSize() const {
     }
 }
 
+size_t Field::defaultSize() const {
+    if (isFixedSized()) return staticSize();
+    switch (mType) {
+        case FieldType::NULLTYPE:
+            LOG_ERROR("NULLTYPE is not appropriate to use in a schema");
+            return 0;
+        case FieldType::TEXT:
+            return sizeof(uint32_t);
+        case FieldType::BLOB:
+            return sizeof(uint32_t);
+        case FieldType::NOTYPE:
+            assert(false);
+            LOG_ERROR("One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            assert(false);
+            LOG_ERROR("Unknown type");
+            return 0;
+    }
+}
+
+size_t Field::sizeOf(const boost::any& value) const {
+    if (isFixedSized()) return staticSize();
+    switch (mType) {
+        case FieldType::NULLTYPE:
+            LOG_ERROR("NULLTYPE is not appropriate to use in a schema");
+            return 0;
+        case FieldType::TEXT:
+            return sizeof(uint32_t) + boost::any_cast<crossbow::string>(value).size();
+        case FieldType::BLOB:
+            return sizeof(uint32_t) + boost::any_cast<crossbow::string>(value).size();
+        case FieldType::NOTYPE:
+            assert(false);
+            LOG_ERROR("One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            assert(false);
+            LOG_ERROR("Unknown type");
+            return 0;
+    }
+}
+
 bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull) {
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
         LOG_DEBUG("Field name with %d bytes are not supported", name.size());
@@ -192,6 +234,180 @@ Record::Record(const Schema& schema)
         // make sure, that all others are set to max
         currOffset = std::numeric_limits<off_t>::max();
     }
+}
+
+size_t Record::sizeOfTuple(const GenericTuple& tuple) const
+{
+    size_t result = 4 + (mSchema.allNotNull() ? 0 : (mSchema.schemaSize() + 7)/8);
+    result += (result % 8) ? 8 - (result % 8) : 0;
+    for (auto& f : mFieldMetaData) {
+        auto& field = f.first;
+        if (field.isFixedSized()) {
+            result += field.staticSize();
+            // we will need this space anyway
+            // no matter what tuple contains
+            continue;
+        }
+        const auto& name = field.name();
+        auto iter = tuple.find(name);
+        if (iter == tuple.end()) {
+            // In this case we either set the value
+            // to NULL (if possible), or to the
+            // default value
+            if (field.isNotNull()) {
+                result += field.defaultSize();
+            }
+            continue;
+        } else {
+            result += field.sizeOf(f.second);
+        }
+    }
+    return result;
+}
+
+char* Record::create(const GenericTuple& tuple) const
+{
+    using uchar = unsigned char;
+    uint32_t recSize = uint32_t(sizeOfTuple(tuple));
+    std::unique_ptr<char[]> result(new char[recSize]);
+    char* res = result.get();
+    auto headerSize = 4 + (mFieldMetaData.size() + 7)/8;
+    headerSize += (headerSize % sizeof(char*)) ? (sizeof(char*) - (headerSize % 8)) : 0;
+    char* current = res + headerSize;
+    memset(res, 0, recSize);
+    memcpy(res, &recSize, sizeof(recSize));
+    for (id_t id = 0; id < mFieldMetaData.size(); ++id) {
+        auto& f = mFieldMetaData[id];
+        const auto& name = f.first.name();
+        // first we need to check whether the value for this field is
+        // given
+        auto iter = tuple.find(name);
+        if (iter == tuple.end()) {
+            // in this case, we set it to NULL or to
+            // the default value. This might be a wrong
+            // behavior, but the processing layer is
+            // responsible for catching errors of this
+            // kind.
+            if (f.first.isNotNull()) {
+                // Therefore we set it to the default value
+                // In all cases, this will be represnted
+                // by setting all to 0 - which is already
+                // done in the memset at the beginning of this
+                // function.
+            } else {
+                // In this case we set the field to NULL
+                uchar& bitmap = *reinterpret_cast<uchar*>(res + 4 + id / 8);
+                uchar pos = uchar(id % 8);
+                bitmap |= uchar(0x1 << pos);
+            }
+            // after writing the data back, we might need to increase
+            // the current pointer
+            if (f.first.isFixedSized() || !f.first.isNotNull()) {
+                // We store the information, even if the field is
+                // null. This is for performance reason (it makes it
+                // faster to access any fixed-size fields).
+                // If the field was declared not null, than we have
+                // to write a tuple with its default value
+                switch (f.first.type()) {
+                case FieldType::NOTYPE:
+                    LOG_ERROR("notype not allowed here");
+                    std::terminate();
+                    break;
+                case FieldType::NULLTYPE:
+                    LOG_ERROR("null not allowed here");
+                    std::terminate();
+                    break;
+                case FieldType::SMALLINT:
+                    current += sizeof(int16_t);
+                    break;
+                case FieldType::INT:
+                    current += sizeof(int32_t);
+                    break;
+                case FieldType::BIGINT:
+                    current += sizeof(int64_t);
+                    break;
+                case FieldType::FLOAT:
+                    current += sizeof(float);
+                    break;
+                case FieldType::DOUBLE:
+                    current += sizeof(double);
+                    break;
+                case FieldType::TEXT:
+                case FieldType::BLOB:
+                    // for strings and blobs we only need to safe the
+                    // length, which will be zero in this case
+                    current += sizeof(uint32_t);
+                }
+            }
+        } else if (f.first.isFixedSized()) {
+            // we just need to copy the value to the correct offset.
+            auto offset = f.second;
+            size_t s = 0;
+            switch (f.first.type()) {
+            case FieldType::NOTYPE:
+                LOG_ERROR("Try to write something with no type");
+                return nullptr;
+            case FieldType::NULLTYPE:
+                LOG_ERROR("NULLTYPE is not allowed here");
+                return nullptr;
+            case FieldType::SMALLINT:
+                s = sizeof(int16_t);
+                memcpy(res + offset, boost::any_cast<int16_t>(&(iter->second)), sizeof(s));
+                break;
+            case FieldType::INT:
+                s = sizeof(int32_t);
+                memcpy(res + offset, boost::any_cast<int32_t>(&(iter->second)), sizeof(s));
+                break;
+            case FieldType::BIGINT:
+                s = sizeof(int64_t);
+                memcpy(res + offset, boost::any_cast<int64_t>(&(iter->second)), sizeof(s));
+                break;
+            case FieldType::FLOAT:
+                s = sizeof(float);
+                memcpy(res + offset, boost::any_cast<float>(&(iter->second)), sizeof(s));
+                break;
+            case FieldType::DOUBLE:
+                s = sizeof(double);
+                memcpy(res + offset, boost::any_cast<double>(&(iter->second)), sizeof(s));
+                break;
+            case FieldType::TEXT:
+            case FieldType::BLOB:
+                LOG_ERROR("This should never happen");
+                std::terminate();
+                break;
+            }
+            current += s;
+        } else {
+            // The value type is not fixed sized.
+            switch (f.first.type()) {
+            case FieldType::NOTYPE:
+                LOG_ERROR("Try to write something with no type");
+                return nullptr;
+            case FieldType::NULLTYPE:
+                LOG_ERROR("NULLTYPE is not allowed here");
+                return nullptr;
+            case FieldType::SMALLINT:
+            case FieldType::INT:
+            case FieldType::BIGINT:
+            case FieldType::FLOAT:
+            case FieldType::DOUBLE:
+                LOG_ERROR("This should never happen");
+                std::terminate();
+                return nullptr;
+            case FieldType::TEXT:
+            case FieldType::BLOB:
+                {
+                    const crossbow::string& str = *boost::any_cast<crossbow::string>(&(iter->second));
+                    uint32_t len = uint32_t(str.size());
+                    memcpy(current, &len, sizeof(len));
+                    current += sizeof(len);
+                    memcpy(current, str.c_str(), len);
+                }
+                break;
+            }
+        }
+    }
+    return result.release();
 }
 
 const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {

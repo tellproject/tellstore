@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include "Logging.hpp"
 #include "SnapshotDescriptor.hpp"
+#include "GenericTuple.hpp"
 
 namespace tell {
 namespace store {
@@ -79,6 +80,8 @@ public:
     }
 
     size_t staticSize() const;
+    size_t defaultSize() const;
+    size_t sizeOf(const boost::any& value) const;
 
     bool isNotNull() const {
         return mNotNull;
@@ -169,12 +172,14 @@ private:
     const Schema& mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, off_t>> mFieldMetaData;
+    size_t sizeOfTuple(const GenericTuple& tuple) const;
 public:
     Record(const Schema& schema);
 
     bool idOf(const crossbow::string& name, id_t& result) const;
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
+    char* create(const GenericTuple& tuple) const;
 
     /**
     * These methods are NOT thread safe.
