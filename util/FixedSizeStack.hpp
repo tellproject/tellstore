@@ -13,6 +13,9 @@ private:
     struct Head {
         unsigned readHead = 0u;
         unsigned writeHead = 0u;
+
+        Head() noexcept = default;
+
         Head(unsigned readHead, unsigned writeHead)
             : readHead(readHead),
               writeHead(writeHead)

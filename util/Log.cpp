@@ -91,7 +91,7 @@ LogEntry* Log::append(uint32_t size) {
             }
             // we first need to make sure, that no one else will still append to this
             // page.
-            if (head->offset().compare_exchange_strong(offset, std::numeric_limits<uint32_t>::max()))
+            if (head->offset().compare_exchange_strong(offset, MAX_SIZE))
                 continue;
             // Create a new page
             auto nPage = new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
