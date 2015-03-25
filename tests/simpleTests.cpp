@@ -25,6 +25,7 @@ TEST(simple, insert_and_get)
     uint64_t tId;
     crossbow::string tableName = "testTable";
     Schema schema;
+    schema.addField(FieldType::INT, "foo", true);
     auto res = storage.creteTable(tableName, schema, tId);
     ASSERT_TRUE(res) << "creating table failed";
     EXPECT_TRUE(correctTableId(tableName, tId, storage));
@@ -33,7 +34,13 @@ TEST(simple, insert_and_get)
     // correctly, but at least it must not segfault
     storage.forceGC();
     auto tx = storage.startTx();
-    //storage.insert(tId, 12, snapshot);
+    storage.insert(tId, 1, GenericTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)}), tx);
+    bool isNewest = false;
+    const char* rec;
+    res = storage.get(tId, 1, rec, tx, isNewest);
+    ASSERT_TRUE(res) << "Tuple not found";
+    ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
+    storage.forceGC();
 }
 
 }

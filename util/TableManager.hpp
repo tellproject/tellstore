@@ -59,9 +59,9 @@ public:
     TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc, CommitManager& commitManager)
         : mConfig(config)
         , mGC(gc)
+        , mPageManager(pageManager)
         , mCommitManager(commitManager)
         , mGCThread(std::bind(&TableManager::gcThread, this))
-        , mPageManager(pageManager)
         // TODO: This is a hack, we need to think
         // about a better wat to handle tables (this will eventually crash!!)
         , mTables(1024, nullptr), mLastTableIdx(0)
@@ -125,6 +125,15 @@ public:
                 bool* succeeded = nullptr)
     {
         mTables[tableId]->insert(key, data, snapshot, succeeded);
+    }
+
+    void insert(uint64_t tableId,
+                uint64_t key,
+                const GenericTuple& tuple,
+                const SnapshotDescriptor& snapshot,
+                bool* succeeded = nullptr)
+    {
+        mTables[tableId]->insert(key, tuple, snapshot, succeeded);
     }
 
     bool remove(uint64_t tableId,

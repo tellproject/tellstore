@@ -23,6 +23,7 @@ Table::Table(PageManager& pageManager, Schema const& schema)
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
     for (Table* table : tables) {
+        if (table == nullptr) break;
         table->runGC(minVersion);
     }
 }
@@ -60,6 +61,18 @@ void Table::insert(uint64_t key, const char* const data, const SnapshotDescripto
         *succeeded = true;
     }
     return;
+}
+
+void Table::insert(uint64_t key,
+                   const GenericTuple& tuple,
+                   const SnapshotDescriptor& descr,
+                   bool* succeeded /*= nullptr*/)
+{
+    std::unique_ptr<char[]> rec(mRecord.record.create(tuple));
+    insert(key,
+           rec.get(),
+           descr,
+           succeeded);
 }
 
 bool Table::get(uint64_t key, const char*& data, const SnapshotDescriptor& desc, bool& isNewest) {

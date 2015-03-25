@@ -333,9 +333,8 @@ char* Record::create(const GenericTuple& tuple) const
                     break;
                 case FieldType::TEXT:
                 case FieldType::BLOB:
-                    // for strings and blobs we only need to safe the
-                    // length, which will be zero in this case
-                    current += sizeof(uint32_t);
+                    LOG_ERROR("TEXT/BLOB can not be fixed size");
+                    assert(false);
                 }
             }
         } else if (f.first.isFixedSized()) {

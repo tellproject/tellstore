@@ -62,6 +62,10 @@ public:
     }
 
 public:
+    operator const SnapshotDescriptor&() const {
+        return mDescriptor;
+    }
+
     const SnapshotDescriptor& descriptor() const
     {
         return mDescriptor;
