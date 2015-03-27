@@ -34,7 +34,8 @@ TEST(simple, insert_and_get)
     // correctly, but at least it must not segfault
     storage.forceGC();
     auto tx = storage.startTx();
-    storage.insert(tId, 1, GenericTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)}), tx);
+    storage.insert(tId, 1, GenericTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)}), tx, &res);
+    ASSERT_TRUE(res) << "This insert must not fail!";
     bool isNewest = false;
     const char* rec;
     res = storage.get(tId, 1, rec, tx, isNewest);

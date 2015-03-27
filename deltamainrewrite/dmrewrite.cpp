@@ -28,7 +28,7 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
     }
 }
 
-void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor&,
+void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor& snapshot,
                    bool* succeeded /*=nullptr*/) {
     if (mHashMap.load()->get(key) != nullptr) {
         if (succeeded != nullptr)
@@ -44,9 +44,10 @@ void Table::insert(uint64_t key, const char* const data, const SnapshotDescripto
     op.key = key;
     op.operation = LogOperation::INSERT;
     op.tuple = data;
+    op.version = snapshot.version();
     auto nEntry = mInsertLog.append(uint32_t(op.serializedSize()));
     op.serialize(nEntry->data());
-    nEntry->seal();
+    mInsertLog.seal(nEntry);
     if (succeeded != nullptr) {
         auto tail = mInsertLog.tail();
         while (tail != nEntry) {

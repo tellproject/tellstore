@@ -8,11 +8,18 @@ namespace store {
 char* LoggedOperation::serialize(char* destination) const {
     auto op = to_underlying(operation);
     memcpy(destination, &op, sizeof(op));
-    destination += 4;
+    destination += sizeof(op);
     memcpy(destination, &key, sizeof(key));
     destination += sizeof(key);
+    memcpy(destination, &version, sizeof(version));
+    destination += sizeof(version);
     switch (operation) {
         case LogOperation::INSERT:
+            // a null pointer with updates
+            assert(previous == nullptr);
+            memcpy(destination, &previous, sizeof(previous));
+            destination += sizeof(previous);
+            break;
         case LogOperation::UPDATE:
         case LogOperation::DELETE:
             memcpy(destination, &previous, sizeof(previous));
@@ -21,8 +28,6 @@ char* LoggedOperation::serialize(char* destination) const {
         default: {
         }
     }
-    memcpy(destination, &version, sizeof(version));
-    destination += sizeof(version);
     auto tupleSize = *reinterpret_cast<const uint32_t*>(tuple);
     memcpy(destination, &tupleSize, sizeof(tupleSize));
     destination += sizeof(tupleSize);
@@ -32,7 +37,12 @@ char* LoggedOperation::serialize(char* destination) const {
 
 size_t LoggedOperation::serializedSize() const {
     auto tupleSize = *reinterpret_cast<const uint32_t*>(tuple);
-    return tupleSize + sizeof(version) + 4;
+    tupleSize += sizeof(to_underlying(operation));
+    tupleSize += sizeof(key);
+    tupleSize += sizeof(version);
+    tupleSize += sizeof(previous);
+    tupleSize += sizeof(tupleSize);
+    return tupleSize;
 }
 
 uint64_t LoggedOperation::getVersion(const char* data) {
@@ -65,6 +75,7 @@ const char* LoggedOperation::getNewest(const char* data) {
 }
 
 uint64_t LoggedOperation::getKey(const char* data) {
+    assert(from_underlying<LogOperation>(data[0]) != LogOperation::INVALID);
     return *reinterpret_cast<const uint64_t*>(data + 4);
 }
 

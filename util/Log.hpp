@@ -47,6 +47,7 @@ public:
 
     std::pair<LogPage*, LogEntry*> nextP(LogPage* page);
 
+    bool last() const;
     LogEntry* next();
 
     char* page() {
@@ -68,6 +69,7 @@ public:
 * use of the fact, that the PageManager only returns nulled pages.
 */
 struct LogPage {
+    static constexpr size_t LOG_HEADER_SIZE = 16;
     char* page;
 
     LogPage(char* page)
@@ -85,10 +87,10 @@ struct LogPage {
     }
 
     LogEntry* begin() {
-        return reinterpret_cast<LogEntry*>(page + DATA_OFFSET);
+        return reinterpret_cast<LogEntry*>(page);
     }
 
-    constexpr static size_t DATA_OFFSET = 24;
+    constexpr static size_t DATA_OFFSET = 16;
 };
 
 class Log {

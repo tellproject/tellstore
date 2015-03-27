@@ -31,6 +31,10 @@ std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
     }
 }
 
+bool LogEntry::last() const {
+    return size == 0 && offset() == 0;
+}
+
 LogEntry* LogEntry::next() {
     auto off = offset();
     if (size == 0 && off == 0) {
@@ -38,13 +42,13 @@ LogEntry* LogEntry::next() {
         assert(false);
         return nullptr;
     }
-    char* nPtr = data() + size;
+    char* nPtr = data() + size + sizeof(LogEntry);
     LogEntry* next = reinterpret_cast<LogEntry*>(nPtr);
     if (next->size != 0u) {
         return next;
     }
     // pointer to page
-    char* p = reinterpret_cast<char*>(this) - off;
+    char* p = reinterpret_cast<char*>(this) - off - LogPage::LOG_HEADER_SIZE;
     LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>*>(p)->load();
     if (nextPage) {
         return reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET);
@@ -63,7 +67,7 @@ Log::Log(PageManager& pageManager)
 void Log::seal(LogEntry* entry) {
     entry->seal();
     auto head = mSealHead.load();
-    while (head->sealed()) {
+    while (!head->last() && head->sealed()) {
         auto next = head->next();
         mSealHead.compare_exchange_strong(head, next);
         head = mSealHead.load();
@@ -72,7 +76,7 @@ void Log::seal(LogEntry* entry) {
 
 LogEntry* Log::append(uint32_t size) {
     size += sizeof(LogEntry);
-    size += 8 - (size % 8);
+    size += size % 8 ? 8 - (size % 8) : 0;
     assert(size % 8 == 0);
     if (size > MAX_SIZE) {
         LOG_FATAL("Tried to append %d bytes but %d bytes is max", size, MAX_SIZE);
@@ -91,7 +95,7 @@ LogEntry* Log::append(uint32_t size) {
             }
             // we first need to make sure, that no one else will still append to this
             // page.
-            if (head->offset().compare_exchange_strong(offset, MAX_SIZE))
+            if (!head->offset().compare_exchange_strong(offset, MAX_SIZE))
                 continue;
             // Create a new page
             auto nPage = new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
@@ -108,8 +112,9 @@ LogEntry* Log::append(uint32_t size) {
                 continue;
             }
         }
-        if (head->offset().compare_exchange_strong(offset, offset)) {
+        if (head->offset().compare_exchange_strong(offset, offset ? offset + size : offset + size + LogPage::LOG_HEADER_SIZE)) {
             // append succeeded
+            offset += offset ? offset + LogPage::LOG_HEADER_SIZE : 0;
             return new(head->page + offset) LogEntry(offset, uint32_t(size - sizeof(LogEntry)));
         }
     }
