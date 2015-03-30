@@ -12,6 +12,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 find_package(Crossbow REQUIRED)
 include_directories(${Crossbow_INCLUDE_DIRS})
+find_package(Boost REQUIRED)
+include_directories(${Boost_INCLUDE_DIRS})
 
 configure_file("${CMAKE_SOURCE_DIR}/config.h.in" "${CMAKE_BINARY_DIR}/config.h")
 include_directories(${CMAKE_BINARY_DIR})
