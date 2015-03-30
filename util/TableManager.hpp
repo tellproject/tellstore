@@ -33,7 +33,7 @@ private:
     PageManager& mPageManager;
     CommitManager& mCommitManager;
     std::thread mGCThread;
-    bool mShutDown = false;
+    std::atomic<bool> mShutDown;
     crossbow::concurrent_map<crossbow::string, uint64_t> mNames;
     std::vector<Table*> mTables;
     std::atomic<uint64_t> mLastTableIdx;
@@ -44,12 +44,12 @@ private:
         std::unique_lock<std::mutex> lock(m);
         auto begin = Clock::now();
         auto duration = std::chrono::seconds(mConfig.gcIntervall);
-        while (!mShutDown) {
+        while (!mShutDown.load()) {
             auto now = Clock::now();
             if (begin + duration > now) {
                 mStopCondition.wait_for(lock, begin + duration - now);
             }
-            if (mShutDown) return;
+            if (mShutDown.load()) return;
             begin = Clock::now();
             mGC.run(mTables, mCommitManager.getLowestActiveVersion());
         }
@@ -66,10 +66,11 @@ public:
         // about a better wat to handle tables (this will eventually crash!!)
         , mTables(1024, nullptr), mLastTableIdx(0)
     {
+        mShutDown.store(false);
     }
 
     ~TableManager() {
-        mShutDown = true;
+        mShutDown.store(true);
         mStopCondition.notify_all();
         mGCThread.join();
     }
