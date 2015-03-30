@@ -45,7 +45,7 @@ SnapshotDescriptor DummyManager::startTx() {
     memcpy(resBuffer.get() + 8, &mLowestActiveVersion, sizeof(mLowestActiveVersion));
     memcpy(resBuffer.get() + 16, mVersions, bufferLen);
     auto version = ++mLastVersion;
-    if (mActiveBaseVersionsCount < mBase - mLowestActiveVersion) {
+    if (mActiveBaseVersionsCount <= mBase - mLowestActiveVersion) {
         auto n = new uint32_t[mActiveBaseVersionsCount*2];
         memset(n, 0, mActiveBaseVersionsCount * 2 * sizeof(uint32_t));
         memcpy(n, mActiveBaseVersions, mActiveBaseVersionsCount*sizeof(uint32_t));

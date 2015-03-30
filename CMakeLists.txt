@@ -3,7 +3,11 @@ project(TellStore)
 
 include_directories(${CMAKE_SOURCE_DIR})
 
+set(USE_ASAN OFF CACHE BOOL "use the address sanitizer")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+if ( USE_ASAN )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
+endif()
 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
