@@ -129,7 +129,7 @@ extern Logger logger;
 #ifdef NDEBUG
 #   define LOG_ASSERT(...)
 #else
-#   define LOG_ASSERT(Cond, ...) if (!Cond) {std::cerr << "Assertion Failed: " #Cond ":" << std::endl; LOG_FATAL(__VA_ARGS__); std::terminate(); }
+#   define LOG_ASSERT(Cond, ...) if (!(Cond)) { std::cerr << "Assertion Failed: " #Cond ":" << std::endl; LOG_FATAL(__VA_ARGS__); std::terminate(); }
 #endif // NDEBUG
 
 } // namespace store
