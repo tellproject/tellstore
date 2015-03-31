@@ -71,13 +71,13 @@ class LoggerT {
         const char* function,
         const crossbow::string& str,
         Args... args) {
-        if (config.level < level) return;
+        if (config.level > level) return;
         boost::format formatter(str.c_str());
         LogFormatter<Args...> fmt;
         fmt.format(formatter, args...);
         std::lock_guard<std::mutex> _(mutex);
         stream << formatter.str();
-        stream << "(in " << function << " at " << file << ':' << line << ')' << std::endl;
+        stream << " (in " << function << " at " << file << ':' << line << ')' << std::endl;
     }
 
 public:
@@ -126,6 +126,11 @@ extern Logger logger;
 #define LOG_WARN(...) logger->warn(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 #define LOG_ERROR(...) logger->error(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 #define LOG_FATAL(...) logger->fatal(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#ifdef NDEBUG
+#   define LOG_ASSERT(...)
+#else
+#   define LOG_ASSERT(Cond, ...) if (!Cond) {std::cerr << "Assertion Failed: " #Cond ":" << std::endl; LOG_FATAL(__VA_ARGS__); std::terminate(); }
+#endif // NDEBUG
 
 } // namespace store
 } // namespace tell

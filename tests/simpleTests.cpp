@@ -19,6 +19,7 @@ namespace {
 
 TEST(simple, insert_and_get)
 {
+    LOG_ASSERT(false, "Blubb");
     tell::store::allocator _; // needed to free memory
     StorageConfig config;
     Storage storage(config);
