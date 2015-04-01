@@ -94,7 +94,14 @@ Log::Log(PageManager& pageManager)
 }
 
 Log::~Log() {
-    // TODO Free all pages from PageManager epoch
+    // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
+    // anymore so we can safely delete all pages here
+    auto page = mHead.load();
+    while (page) {
+        auto previous = page->previous().load();
+        mPageManager.free(page);
+        page = previous;
+    }
 }
 
 LogEntry* Log::append(uint32_t size) {
