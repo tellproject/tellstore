@@ -137,8 +137,12 @@ public:
             return !operator==(rhs);
         }
 
-        LogEntry& operator*() {
-            return *reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+        reference operator*() {
+            return *operator->();
+        }
+
+        pointer operator->() const {
+            return reinterpret_cast<LogEntry*>(mPage->data() + mPos);
         }
 
     private:
@@ -275,8 +279,12 @@ public:
             return !operator==(rhs);
         }
 
-        LogPage& operator*() {
-            return *mPage;
+        reference operator*() {
+            return *operator->();
+        }
+
+        pointer operator->() const {
+            return mPage;
         }
 
     private:
@@ -330,8 +338,12 @@ public:
             return !operator==(rhs);
         }
 
-        LogEntry& operator*() {
-            return *reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+        reference operator*() {
+            return *operator->();
+        }
+
+        pointer operator->() const {
+            return reinterpret_cast<LogEntry*>(mPage->data() + mPos);
         }
 
     private:
