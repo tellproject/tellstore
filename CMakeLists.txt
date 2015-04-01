@@ -35,6 +35,9 @@ set(SOURCE_FILES
     deltamainrewrite/DMLog.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
+    util/NonCopyable.hpp
+    util/Log.hpp
+    util/Log.cpp
     util/TransactionImpl.hpp
     util/CommitManager.hpp
     util/CommitManager.cpp
@@ -69,6 +72,7 @@ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
 set(TEST_SRCS
     tests/testCuckooMap.cpp
     tests/testCommitManager.cpp
+    tests/testLog.cpp
     tests/simpleTests.cpp)
 add_executable(tests tests/main.cpp ${TEST_SRCS})
 target_link_libraries(tests TellStore gtest gtest_main)
