@@ -1,31 +1,33 @@
 #pragma once
 
-#include "PageManager.hpp"
+#include <util/PageManager.hpp>
+
 #include <cstddef>
 #include <atomic>
 #include <assert.h>
 
 namespace tell {
 namespace store {
+namespace dmrewrite {
 
-struct LogPage;
+struct DMLogPage;
 
-struct LogEntry {
+struct DMLogEntry {
 private:
     std::atomic<uint32_t> mOffset;
 public:
     uint32_t size;
 
-    LogEntry(uint32_t offset, uint32_t size)
+    DMLogEntry(uint32_t offset, uint32_t size)
         : mOffset(offset + 1), size(size) {
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + sizeof(LogEntry);
+        return reinterpret_cast<char*>(this) + sizeof(DMLogEntry);
     }
 
     const char* data() const {
-        return reinterpret_cast<const char*>(this) + sizeof(LogEntry);
+        return reinterpret_cast<const char*>(this) + sizeof(DMLogEntry);
     }
 
     bool sealed() const {
@@ -45,10 +47,10 @@ public:
         }
     }
 
-    std::pair<LogPage*, LogEntry*> nextP(LogPage* page);
+    std::pair<DMLogPage*, DMLogEntry*> nextP(DMLogPage* page);
 
     bool last() const;
-    LogEntry* next();
+    DMLogEntry* next();
 
     char* page() {
         return reinterpret_cast<char*>(this) - offset();
@@ -68,51 +70,52 @@ public:
 * The last entry in the log is set to 0 (size and offset). We make
 * use of the fact, that the PageManager only returns nulled pages.
 */
-struct LogPage {
+struct DMLogPage {
     static constexpr size_t LOG_HEADER_SIZE = 16;
     char* page;
 
-    LogPage(char* page)
+    DMLogPage(char* page)
         : page(page) {
     }
 
-    LogPage(const LogPage&) = delete;
+    DMLogPage(const DMLogPage&) = delete;
 
-    std::atomic<LogPage*>& next() {
-        return *reinterpret_cast<std::atomic<LogPage*>*>(page);
+    std::atomic<DMLogPage*>& next() {
+        return *reinterpret_cast<std::atomic<DMLogPage*>*>(page);
     }
 
     std::atomic<uint32_t>& offset() {
-        return *reinterpret_cast<std::atomic<uint32_t>*>(page + sizeof(LogPage*));
+        return *reinterpret_cast<std::atomic<uint32_t>*>(page + sizeof(DMLogPage*));
     }
 
-    LogEntry* begin() {
-        return reinterpret_cast<LogEntry*>(page);
+    DMLogEntry* begin() {
+        return reinterpret_cast<DMLogEntry*>(page);
     }
 
     constexpr static size_t DATA_OFFSET = 16;
 };
 
-class Log {
-    constexpr static uint32_t MAX_SIZE = TELL_PAGE_SIZE - LogPage::DATA_OFFSET - sizeof(LogPage);
+class DMLog {
+    constexpr static uint32_t MAX_SIZE = TELL_PAGE_SIZE - DMLogPage::DATA_OFFSET - sizeof(DMLogPage);
     PageManager& mPageManager;
-    std::atomic<LogPage*> mHead;
-    std::atomic<LogEntry*> mSealHead;
-    std::pair<LogPage*, LogEntry*> mTail;
+    std::atomic<DMLogPage*> mHead;
+    std::atomic<DMLogEntry*> mSealHead;
+    std::pair<DMLogPage*, DMLogEntry*> mTail;
 public:
-    Log(PageManager& pageManager);
+    DMLog(PageManager& pageManager);
 
-    LogEntry* append(uint32_t size);
+    DMLogEntry* append(uint32_t size);
 
-    void seal(LogEntry* entry);
+    void seal(DMLogEntry* entry);
 
-    LogEntry* tail();
+    DMLogEntry* tail();
 
     /**
     * Not thread safe
     */
-    void setTail(LogEntry* nTail);
+    void setTail(DMLogEntry* nTail);
 };
 
+} // namespace dmrewrite
 } // namespace store
 } // namespace tell

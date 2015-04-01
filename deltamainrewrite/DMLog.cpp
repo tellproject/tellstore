@@ -1,14 +1,16 @@
-#include "Log.hpp"
-#include "Epoch.hpp"
-#include "Logging.hpp"
+#include "DMLog.hpp"
+
+#include <util/Epoch.hpp>
+#include <util/Logging.hpp>
 
 namespace tell {
 namespace store {
+namespace dmrewrite {
 
 static_assert(ATOMIC_POINTER_LOCK_FREE, "atomic pointer operations not supported");
-static_assert(sizeof(LogPage*) == sizeof(std::atomic<LogPage*>), "atomics won't work correctly");
+static_assert(sizeof(DMLogPage*) == sizeof(std::atomic<DMLogPage*>), "atomics won't work correctly");
 
-std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
+std::pair<DMLogPage*, DMLogEntry*> DMLogEntry::nextP(DMLogPage* page) {
     auto off = offset();
     if (size == 0 && off == 0) {
         LOG_FATAL("Tried to iterate over last page");
@@ -16,55 +18,55 @@ std::pair<LogPage*, LogEntry*> LogEntry::nextP(LogPage* page) {
         return std::make_pair(nullptr, nullptr);
     }
     char* nPtr = data() + size;
-    LogEntry* next = reinterpret_cast<LogEntry*>(nPtr);
+    DMLogEntry* next = reinterpret_cast<DMLogEntry*>(nPtr);
     if (next->size != 0u) {
         return std::make_pair(page, next);
     }
     // pointer to page
     char* p = reinterpret_cast<char*>(this) - off;
-    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>&>(p).load();
+    DMLogPage* nextPage = reinterpret_cast<std::atomic<DMLogPage*>&>(p).load();
     if (nextPage) {
-        return std::make_pair(nextPage, reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET));
+        return std::make_pair(nextPage, reinterpret_cast<DMLogEntry*>(nextPage->page + DMLogPage::DATA_OFFSET));
     } else {
         // we reached the end of the log
         return std::make_pair(page, next);
     }
 }
 
-bool LogEntry::last() const {
+bool DMLogEntry::last() const {
     return size == 0 && offset() == 0;
 }
 
-LogEntry* LogEntry::next() {
+DMLogEntry* DMLogEntry::next() {
     auto off = offset();
     if (size == 0 && off == 0) {
         LOG_FATAL("Tried to iterate over last page");
         assert(false);
         return nullptr;
     }
-    char* nPtr = data() + size + sizeof(LogEntry);
-    LogEntry* next = reinterpret_cast<LogEntry*>(nPtr);
+    char* nPtr = data() + size + sizeof(DMLogEntry);
+    DMLogEntry* next = reinterpret_cast<DMLogEntry*>(nPtr);
     if (next->size != 0u) {
         return next;
     }
     // pointer to page
-    char* p = reinterpret_cast<char*>(this) - off - LogPage::LOG_HEADER_SIZE;
-    LogPage* nextPage = reinterpret_cast<std::atomic<LogPage*>*>(p)->load();
+    char* p = reinterpret_cast<char*>(this) - off - DMLogPage::LOG_HEADER_SIZE;
+    DMLogPage* nextPage = reinterpret_cast<std::atomic<DMLogPage*>*>(p)->load();
     if (nextPage) {
-        return reinterpret_cast<LogEntry*>(nextPage->page + LogPage::DATA_OFFSET);
+        return reinterpret_cast<DMLogEntry*>(nextPage->page + DMLogPage::DATA_OFFSET);
     } else {
         // we reached the end of the log
         return next;
     }
 }
 
-Log::Log(PageManager& pageManager)
+DMLog::DMLog(PageManager& pageManager)
     : mPageManager(pageManager), mHead(
-    new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()))), mSealHead(
+    new(allocator::malloc(sizeof(DMLogPage))) DMLogPage(reinterpret_cast<char*>(mPageManager.alloc()))), mSealHead(
     mHead.load()->begin()), mTail(std::make_pair(mHead.load(), mHead.load()->begin())) {
 }
 
-void Log::seal(LogEntry* entry) {
+void DMLog::seal(DMLogEntry* entry) {
     entry->seal();
     auto head = mSealHead.load();
     while (!head->last() && head->sealed()) {
@@ -74,8 +76,8 @@ void Log::seal(LogEntry* entry) {
     }
 }
 
-LogEntry* Log::append(uint32_t size) {
-    size += sizeof(LogEntry);
+DMLogEntry* DMLog::append(uint32_t size) {
+    size += sizeof(DMLogEntry);
     size += size % 8 ? 8 - (size % 8) : 0;
     assert(size % 8 == 0);
     if (size > MAX_SIZE) {
@@ -98,13 +100,13 @@ LogEntry* Log::append(uint32_t size) {
             if (!head->offset().compare_exchange_strong(offset, MAX_SIZE))
                 continue;
             // Create a new page
-            auto nPage = new(allocator::malloc(sizeof(LogPage))) LogPage(reinterpret_cast<char*>(mPageManager.alloc()));
+            auto nPage = new(allocator::malloc(sizeof(DMLogPage))) DMLogPage(reinterpret_cast<char*>(mPageManager.alloc()));
             nPage->offset().store(size);
             // now we try to install the new page
             if (head->next().compare_exchange_strong(nextPtr, nPage)) {
                 // We don't check whether this succeeds - if it does not, it means another thread updated the head
                 mHead.compare_exchange_strong(head, nPage);
-                return new LogEntry(size, uint32_t(size - sizeof(LogEntry)));
+                return new DMLogEntry(size, uint32_t(size - sizeof(DMLogEntry)));
             } else {
                 // someone else already appended a new page - retry
                 mPageManager.free(nPage->page);
@@ -112,19 +114,19 @@ LogEntry* Log::append(uint32_t size) {
                 continue;
             }
         }
-        if (head->offset().compare_exchange_strong(offset, offset ? offset + size : offset + size + LogPage::LOG_HEADER_SIZE)) {
+        if (head->offset().compare_exchange_strong(offset, offset ? offset + size : offset + size + DMLogPage::LOG_HEADER_SIZE)) {
             // append succeeded
-            offset += offset ? offset + LogPage::LOG_HEADER_SIZE : 0;
-            return new(head->page + offset) LogEntry(offset, uint32_t(size - sizeof(LogEntry)));
+            offset += offset ? offset + DMLogPage::LOG_HEADER_SIZE : 0;
+            return new(head->page + offset) DMLogEntry(offset, uint32_t(size - sizeof(DMLogEntry)));
         }
     }
 }
 
-LogEntry* Log::tail() {
+DMLogEntry* DMLog::tail() {
     return mTail.second;
 }
 
-void Log::setTail(LogEntry* nTail) {
+void DMLog::setTail(DMLogEntry* nTail) {
     // the algorithm for setting the new tail works like this:
     // 1. start at the current tail
     // 2. iterate through the entries
@@ -142,5 +144,6 @@ void Log::setTail(LogEntry* nTail) {
     }
 }
 
+} // namespace dmrewrite
 } // namespace store
 } // namespace tell

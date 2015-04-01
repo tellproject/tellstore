@@ -1,9 +1,10 @@
 #pragma once
 
 #include <util/Record.hpp>
-#include <util/Log.hpp>
-#include <util/LogOperations.hpp>
 #include <util/chunk_allocator.hpp>
+
+#include "DMLog.hpp"
+#include "LogOperations.hpp"
 
 namespace tell {
 namespace store {
@@ -26,10 +27,10 @@ struct DMRecord {
     const char* getRecordData(const SnapshotDescriptor& snapshot,
                               const char* data,
                               bool& isNewest,
-                              LogEntry** next = nullptr) const;
+                              DMLogEntry** next = nullptr) const;
     bool needGCWork(const char* data, uint64_t minVersion) const;
-    LogEntry* getNewest(const char* data) const;
-    bool setNewest(LogEntry* old, LogEntry* n, const char* data);
+    DMLogEntry* getNewest(const char* data) const;
+    bool setNewest(DMLogEntry* old, DMLogEntry* n, const char* data);
 
     /**
     * This function will compact and merge the given tuple. It will return the following:
@@ -51,7 +52,7 @@ std::pair<size_t, char*> DMRecord::compactAndMerge(char* data, uint64_t minVersi
         return std::make_pair(0, nullptr);
     }
     std::pair<size_t, char*> res = std::make_pair(oldSize, nullptr);
-    LogEntry* logEntry = getNewest(data);
+    DMLogEntry* logEntry = getNewest(data);
     if (logEntry == nullptr) {
         return res;
     }
@@ -63,7 +64,7 @@ std::pair<size_t, char*> DMRecord::compactAndMerge(char* data, uint64_t minVersi
     if (multiVersionRecord.getBiggestVersion(data + 8) < minVersion) {
         // We can rewrite the whole tuple
         std::vector<std::pair<uint64_t, const char*>, typename Allocator::template rebind<std::pair<uint64_t, const char*>>> versions(allocator);
-        const LogEntry* current = logEntry;
+        const DMLogEntry* current = logEntry;
         uint32_t recordsSize = 0u;
         while (current) {
             auto recVersion = LoggedOperation::getVersion(current->data());
@@ -98,7 +99,7 @@ std::pair<size_t, char*> DMRecord::compactAndMerge(char* data, uint64_t minVersi
     } else {
         std::vector<std::pair<uint64_t, const char*>,
             typename Allocator::template rebind<std::pair<uint64_t, const char*>>> newVersions(allocator);
-        const LogEntry* current = logEntry;
+        const DMLogEntry* current = logEntry;
         uint32_t recordsSize = 0u;
         while (current) {
             auto recVersion = LoggedOperation::getVersion(current->data());

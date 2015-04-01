@@ -1,10 +1,13 @@
+#include "dmrewrite.hpp"
+
 #include <util/Record.hpp>
-#include <util/LogOperations.hpp>
 #include <util/chunk_allocator.hpp>
+
+#include "LogOperations.hpp"
+#include "Page.hpp"
+
 #include <unordered_set>
 #include <map>
-#include "dmrewrite.hpp"
-#include "Page.hpp"
 
 namespace tell {
 namespace store {
@@ -96,7 +99,7 @@ bool Table::get(uint64_t key, const char*& data, const SnapshotDescriptor& desc,
             }
             data = LoggedOperation::getRecord(opData);
             auto newest = LoggedOperation::getNewest(opData);
-            const LogEntry* next = mRecord.getNewest(newest);
+            const DMLogEntry* next = mRecord.getNewest(newest);
             while (next) {
                 if (desc.inReadSet(LoggedOperation::getVersion(next->data()))) {
                     return true;
@@ -133,7 +136,7 @@ bool Table::generalUpdate(uint64_t key, LoggedOperation& loggedOperation, Snapsh
     auto addr = reinterpret_cast<char*>(hMap.get(key));
     if (addr) {
         // found it in the hash table
-        LogEntry* newestPtr;
+        DMLogEntry* newestPtr;
         bool isNewest;
         auto rec = mRecord.getRecordData(snapshot, addr, isNewest, &newestPtr);
         if (!isNewest) {

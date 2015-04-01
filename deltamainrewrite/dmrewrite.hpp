@@ -6,11 +6,12 @@
 #include <util/Record.hpp>
 #include <util/PageManager.hpp>
 #include <util/TableManager.hpp>
-#include <util/Log.hpp>
 #include <util/CuckooHash.hpp>
-#include <util/LogOperations.hpp>
 #include <util/TransactionImpl.hpp>
+
+#include "DMLog.hpp"
 #include "DMRecord.hpp"
+#include "LogOperations.hpp"
 
 namespace tell {
 namespace store {
@@ -24,8 +25,8 @@ class Table {
     PageManager& mPageManager;
     Schema mSchema;
     DMRecord mRecord;
-    Log mLog;
-    Log mInsertLog;
+    DMLog mLog;
+    DMLog mInsertLog;
     std::atomic<CuckooTable*> mHashMap;
     std::atomic<std::vector<PageHolder*>*> mPages;
 public:

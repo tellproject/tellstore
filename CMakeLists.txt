@@ -27,8 +27,12 @@ set(SOURCE_FILES
     tellstore.hpp
     deltamainrewrite/dmrewrite.hpp
     deltamainrewrite/dmrewrite.cpp
+    deltamainrewrite/LogOperations.hpp
+    deltamainrewrite/LogOperations.cpp
     deltamainrewrite/Page.hpp
     deltamainrewrite/Page.cpp
+    deltamainrewrite/DMLog.hpp
+    deltamainrewrite/DMLog.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
     util/TransactionImpl.hpp
@@ -47,12 +51,8 @@ set(SOURCE_FILES
     util/Logging.hpp
     util/Logging.cpp
     util/StorageConfig.hpp
-    util/Log.hpp
-    util/Log.cpp
     util/SnapshotDescriptor.hpp
     util/Request.hpp
-    util/LogOperations.hpp
-    util/LogOperations.cpp
     util/chunk_allocator.hpp
     util/functional.hpp)
 add_library(TellStore SHARED ${SOURCE_FILES})

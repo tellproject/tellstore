@@ -1,9 +1,12 @@
 #include "LogOperations.hpp"
-#include "Record.hpp"
-#include "Log.hpp"
+
+#include <util/Record.hpp>
+
+#include "DMLog.hpp"
 
 namespace tell {
 namespace store {
+namespace dmrewrite {
 
 char* LoggedOperation::serialize(char* destination) const {
     auto op = to_underlying(operation);
@@ -63,8 +66,8 @@ const char* LoggedOperation::getRecord(const char* data) {
     return data;
 }
 
-const LogEntry* LoggedOperation::getPrevious(const char* data) {
-    const LogEntry* res;
+const DMLogEntry* LoggedOperation::getPrevious(const char* data) {
+    const DMLogEntry* res;
     memcpy(&res, data + 20, sizeof(res));
     return res;
 }
@@ -79,13 +82,15 @@ uint64_t LoggedOperation::getKey(const char* data) {
     return *reinterpret_cast<const uint64_t*>(data + 4);
 }
 
-const LogEntry* LoggedOperation::loggedOperationFromTuple(char const* tuple) {
-    return reinterpret_cast<const LogEntry*>(tuple - 28);
+const DMLogEntry* LoggedOperation::loggedOperationFromTuple(char const* tuple) {
+    return reinterpret_cast<const DMLogEntry*>(tuple - 28);
 }
 
 LogOperation LoggedOperation::getType(const char* data) {
     auto res = *reinterpret_cast<const LogOperation_t*>(data);
     return from_underlying<LogOperation>(res);
 }
+
+} // namespace dmrewrite
 } // namespace store
 } // namespace tell

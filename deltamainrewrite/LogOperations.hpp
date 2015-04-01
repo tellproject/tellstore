@@ -2,10 +2,13 @@
 
 #include <cstdint>
 #include <cstddef>
-#include "Log.hpp"
+#include <type_traits>
 
 namespace tell {
 namespace store {
+namespace dmrewrite {
+
+struct DMLogEntry;
 
 enum class LogOperation
     : uint8_t {
@@ -35,7 +38,7 @@ struct LoggedOperation {
     LogOperation operation;
     uint64_t key;
     uint64_t version;
-    const LogEntry* previous = nullptr;
+    const DMLogEntry* previous = nullptr;
     const char* tuple;
 
     char* serialize(char* destination) const;
@@ -50,7 +53,7 @@ struct LoggedOperation {
 
     static const char* getRecord(const char* data);
 
-    static const LogEntry* getPrevious(const char* data);
+    static const DMLogEntry* getPrevious(const char* data);
 
     /**
     * This should only be called if the log entry is an
@@ -58,8 +61,9 @@ struct LoggedOperation {
     */
     static const char* getNewest(const char* data);
 
-    static const LogEntry* loggedOperationFromTuple(const char* tuple);
+    static const DMLogEntry* loggedOperationFromTuple(const char* tuple);
 };
 
+} // namespace dmrewrite
 } // namespace store
 } // namespace tell
