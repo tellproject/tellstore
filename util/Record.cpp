@@ -350,23 +350,23 @@ char* Record::create(const GenericTuple& tuple) const
                 return nullptr;
             case FieldType::SMALLINT:
                 s = sizeof(int16_t);
-                memcpy(res + offset, boost::any_cast<int16_t>(&(iter->second)), sizeof(s));
+                memcpy(res + offset, boost::any_cast<int16_t>(&(iter->second)), s);
                 break;
             case FieldType::INT:
                 s = sizeof(int32_t);
-                memcpy(res + offset, boost::any_cast<int32_t>(&(iter->second)), sizeof(s));
+                memcpy(res + offset, boost::any_cast<int32_t>(&(iter->second)), s);
                 break;
             case FieldType::BIGINT:
                 s = sizeof(int64_t);
-                memcpy(res + offset, boost::any_cast<int64_t>(&(iter->second)), sizeof(s));
+                memcpy(res + offset, boost::any_cast<int64_t>(&(iter->second)), s);
                 break;
             case FieldType::FLOAT:
                 s = sizeof(float);
-                memcpy(res + offset, boost::any_cast<float>(&(iter->second)), sizeof(s));
+                memcpy(res + offset, boost::any_cast<float>(&(iter->second)), s);
                 break;
             case FieldType::DOUBLE:
                 s = sizeof(double);
-                memcpy(res + offset, boost::any_cast<double>(&(iter->second)), sizeof(s));
+                memcpy(res + offset, boost::any_cast<double>(&(iter->second)), s);
                 break;
             case FieldType::TEXT:
             case FieldType::BLOB:
