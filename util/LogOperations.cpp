@@ -1,6 +1,7 @@
 #include "LogOperations.hpp"
 #include "Record.hpp"
 #include "Log.hpp"
+#include "Logging.hpp"
 
 namespace tell {
 namespace store {
@@ -9,6 +10,7 @@ char* LoggedOperation::serialize(char* destination) const {
     auto op = to_underlying(operation);
     memcpy(destination, &op, sizeof(op));
     destination += sizeof(op);
+    destination += 3;
     memcpy(destination, &key, sizeof(key));
     destination += sizeof(key);
     memcpy(destination, &version, sizeof(version));
@@ -16,7 +18,7 @@ char* LoggedOperation::serialize(char* destination) const {
     switch (operation) {
         case LogOperation::INSERT:
             // a null pointer with updates
-            assert(previous == nullptr);
+            LOG_ASSERT(previous == nullptr, "Previous for new insert must always be null");
             memcpy(destination, &previous, sizeof(previous));
             destination += sizeof(previous);
             break;
