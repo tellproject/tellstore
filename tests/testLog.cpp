@@ -3,6 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <chrono>
+#include <thread>
+#include <unordered_set>
+
 using namespace tell::store;
 
 namespace {
@@ -173,6 +178,69 @@ TEST_F(LogTest, logIterator) {
 
     ++i;
     EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Checks if the log is written correctly if concurrent appends happen
+ *
+ * Starts a number of threads that are writing a 64 bit value into the log then checks if the log contains all values
+ * supposed to be written by the threads.
+ *
+ * This test is an extreme case because it continously appends to the log head with very small objects (8 byte), in this
+ * scenario the log contention will be the highest.
+ */
+TEST(LogTestThreaded, append) {
+    constexpr int threadCount = 4; // Number of threads running - 4 Threads
+    constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+
+    constexpr int pageCount = 100; // Number of pages to reserve in the page manager
+
+    PageManager pageManager(TELL_PAGE_SIZE * pageCount);
+    Log log(pageManager);
+
+    // Start threads filling the log
+    auto startTime = std::chrono::steady_clock::now();
+    uint64_t values = 1;
+    std::array<std::thread, threadCount> worker;
+    for (auto& t : worker) {
+        t = std::thread([valuesCount, values, &log] () {
+            auto end = values + valuesCount;
+            for (auto i = values; i < end; ++i) {
+                auto entry = log.append(sizeof(i));
+                memcpy(entry->data(), &i, sizeof(i));
+                entry->seal();
+            }
+        });
+        values += valuesCount;
+    }
+    for (auto& t : worker) {
+        t.join();
+    }
+    auto endTime = std::chrono::steady_clock::now();
+
+    auto diff = endTime - startTime;
+    std::cout << "Wrote " << (values - 1) << " entries in "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() << "ms" << std::endl;
+
+    // Fill set with expected values
+    std::unordered_set<uint64_t> valueSet;
+    valueSet.reserve(values);
+    for (uint64_t i = 1; i < values; ++i) {
+        valueSet.emplace(i);
+    }
+
+    // Iterate over log and remove the value in the entry from the expected values set
+    auto end = log.end();
+    for (auto i = log.begin(); i != end; ++i) {
+        EXPECT_TRUE(i->sealed()) << "Entry is not sealed";
+        uint64_t value = *reinterpret_cast<uint64_t*>(i->data());
+
+        auto j = valueSet.find(value);
+        EXPECT_NE(j, valueSet.end()) << "Value from entry is not in values set";
+        valueSet.erase(j);
+    }
+    EXPECT_TRUE(valueSet.empty()) << "Values set is not empty";
 }
 
 }
