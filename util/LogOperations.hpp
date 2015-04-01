@@ -25,7 +25,6 @@ enum class LogOperation
 * - 8 bytes for the key, on which the operation is on
 * - 8 bytes for the version of the transaction that wrote
 *   the operation to the log
-* If applicable (Update and Delete):
 * - 8 byte pointer to old entry
 * If applicable (Insert)
 * - 8 byte for a pointer to an update entry (this
@@ -38,7 +37,8 @@ struct LoggedOperation {
     LogOperation operation;
     uint64_t key;
     uint64_t version;
-    const DMLogEntry* previous = nullptr;
+    DMLogEntry* previous = nullptr;
+    DMLogEntry* next = nullptr;
     const char* tuple;
 
     char* serialize(char* destination) const;

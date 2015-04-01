@@ -8,10 +8,10 @@
 #include <util/TableManager.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/TransactionImpl.hpp>
+#include <util/LogOperations.hpp>
 
 #include "DMLog.hpp"
 #include "DMRecord.hpp"
-#include "LogOperations.hpp"
 
 namespace tell {
 namespace store {

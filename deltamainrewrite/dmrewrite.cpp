@@ -3,7 +3,6 @@
 #include <util/Record.hpp>
 #include <util/chunk_allocator.hpp>
 
-#include "LogOperations.hpp"
 #include "Page.hpp"
 
 #include <unordered_set>
@@ -33,7 +32,10 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor& snapshot,
                    bool* succeeded /*=nullptr*/) {
+    LogEntry* previous = nullptr;
     if (mHashMap.load()->get(key) != nullptr) {
+        // now we need to check whether the newest version is a deletion
+        // if it is and if it is in our read set, we can just do an update
         if (succeeded != nullptr)
             *succeeded = false;
         return;
@@ -46,6 +48,7 @@ void Table::insert(uint64_t key, const char* const data, const SnapshotDescripto
     LoggedOperation op;
     op.key = key;
     op.operation = LogOperation::INSERT;
+    //op.previous = previous;
     op.tuple = data;
     op.version = snapshot.version();
     auto nEntry = mInsertLog.append(uint32_t(op.serializedSize()));
