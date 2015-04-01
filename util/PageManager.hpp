@@ -3,6 +3,7 @@
 #include <config.h>
 #include <cstddef>
 #include "FixedSizeStack.hpp"
+#include "NonCopyable.hpp"
 
 namespace tell {
 namespace store {
@@ -13,7 +14,7 @@ namespace store {
 * free pages. All page allocations need to
 * be made through this class.
 */
-class PageManager {
+class PageManager: NonCopyable {
 private:
     void* mData;
     size_t mSize;
