@@ -33,6 +33,8 @@ set(SOURCE_FILES
     deltamainrewrite/DMLog.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
+    deltamain/Record.hpp
+    deltamain/Record.cpp
     util/LogOperations.hpp
     util/LogOperations.cpp
     util/NonCopyable.hpp

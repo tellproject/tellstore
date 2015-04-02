@@ -1,5 +1,6 @@
 #include "Record.hpp"
 #include "Logging.hpp"
+#include "helper.hpp"
 
 namespace tell {
 namespace store {

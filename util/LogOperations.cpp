@@ -2,6 +2,7 @@
 
 #include <util/Logging.hpp>
 #include <util/Record.hpp>
+#include <util/helper.hpp>
 
 #include "Log.hpp"
 
