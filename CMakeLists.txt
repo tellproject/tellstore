@@ -27,14 +27,14 @@ set(SOURCE_FILES
     tellstore.hpp
     deltamainrewrite/dmrewrite.hpp
     deltamainrewrite/dmrewrite.cpp
-    deltamainrewrite/LogOperations.hpp
-    deltamainrewrite/LogOperations.cpp
     deltamainrewrite/Page.hpp
     deltamainrewrite/Page.cpp
     deltamainrewrite/DMLog.hpp
     deltamainrewrite/DMLog.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
+    util/LogOperations.hpp
+    util/LogOperations.cpp
     util/NonCopyable.hpp
     util/Log.hpp
     util/Log.cpp

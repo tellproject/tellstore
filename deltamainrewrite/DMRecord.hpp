@@ -2,9 +2,9 @@
 
 #include <util/Record.hpp>
 #include <util/chunk_allocator.hpp>
+#include <util/LogOperations.hpp>
 
 #include "DMLog.hpp"
-#include "LogOperations.hpp"
 
 namespace tell {
 namespace store {

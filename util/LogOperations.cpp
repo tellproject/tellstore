@@ -3,7 +3,7 @@
 #include <util/Logging.hpp>
 #include <util/Record.hpp>
 
-#include "DMLog.hpp"
+#include "Log.hpp"
 
 namespace tell {
 namespace store {
