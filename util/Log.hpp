@@ -90,14 +90,17 @@ private:
  *
  * A Log-Page has the following form:
  *
- * -----------------------------------------------------------------------------------
- * | previous (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... |
- * -----------------------------------------------------------------------------------
+ * -------------------------------------------------------------------------------
+ * | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... |
+ * -------------------------------------------------------------------------------
  */
 class LogPage : NonCopyable, NonMovable {
 public:
     /// Size of the LogPage data structure
     static constexpr size_t LOG_HEADER_SIZE = 16;
+
+    /// Maximum size of a log entry
+    static constexpr uint32_t MAX_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
 
     /**
      * @brief Iterator for iterating over all entries in a page
@@ -153,7 +156,9 @@ public:
         uint32_t mPos;
     };
 
-    LogPage(LogPage* previous);
+    LogPage()
+            : mOffset(0x1u) {
+    }
 
     char* data() {
         return reinterpret_cast<char*>(this) + LOG_HEADER_SIZE;
@@ -174,8 +179,8 @@ public:
     /**
      * @brief Page preceeding the current page in the log
      */
-    std::atomic<LogPage*>& previous() {
-        return mPrevious;
+    std::atomic<LogPage*>& next() {
+        return mNext;
     }
 
     /**
@@ -230,7 +235,7 @@ public:
     }
 
 private:
-    friend class Log;
+    template <class Impl> friend class Log;
 
     /**
      * @brief Appends a new entry to the log
@@ -240,19 +245,93 @@ private:
      */
     LogEntry* appendEntry(uint32_t size);
 
-    std::atomic<LogPage*> mPrevious;
+    std::atomic<LogPage*> mNext;
     std::atomic<uint32_t> mOffset;
+};
+
+/**
+ * @brief Log implementation providing no order guarantee when iterating over the elements
+ *
+ * Links pages together by storing a pointer to the preceeding page (i.e. the current head contains a pointer to the
+ * previous head).
+ *
+ * Pages are iterated from the head (newest page) to the tail (oldest page).
+ */
+class UnorderedLogImpl {
+public:
+    LogPage* head() {
+        return mHead.load();
+    }
+
+protected:
+    UnorderedLogImpl(PageManager& pageManager);
+
+    LogPage* createPage(LogPage* oldHead);
+
+    void freePage(LogPage* page) {
+        mPageManager.free(page);
+    }
+
+    /**
+     * @brief Log iteration starts from the head
+     */
+    LogPage* startPage() {
+        return mHead.load();
+    }
+
+private:
+    PageManager& mPageManager;
+    std::atomic<LogPage*> mHead;
+};
+
+/**
+ * @brief Log implementation to iterate over the elements in insert order
+ *
+ * Links pages together by storing a pointer to the following page (i.e. the previous head contains a pointer to the
+ * current head).
+ *
+ * Pages are iterated from the tail (oldest page) to the head (newest page). This allows the log elements to be iterated
+ * from oldest written to newest written.
+ */
+class OrderedLogImpl {
+public:
+    LogPage* head() {
+        return mHead.load();
+    }
+
+protected:
+    OrderedLogImpl(PageManager& pageManager);
+
+    LogPage* createPage(LogPage* oldHead);
+
+    void freePage(LogPage* page) {
+        mPageManager.free(page);
+    }
+
+    /**
+     * @brief Log iteration starts from the tail
+     */
+    LogPage* startPage() {
+        return mTail.load();
+    }
+
+private:
+    PageManager& mPageManager;
+    std::atomic<LogPage*> mHead;
+    std::atomic<LogPage*> mTail;
 };
 
 /**
  * @brief The Log class
  */
-class Log : NonCopyable {
+template <class Impl>
+class Log : public Impl, NonCopyable {
 public:
-    static constexpr uint32_t MAX_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
-
     /**
      * @brief Iterator for iterating over all pages in the log
+     *
+     * The order in which pages are iterated (i.e. head from tail, tail to head) is dependent on the chosen Log
+     * implementation.
      */
     class PageIterator : public std::iterator<std::input_iterator_tag, LogPage> {
     public:
@@ -261,7 +340,7 @@ public:
         }
 
         PageIterator& operator++() {
-            mPage = mPage->previous().load();
+            mPage = mPage->next().load();
             return *this;
         }
 
@@ -295,7 +374,7 @@ public:
     /**
      * @brief Iterator for iterating over all entries in the log
      *
-     * The iterator does not retrieve elements in insert order.
+     * The order in which elements are iterated is dependent on the chosen Log implementation.
      */
     class LogIterator : public std::iterator<std::input_iterator_tag, LogEntry> {
     public:
@@ -317,7 +396,7 @@ public:
             auto entry = reinterpret_cast<LogEntry*>(mPage->data() + mPos);
             mPos += entry->size();
             if (mPos == mPageOffset) {
-                mPage = mPage->previous().load();
+                mPage = mPage->next().load();
                 mPageOffset = (mPage ? mPage->offset() : 0);
                 mPos = 0;
             }
@@ -357,7 +436,9 @@ public:
         uint32_t mPos;
     };
 
-    Log(PageManager& pageManager);
+    Log(PageManager& pageManager)
+            : Impl(pageManager) {
+    }
 
     ~Log();
 
@@ -369,12 +450,8 @@ public:
      */
     LogEntry* append(uint32_t size);
 
-    LogPage* head() {
-        return mHead.load();
-    }
-
     PageIterator pageBegin() {
-        return PageIterator(mHead.load());
+        return PageIterator(Impl::startPage());
     }
 
     PageIterator pageEnd() {
@@ -382,18 +459,16 @@ public:
     }
 
     LogIterator begin() {
-        return LogIterator(mHead.load());
+        return LogIterator(Impl::startPage());
     }
 
     LogIterator end() {
         return LogIterator(nullptr);
     }
-
-private:
-    PageManager& mPageManager;
-
-    std::atomic<LogPage*> mHead;
 };
+
+extern template class Log<UnorderedLogImpl>;
+extern template class Log<OrderedLogImpl>;
 
 } // namespace store
 } // namespace tell
