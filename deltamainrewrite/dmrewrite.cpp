@@ -32,13 +32,19 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 void Table::insert(uint64_t key, const char* const data, const SnapshotDescriptor& snapshot,
                    bool* succeeded /*=nullptr*/) {
-    LogEntry* previous = nullptr;
-    if (mHashMap.load()->get(key) != nullptr) {
+    // by default, it does not succeed - make sure to reset this if it does!
+    if (succeeded != nullptr)
+        *succeeded = false;
+    DMLogEntry* previous = nullptr;
+    char* ptr = nullptr;
+    if ((ptr = reinterpret_cast<char*>(mHashMap.load()->get(key))) != nullptr) {
         // now we need to check whether the newest version is a deletion
         // if it is and if it is in our read set, we can just do an update
-        if (succeeded != nullptr)
-            *succeeded = false;
-        return;
+        bool isNewest = false;
+        auto data = mRecord.getRecordData(snapshot, ptr, isNewest);
+        if (data != nullptr) {
+        }
+        if (!isNewest) return;
     }
     // insertion works like follows:
     // - First we append the insertion to the log
@@ -48,7 +54,7 @@ void Table::insert(uint64_t key, const char* const data, const SnapshotDescripto
     LoggedOperation op;
     op.key = key;
     op.operation = LogOperation::INSERT;
-    //op.previous = previous;
+    op.previous = previous;
     op.tuple = data;
     op.version = snapshot.version();
     auto nEntry = mInsertLog.append(uint32_t(op.serializedSize()));
