@@ -253,6 +253,45 @@ private:
 };
 
 /**
+ * @brief Base class for Log implementations
+ *
+ * Provides the basic page handling mechanism and the head pointer.
+ */
+class BaseLogImpl {
+public:
+    LogPage* head() {
+        return mHead.load();
+    }
+
+protected:
+    BaseLogImpl(PageManager& pageManager);
+
+    void freePageNow(LogPage* page) {
+        mPageManager.free(page);
+    }
+
+    LogPage* acquirePage() {
+        return new(mPageManager.alloc()) LogPage();
+    }
+
+    /**
+     * @brief Deletes all pages between the begin page and the end page (including begin but excluding end)
+     *
+     * Deletes pages using the Safe Memory Reclamation mechanism.
+     *
+     * @param begin The first page to be deleted
+     * @param end The page succeeding the last deleted pages
+     */
+    void freePage(LogPage* begin, LogPage* end);
+
+private:
+    PageManager& mPageManager;
+
+protected:
+    std::atomic<LogPage*> mHead;
+};
+
+/**
  * @brief Log implementation providing no order guarantee when iterating over the elements
  *
  * Links pages together by storing a pointer to the preceeding page (i.e. the current head contains a pointer to the
@@ -260,20 +299,13 @@ private:
  *
  * Pages are iterated from the head (newest page) to the tail (oldest page).
  */
-class UnorderedLogImpl {
-public:
-    LogPage* head() {
-        return mHead.load();
-    }
-
+class UnorderedLogImpl : public BaseLogImpl {
 protected:
-    UnorderedLogImpl(PageManager& pageManager);
+    UnorderedLogImpl(PageManager& pageManager)
+            : BaseLogImpl(pageManager) {
+    }
 
     LogPage* createPage(LogPage* oldHead);
-
-    void freePage(LogPage* page) {
-        mPageManager.free(page);
-    }
 
     /**
      * @brief Log iteration starts from the head
@@ -281,10 +313,6 @@ protected:
     LogPage* startPage() {
         return mHead.load();
     }
-
-private:
-    PageManager& mPageManager;
-    std::atomic<LogPage*> mHead;
 };
 
 /**
@@ -296,12 +324,8 @@ private:
  * Pages are iterated from the tail (oldest page) to the head (newest page). This allows the log elements to be iterated
  * from oldest written to newest written.
  */
-class OrderedLogImpl {
+class OrderedLogImpl : public BaseLogImpl {
 public:
-    LogPage* head() {
-        return mHead.load();
-    }
-
     LogPage* tail() {
         return mTail.load();
     }
@@ -323,10 +347,6 @@ protected:
 
     LogPage* createPage(LogPage* oldHead);
 
-    void freePage(LogPage* page) {
-        mPageManager.free(page);
-    }
-
     /**
      * @brief Log iteration starts from the tail
      */
@@ -335,8 +355,6 @@ protected:
     }
 
 private:
-    PageManager& mPageManager;
-    std::atomic<LogPage*> mHead;
     std::atomic<LogPage*> mTail;
 };
 
@@ -468,6 +486,19 @@ public:
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry
      */
     LogEntry* append(uint32_t size);
+
+    /**
+     * @brief Deletes all pages between the begin page and the end page (excluding both begin and end)
+     *
+     * After calling this function all active iterators will become invalid.
+     *
+     * This function is not 100 percent thread safe, multiple threads deleting overlapping regions will result in a
+     * corrupted log.
+     *
+     * @param begin The page preceeding the first deleted page
+     * @param end The page succeeding the last deleted page
+     */
+    void erase(LogPage* begin, LogPage* end);
 
     PageIterator pageBegin() {
         return PageIterator(Impl::startPage());

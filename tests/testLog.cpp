@@ -99,17 +99,23 @@ TEST_F(LogPageTest, entryIterator) {
     EXPECT_EQ(end, i) << "Iterator not pointing to end";
 }
 
-class UnorderedLogTest : public ::testing::Test {
+/**
+ * @brief Test fixture for testing Log implementation classes
+ */
+template <class Impl>
+class BaseLogTest : public ::testing::Test {
 protected:
-    UnorderedLogTest()
+    BaseLogTest()
             : mPageManager(TELL_PAGE_SIZE * 10),
               mLog(mPageManager) {
     }
 
     PageManager mPageManager;
 
-    Log<UnorderedLogImpl> mLog;
+    Log<Impl> mLog;
 };
+
+using UnorderedLogTest = BaseLogTest<UnorderedLogImpl>;
 
 /**
  * @class Log
@@ -134,79 +140,7 @@ TEST_F(UnorderedLogTest, append) {
     EXPECT_EQ(head, mLog.head()->next()) << "Next pointer of head does not point to old head";
 }
 
-/**
- * @class Log
- * @test Check that iterating over all pages in the log works correctly
- */
-TEST_F(UnorderedLogTest, pageIterator) {
-    auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
-    auto entry2 = mLog.append(LogPage::MAX_DATA_SIZE);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
-
-    EXPECT_NE(nullptr, mLog.head()->next()) << "Log contains only one page";
-
-    auto i = mLog.pageBegin();
-    auto end = mLog.pageEnd();
-
-    EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to first page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(mLog.head()->next(), &(*i)) << "Iterator not pointing to second page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
-}
-
-/**
- * @class Log
- * @test Check that iterating over the complete log works correctly
- *
- * Allocates two entries on the first page and a third one on another log page. Because we iterate pages from head to
- * tail and inside pages from top to bottom, the order of elements should be 3 - 1 - 2.
- */
-TEST_F(UnorderedLogTest, logIterator) {
-    auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
-    auto entry2 = mLog.append(55);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
-    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
-    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
-
-    EXPECT_NE(nullptr, mLog.head()->next()) << "Log contains only one page";
-
-
-    auto i = mLog.begin();
-    auto end = mLog.end();
-
-    EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to third entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
-}
-
-class OrderedLogTest : public ::testing::Test {
-protected:
-    OrderedLogTest()
-            : mPageManager(TELL_PAGE_SIZE * 10),
-              mLog(mPageManager) {
-    }
-
-    PageManager mPageManager;
-
-    Log<OrderedLogImpl> mLog;
-};
+using OrderedLogTest = BaseLogTest<OrderedLogImpl>;
 
 /**
  * @class Log
@@ -232,31 +166,120 @@ TEST_F(OrderedLogTest, append) {
 }
 
 /**
- * @brief Test fixture for testing prefilled OrderedLog classes
+ * @brief Test fixture for testing prefilled Log implementation classes
  *
- * Adds 3 entries, the first two on the first page and the third entry on the second page.
+ * Adds 4 entries, the first two on the first page, the third entry on the second page and the fourth entry on the third
+ * page.
  */
-class OrderedLogFilledTest : public OrderedLogTest {
+template <class Impl>
+class BaseLogFilledTest : public BaseLogTest<Impl> {
 protected:
-    OrderedLogFilledTest()
-            : mEntry1(nullptr), mEntry2(nullptr), mEntry3(nullptr) {
+    BaseLogFilledTest()
+            : mEntry1(nullptr), mEntry2(nullptr), mEntry3(nullptr), mEntry4(nullptr) {
     }
 
     virtual void SetUp() {
-        mEntry1 = mLog.append(31);
+        mEntry1 = BaseLogTest<Impl>::mLog.append(31);
         EXPECT_NE(nullptr, mEntry1) << "Failed to allocate entry";
-        mEntry2 = mLog.append(55);
+        mEntry2 = BaseLogTest<Impl>::mLog.append(55);
         EXPECT_NE(nullptr, mEntry2) << "Failed to allocate entry";
-        mEntry3 = mLog.append(LogPage::MAX_DATA_SIZE);
+        mEntry3 = BaseLogTest<Impl>::mLog.append(LogPage::MAX_DATA_SIZE);
         EXPECT_NE(nullptr, mEntry3) << "Failed to allocate entry";
-
-        EXPECT_NE(nullptr, mLog.tail()->next().load()) << "Log contains only one page";
+        mEntry4 = BaseLogTest<Impl>::mLog.append(LogPage::MAX_DATA_SIZE);
+        EXPECT_NE(nullptr, mEntry4) << "Failed to allocate entry";
     }
 
     LogEntry* mEntry1;
     LogEntry* mEntry2;
     LogEntry* mEntry3;
+    LogEntry* mEntry4;
 };
+
+using UnorderedLogFilledTest = BaseLogFilledTest<UnorderedLogImpl>;
+
+/**
+ * @class Log
+ * @test Check that iterating over all pages in the log works correctly
+ */
+TEST_F(UnorderedLogFilledTest, pageIterator) {
+    auto i = mLog.pageBegin();
+    auto end = mLog.pageEnd();
+
+    EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to first page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mLog.head()->next().load(), &(*i)) << "Iterator not pointing to second page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mLog.head()->next().load()->next().load(), &(*i)) << "Iterator not pointing to third page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that iterating over the complete log works correctly
+ *
+ * Because we iterate pages from head to tail and inside pages from top to bottom, the order of elements should
+ * be 4 - 3 - 1 - 2.
+ */
+TEST_F(UnorderedLogFilledTest, logIterator) {
+    auto i = mLog.begin();
+    auto end = mLog.end();
+
+    EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that erase works correctly
+ *
+ * Erases the second page between head and tail.
+ */
+TEST_F(UnorderedLogFilledTest, erase) {
+    auto head = mLog.head();
+    auto tail = head->next().load()->next().load();
+    mLog.erase(head, tail);
+
+    auto i = mLog.begin();
+    auto end = mLog.end();
+
+    EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+using OrderedLogFilledTest = BaseLogFilledTest<OrderedLogImpl>;
 
 /**
  * @class Log
@@ -275,6 +298,10 @@ TEST_F(OrderedLogFilledTest, pageIterator) {
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
+    EXPECT_EQ(tail->next().load()->next().load(), &(*i)) << "Iterator not pointing to third page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
     EXPECT_EQ(end, i) << "Iterator not pointing to end";
 }
 
@@ -282,8 +309,8 @@ TEST_F(OrderedLogFilledTest, pageIterator) {
  * @class Log
  * @test Check that iterating over the complete log works correctly
  *
- * Allocates two entries on the first page and a third one on another log page. Because we iterate pages from tail to
- * head and inside pages from top to bottom, the order of elements should be 1 - 2 - 3.
+ * Because we iterate pages from tail to head and inside pages from top to bottom, the order of elements should
+ * be 1 - 2 - 3 - 4.
  */
 TEST_F(OrderedLogFilledTest, logIterator) {
     auto i = mLog.begin();
@@ -298,6 +325,37 @@ TEST_F(OrderedLogFilledTest, logIterator) {
 
     ++i;
     EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that erase works correctly
+ *
+ * Erases the second page between head and tail.
+ */
+TEST_F(OrderedLogFilledTest, erase) {
+    mLog.erase(mLog.tail(), mLog.head());
+
+    auto i = mLog.begin();
+    auto end = mLog.end();
+
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
