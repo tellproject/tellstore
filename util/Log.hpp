@@ -100,7 +100,10 @@ public:
     static constexpr size_t LOG_HEADER_SIZE = 16;
 
     /// Maximum size of a log entry
-    static constexpr uint32_t MAX_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
+    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
+
+    /// Maximum size of a log entries data payload
+    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - sizeof(LogEntry);
 
     /**
      * @brief Iterator for iterating over all entries in a page

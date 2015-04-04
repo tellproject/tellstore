@@ -124,10 +124,10 @@ TEST_F(UnorderedLogTest, append) {
     auto entry1 = mLog.append(31);
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
 
-    auto entry2 = head->append(LogPage::MAX_SIZE - 4);
+    auto entry2 = head->append(LogPage::MAX_DATA_SIZE);
     EXPECT_EQ(nullptr, entry2) << "Allocated entry outside page boundary";
 
-    auto entry3 = mLog.append(LogPage::MAX_SIZE - 4);
+    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
     EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
 
     EXPECT_NE(head, mLog.head()) << "New head is the same as the old head";
@@ -141,7 +141,7 @@ TEST_F(UnorderedLogTest, append) {
 TEST_F(UnorderedLogTest, pageIterator) {
     auto entry1 = mLog.append(31);
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
-    auto entry2 = mLog.append(LogPage::MAX_SIZE - 4);
+    auto entry2 = mLog.append(LogPage::MAX_DATA_SIZE);
     EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
 
     EXPECT_NE(nullptr, mLog.head()->next()) << "Log contains only one page";
@@ -172,7 +172,7 @@ TEST_F(UnorderedLogTest, logIterator) {
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
     auto entry2 = mLog.append(55);
     EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
-    auto entry3 = mLog.append(LogPage::MAX_SIZE - 4);
+    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
     EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
 
     EXPECT_NE(nullptr, mLog.head()->next()) << "Log contains only one page";
@@ -221,10 +221,10 @@ TEST_F(OrderedLogTest, append) {
     auto entry1 = mLog.append(31);
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
 
-    auto entry2 = tail->append(LogPage::MAX_SIZE - 4);
+    auto entry2 = tail->append(LogPage::MAX_DATA_SIZE);
     EXPECT_EQ(nullptr, entry2) << "Allocated entry outside page boundary";
 
-    auto entry3 = mLog.append(LogPage::MAX_SIZE - 4);
+    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
     EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
 
     EXPECT_NE(tail, mLog.head()) << "New head is the same as the old head";
@@ -247,7 +247,7 @@ protected:
         EXPECT_NE(nullptr, mEntry1) << "Failed to allocate entry";
         mEntry2 = mLog.append(55);
         EXPECT_NE(nullptr, mEntry2) << "Failed to allocate entry";
-        mEntry3 = mLog.append(LogPage::MAX_SIZE - 4);
+        mEntry3 = mLog.append(LogPage::MAX_DATA_SIZE);
         EXPECT_NE(nullptr, mEntry3) << "Failed to allocate entry";
 
         EXPECT_NE(nullptr, mLog.tail()->next().load()) << "Log contains only one page";

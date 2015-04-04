@@ -36,8 +36,8 @@ uint32_t LogEntry::tryAcquire(uint32_t size) {
 
 LogEntry* LogPage::append(uint32_t size) {
     auto entrySize = calculateEntrySize(size);
-    if (entrySize > LogPage::MAX_SIZE) {
-        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_SIZE);
+    if (entrySize > LogPage::MAX_ENTRY_SIZE) {
+        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
         return nullptr;
     }
     return appendEntry(entrySize);
@@ -54,7 +54,7 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
 
     while (true) {
         // Check if we have enough space in the log page
-        if (position + size > LogPage::MAX_SIZE) {
+        if (position + size > LogPage::MAX_ENTRY_SIZE) {
             return nullptr;
         }
 
@@ -184,8 +184,8 @@ Log<Impl>::~Log() {
 template <class Impl>
 LogEntry* Log<Impl>::append(uint32_t size) {
     auto entrySize = calculateEntrySize(size);
-    if (entrySize > LogPage::MAX_SIZE) {
-        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_SIZE);
+    if (entrySize > LogPage::MAX_ENTRY_SIZE) {
+        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
         return nullptr;
     }
 
