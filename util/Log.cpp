@@ -146,6 +146,29 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
     return nPage;
 }
 
+bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
+    if (oldTail == newTail) {
+        return (mTail.load() == newTail);
+    }
+
+    if (!mTail.compare_exchange_strong(oldTail, newTail)) {
+        return false;
+    }
+
+    auto ptr = allocator::malloc(0);
+
+    auto& pageManager = mPageManager;
+    allocator::free(ptr, [oldTail, newTail, &pageManager]() {
+        auto page = oldTail;
+        while (page != newTail) {
+            auto next = page->next().load();
+            pageManager.free(page);
+            page = next;
+        }
+    });
+    return true;
+}
+
 template <class Impl>
 Log<Impl>::~Log() {
     // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it

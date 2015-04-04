@@ -299,6 +299,22 @@ public:
         return mHead.load();
     }
 
+    LogPage* tail() {
+        return mTail.load();
+    }
+
+    /**
+     * @brief Tries to set the new tail page of the log from oldTail to newTail
+     *
+     * After this operation the log will begin at the new tail instead from the old tail. All truncated pages will be
+     * freed by the Safe Memory Reclamation mechanism.
+     *
+     * @param oldTail The previous tail
+     * @param newTail The new tail
+     * @return True if the truncation succeeded
+     */
+    bool truncateLog(LogPage* oldTail, LogPage* newTail);
+
 protected:
     OrderedLogImpl(PageManager& pageManager);
 

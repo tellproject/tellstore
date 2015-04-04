@@ -196,7 +196,6 @@ TEST_F(UnorderedLogTest, logIterator) {
     EXPECT_EQ(end, i) << "Iterator not pointing to end";
 }
 
-
 class OrderedLogTest : public ::testing::Test {
 protected:
     OrderedLogTest()
@@ -233,19 +232,38 @@ TEST_F(OrderedLogTest, append) {
 }
 
 /**
+ * @brief Test fixture for testing prefilled OrderedLog classes
+ *
+ * Adds 3 entries, the first two on the first page and the third entry on the second page.
+ */
+class OrderedLogFilledTest : public OrderedLogTest {
+protected:
+    OrderedLogFilledTest()
+            : mEntry1(nullptr), mEntry2(nullptr), mEntry3(nullptr) {
+    }
+
+    virtual void SetUp() {
+        mEntry1 = mLog.append(31);
+        EXPECT_NE(nullptr, mEntry1) << "Failed to allocate entry";
+        mEntry2 = mLog.append(55);
+        EXPECT_NE(nullptr, mEntry2) << "Failed to allocate entry";
+        mEntry3 = mLog.append(LogPage::MAX_SIZE - 4);
+        EXPECT_NE(nullptr, mEntry3) << "Failed to allocate entry";
+
+        EXPECT_NE(nullptr, mLog.tail()->next().load()) << "Log contains only one page";
+    }
+
+    LogEntry* mEntry1;
+    LogEntry* mEntry2;
+    LogEntry* mEntry3;
+};
+
+/**
  * @class Log
  * @test Check that iterating over all pages in the log works correctly
  */
-TEST_F(OrderedLogTest, pageIterator) {
-    auto tail = mLog.head();
-
-    auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
-    auto entry2 = mLog.append(LogPage::MAX_SIZE - 4);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
-
-    EXPECT_NE(nullptr, tail->next()) << "Log contains only one page";
-
+TEST_F(OrderedLogFilledTest, pageIterator) {
+    auto tail = mLog.tail();
     auto i = mLog.pageBegin();
     auto end = mLog.pageEnd();
 
@@ -253,7 +271,7 @@ TEST_F(OrderedLogTest, pageIterator) {
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(tail->next(), &(*i)) << "Iterator not pointing to second page";
+    EXPECT_EQ(tail->next().load(), &(*i)) << "Iterator not pointing to second page";
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
@@ -267,35 +285,76 @@ TEST_F(OrderedLogTest, pageIterator) {
  * Allocates two entries on the first page and a third one on another log page. Because we iterate pages from tail to
  * head and inside pages from top to bottom, the order of elements should be 1 - 2 - 3.
  */
-TEST_F(OrderedLogTest, logIterator) {
-    auto tail = mLog.head();
-
-    auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
-    auto entry2 = mLog.append(55);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
-    auto entry3 = mLog.append(LogPage::MAX_SIZE - 4);
-    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
-
-    EXPECT_NE(nullptr, tail->next()) << "Log contains only one page";
-
-
+TEST_F(OrderedLogFilledTest, logIterator) {
     auto i = mLog.begin();
     auto end = mLog.end();
 
-    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to third entry";
+    EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
     EXPECT_NE(end, i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that truncation works correctly
+ */
+TEST_F(OrderedLogFilledTest, truncateLog) {
+    auto tail = mLog.tail();
+    auto begin = mLog.begin();
+
+    // Advance iterator to second page
+    auto i = begin;
+    ++i; ++i;
+
+    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
+    EXPECT_EQ(mLog.tail(), tail->next()) << "New tail not pointing to next page";
+}
+
+/**
+ * @class Log
+ * @test Check that truncating the log to the previous tail page is a no-op
+ */
+TEST_F(OrderedLogFilledTest, truncateLogTailPage) {
+    auto tail = mLog.tail();
+    auto begin = mLog.begin();
+
+    // Advance iterator by one element (same page)
+    auto i = begin;
+    ++i;
+
+    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
+    EXPECT_EQ(mLog.tail(), tail) << "New tail not the same as the previous tail";
+}
+
+/**
+ * @class Log
+ * @test Check that truncation only succeeds if the tail has not changed in the meantime
+ */
+TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
+    auto tail = mLog.tail();
+    auto begin = mLog.begin();
+
+    // Advance iterator to second page
+    auto i = begin;
+    ++i; ++i;
+
+    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
+    EXPECT_EQ(mLog.tail(), tail->next()) << "Iterator not pointing to end";
+
+    // Advance iterator to same page
+    auto j = begin;
+    j++;
+    EXPECT_FALSE(mLog.truncateLog(begin.page(), j.page()));
 }
 
 template <typename Impl>
