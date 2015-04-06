@@ -88,6 +88,11 @@ BaseLogImpl::BaseLogImpl(PageManager& pageManager)
           mHead(new (mPageManager.alloc()) LogPage()) {
 }
 
+void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
+    memset(page, 0, sizeof(LogPage));
+    mPageManager.free(page);
+}
+
 void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
     auto ptr = allocator::malloc(0);
     auto& pageManager = mPageManager;
@@ -112,7 +117,7 @@ LogPage* UnorderedLogImpl::createPage(LogPage* oldHead) {
     // Try to set the page as new head
     // If this fails then another thread already set a new page and oldHead will point to it
     if (!mHead.compare_exchange_strong(oldHead, nPage)) {
-        freePageNow(nPage);
+        freeEmptyPageNow(nPage);
         return oldHead;
     }
 
@@ -147,7 +152,7 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
     // Try to set the new page as next page on the old head
     // If this fails then another thread already set a new page and next will point to it
     if (!oldHead->next().compare_exchange_strong(next, nPage)) {
-        freePageNow(nPage);
+        freeEmptyPageNow(nPage);
         return next;
     }
 

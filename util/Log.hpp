@@ -266,12 +266,23 @@ public:
 protected:
     BaseLogImpl(PageManager& pageManager);
 
-    void freePageNow(LogPage* page) {
-        mPageManager.free(page);
-    }
-
+    /**
+     * @brief Acquires an empty log page from the page manager
+     */
     LogPage* acquirePage() {
         return new(mPageManager.alloc()) LogPage();
+    }
+
+    /**
+     * @brief Returns an unwritten log page (no entries appended) to the page manager
+     */
+    void freeEmptyPageNow(LogPage* page);
+
+    /**
+     * @brief Returns a log page to the page manager
+     */
+    void freePageNow(LogPage* page) {
+        mPageManager.free(page);
     }
 
     /**
