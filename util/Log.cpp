@@ -34,15 +34,10 @@ uint32_t LogEntry::tryAcquire(uint32_t size) {
     return (exp & (0xFFFFFFFFu << 1));
 }
 
-LogPage::LogPage(LogPage* previous)
-        : mPrevious(previous),
-          mOffset(0x1u) {
-}
-
 LogEntry* LogPage::append(uint32_t size) {
     auto entrySize = calculateEntrySize(size);
-    if (entrySize > Log::MAX_SIZE) {
-        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, Log::MAX_SIZE);
+    if (entrySize > LogPage::MAX_ENTRY_SIZE) {
+        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
         return nullptr;
     }
     return appendEntry(entrySize);
@@ -59,7 +54,7 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
 
     while (true) {
         // Check if we have enough space in the log page
-        if (position + size > Log::MAX_SIZE) {
+        if (position + size > LogPage::MAX_ENTRY_SIZE) {
             return nullptr;
         }
 
@@ -88,53 +83,149 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
     }
 }
 
-Log::Log(PageManager& pageManager)
+BaseLogImpl::BaseLogImpl(PageManager& pageManager)
         : mPageManager(pageManager),
-          mHead(new (mPageManager.alloc()) LogPage(nullptr)) {
+          mHead(new (mPageManager.alloc()) LogPage()) {
 }
 
-Log::~Log() {
-    // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
-    // anymore so we can safely delete all pages here
-    auto page = mHead.load();
-    while (page) {
-        auto previous = page->previous().load();
-        mPageManager.free(page);
-        page = previous;
+void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
+    memset(page, 0, sizeof(LogPage));
+    mPageManager.free(page);
+}
+
+void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
+    auto ptr = allocator::malloc(0);
+    auto& pageManager = mPageManager;
+    allocator::free(ptr, [begin, end, &pageManager]() {
+        auto page = begin;
+        while (page != end) {
+            auto next = page->next().load();
+            pageManager.free(page);
+            page = next;
+        }
+    });
+}
+
+LogPage* UnorderedLogImpl::createPage(LogPage* oldHead) {
+    auto nPage = acquirePage();
+    if (!nPage) {
+        LOG_ASSERT(false, "PageManager ran out of space");
+        return nullptr;
     }
+    nPage->next().store(oldHead);
+
+    // Try to set the page as new head
+    // If this fails then another thread already set a new page and oldHead will point to it
+    if (!mHead.compare_exchange_strong(oldHead, nPage)) {
+        freeEmptyPageNow(nPage);
+        return oldHead;
+    }
+
+    return nPage;
 }
 
-LogEntry* Log::append(uint32_t size) {
-    auto entrySize = calculateEntrySize(size);
-    if (entrySize > MAX_SIZE) {
-        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, MAX_SIZE);
+OrderedLogImpl::OrderedLogImpl(PageManager& pageManager)
+        : BaseLogImpl(pageManager),
+          mTail(mHead.load()) {
+    LOG_ASSERT(mHead.load() == mTail.load(), "Head and Tail do not point to the same page");
+}
+
+LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
+    // Check if the old head already has a next pointer
+    auto next = oldHead->next().load();
+    if (next) {
+        // Try to set the next page as new head
+        // If this fails then another thread already set a new head and oldHead will point to it
+        if (!mHead.compare_exchange_strong(oldHead, next)) {
+            return oldHead;
+        }
+        return next;
+    }
+
+    // Not enough space left in page - acquire new page
+    auto nPage = acquirePage();
+    if (!nPage) {
+        LOG_ASSERT(false, "PageManager ran out of space");
         return nullptr;
     }
 
-    auto head = mHead.load();
+    // Try to set the new page as next page on the old head
+    // If this fails then another thread already set a new page and next will point to it
+    if (!oldHead->next().compare_exchange_strong(next, nPage)) {
+        freeEmptyPageNow(nPage);
+        return next;
+    }
+
+    // Set the page as new head
+    // We do not care if this succeeds - if it does not, it means another thread updated the head for us
+    mHead.compare_exchange_strong(oldHead, nPage);
+
+    return nPage;
+}
+
+bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
+    if (oldTail == newTail) {
+        return (mTail.load() == newTail);
+    }
+
+    if (!mTail.compare_exchange_strong(oldTail, newTail)) {
+        return false;
+    }
+
+    freePage(oldTail, newTail);
+
+    return true;
+}
+
+template <class Impl>
+Log<Impl>::~Log() {
+    // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
+    // anymore so we can safely delete all pages here
+    auto page = Impl::startPage();
+    while (page) {
+        auto next = page->next().load();
+        Impl::freePageNow(page);
+        page = next;
+    }
+}
+
+template <class Impl>
+LogEntry* Log<Impl>::append(uint32_t size) {
+    auto entrySize = calculateEntrySize(size);
+    if (entrySize > LogPage::MAX_ENTRY_SIZE) {
+        LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
+        return nullptr;
+    }
+
+    auto page = Impl::head();
     while (true) {
-        // Try to append a new log entry to the head page
-        auto entry = head->appendEntry(entrySize);
+        // Try to append a new log entry to the page
+        auto entry = page->appendEntry(entrySize);
         if (entry != nullptr) {
             return entry;
         }
 
-        // Not enough space left in page - acquire new page
-        auto nPage = new(mPageManager.alloc()) LogPage(head);
-        if (!nPage) {
-            LOG_ASSERT(false, "PageManager ran out of space");
-            return nullptr;
-        }
-
-        // Try to set the page as new head
-        // If this fails then another thread already set a new page and head will point to it
-        if (mHead.compare_exchange_strong(head, nPage)) {
-            head = nPage;
-        } else {
-            mPageManager.free(nPage);
-        }
+        // The page must be full, acquire a new one
+        page = Impl::createPage(page);
     }
 }
+
+template <class Impl>
+void Log<Impl>::erase(LogPage* begin, LogPage* end) {
+    LOG_ASSERT(begin != nullptr, "Begin page must not be null");
+
+    // TODO nullptr as end is not allowed in OrderedLogImpl because this means that we are deleting the head
+
+    if (begin == end) {
+        return;
+    }
+
+    auto next = begin->next().exchange(end);
+    Impl::freePage(next, end);
+}
+
+template class Log<UnorderedLogImpl>;
+template class Log<OrderedLogImpl>;
 
 } // namespace store
 } // namespace tell

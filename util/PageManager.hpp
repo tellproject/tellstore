@@ -44,6 +44,11 @@ public:
     * Returns the given page back to the pool
     */
     void free(void* page);
+
+    /**
+    * Returns the given (already zeroed) page back to the pool
+    */
+    void freeEmpty(void* page);
 };
 
 } // namespace store

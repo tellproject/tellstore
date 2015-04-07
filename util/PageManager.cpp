@@ -34,6 +34,10 @@ void* PageManager::alloc() {
 
 void PageManager::free(void* page) {
     memset(page, 0, TELL_PAGE_SIZE);
+    freeEmpty(page);
+}
+
+void PageManager::freeEmpty(void* page) {
     while (!mPages.push(page));
 }
 
