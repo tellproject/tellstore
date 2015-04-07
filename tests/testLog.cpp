@@ -43,6 +43,15 @@ TEST_F(LogPageTest, entryAlignment) {
 
 /**
  * @class LogPage
+ * @test Check if entries are 8 byte aligned
+ */
+TEST_F(LogPageTest, entryFromData) {
+    auto entry = mPage->append(32);
+    EXPECT_EQ(entry, LogEntry::entryFromData(entry->data())) << "Entry pointers are not the same";
+}
+
+/**
+ * @class LogPage
  * @test Test sealing of entries
  */
 TEST_F(LogPageTest, sealEntry) {
