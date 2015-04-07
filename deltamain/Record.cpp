@@ -40,7 +40,7 @@ template<class T>
 class LogInsert : public LogInsOrUp<T> {
 public:
     LogInsert(T data) : LogInsOrUp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
         auto v = this->version();
         auto next = this->getNext();
         if (next) {
@@ -50,21 +50,23 @@ public:
             // read set (there can be wholes in the read set).
             bool b = false;
             DMRecordImpl<T> rec(next);
-            auto res = rec.data(snapshot, &b);
+            auto res = rec.data(snapshot, isNewest, &b);
             if (b || res) {
                 if (wasDeleted) *wasDeleted = b;
                 return res;
             }
+            isNewest = false;
         }
         if (snapshot.inReadSet(v)) {
             // we do not need to check for older versions in this case.
             if (wasDeleted) *wasDeleted = false;
             return this->data_ptr();
         }
+        isNewest = false;
         auto prev = this->getPrevious();
         if (prev) {
             DMRecordImpl<T> rec(prev);
-            return rec.data(snapshot, wasDeleted);
+            return rec.data(snapshot, isNewest, wasDeleted);
         }
         if (wasDeleted) *wasDeleted = false;
         return nullptr;
@@ -76,16 +78,17 @@ template<class T>
 class LogUpdate : public LogInsOrUp<T> {
 public:
     LogUpdate(T data) : LogInsOrUp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
             if (wasDeleted) *wasDeleted = false;
             return this->data_ptr();
         } else {
             auto prev = this->getPrevious();
+            isNewest = false;
             if (prev) {
                 DMRecordImpl<T> rec(prev);
-                return rec.data(snapshot, wasDeleted);
+                return rec.data(snapshot, isNewest, wasDeleted);
             }
             if (wasDeleted) *wasDeleted = false;
             return nullptr;
@@ -97,7 +100,7 @@ template<class T>
 class LogDelete : public LogOp<T> {
 public:
     LogDelete(T data) : LogOp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
             if (wasDeleted) *wasDeleted = true;
@@ -106,7 +109,8 @@ public:
             auto prev = this->getPrevious();
             if (prev) {
                 DMRecordImpl<T> rec(prev);
-                return rec.data(snapshot, wasDeleted);
+                isNewest = false;
+                return rec.data(snapshot, isNewest, wasDeleted);
             }
             // in this case, the tuple never existed for the running
             // transaction. Therefore it does not see the deletion
@@ -139,24 +143,26 @@ public:
         return reinterpret_cast<const uint32_t*>(mData +off);
     }
 
-    const char* data(const SnapshotDescriptor& snapshot, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
         auto numVersions = getNumberOfVersions();
         auto v = versions();
         auto newest = getNewest();
         if (newest) {
             DMRecordImpl<T> rec(newest);
             bool b;
-            auto res = rec.data(snapshot, &b);
+            auto res = rec.data(snapshot, isNewest, &b);
             if (b || res) {
                 if (wasDeleted) *wasDeleted = b;
                 return res;
             }
+            isNewest = false;
         }
         int idx = numVersions - 1;
         for (; idx >=0; --idx) {
             if (snapshot.inReadSet(v[idx])) {
                 break;
             }
+            isNewest = false;
         }
         if (idx < 0) {
             if (wasDeleted) *wasDeleted = false;
@@ -176,28 +182,30 @@ public:
 
 template<class T>
 const char* DMRecordImpl<T>::data(const SnapshotDescriptor& snapshot,
+                                  bool& isNewest,
                                   bool *wasDeleted /* = nullptr */) const {
     // we have to execute this at a readable version
+    isNewest = true;
     switch (this->type()) {
     case Type::LOG_INSERT:
         {
             LogInsert<T> ins(this->mData);
-            return ins.data(snapshot, wasDeleted);
+            return ins.data(snapshot, isNewest, wasDeleted);
         }
     case Type::LOG_UPDATE:
         {
             LogUpdate<T> up(this->mData);
-            return up.data(snapshot, wasDeleted);
+            return up.data(snapshot, isNewest, wasDeleted);
         }
     case Type::LOG_DELETE:
         {
             LogDelete<T> del(this->mData);
-            return del.data(snapshot, wasDeleted);
+            return del.data(snapshot, isNewest, wasDeleted);
         }
     case Type::MULTI_VERSION_RECORD:
         {
             MVRecord<T> rec(this->mData);
-            return rec.data(snapshot, wasDeleted);
+            return rec.data(snapshot, isNewest, wasDeleted);
         }
     }
     return nullptr;

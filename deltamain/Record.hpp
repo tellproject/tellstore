@@ -95,7 +95,7 @@ public:
      * If wasDeleted is provided, it will be set to true if there
      * is a tuple in the read set but it got deleted.
      */
-    const char* data(const SnapshotDescriptor& snapshot, bool* wasDeleted = nullptr) const;
+    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted = nullptr) const;
 };
 
 extern template class DMRecordImpl<const char*>;

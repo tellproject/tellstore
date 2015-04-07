@@ -5,6 +5,8 @@
 #include <util/TransactionImpl.hpp>
 #include <util/CommitManager.hpp>
 #include <util/TableManager.hpp>
+#include <util/CuckooHash.hpp>
+#include <util/Log.hpp>
 
 #include <vector>
 #include <crossbow/string.hpp>
@@ -13,7 +15,18 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-struct Table {
+class Table {
+    PageManager& mPageManager;
+    Schema mSchema;
+    CuckooTable mHashTable;
+    Log mInsertLog;
+    Log mUpdateLog;
+public:
+    Table(PageManager& pageManager, const Schema& schema);
+    bool get(uint64_t key,
+             const char*& data,
+             const SnapshotDescriptor& snapshot,
+             bool& isNewest) const;
 };
 
 class GarbageCollector {
