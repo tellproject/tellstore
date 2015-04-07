@@ -186,6 +186,10 @@ public:
         return mNext;
     }
 
+    const std::atomic<LogPage*>& next() const {
+        return mNext;
+    }
+
     /**
      * @brief Current offset into the page
      */
@@ -324,6 +328,10 @@ protected:
     LogPage* startPage() {
         return mHead.load();
     }
+
+    const LogPage* startPage() const {
+        return mHead.load();
+    }
 };
 
 /**
@@ -362,6 +370,10 @@ protected:
      * @brief Log iteration starts from the tail
      */
     LogPage* startPage() {
+        return mTail.load();
+    }
+
+    const LogPage* startPage() const {
         return mTail.load();
     }
 
@@ -424,9 +436,15 @@ public:
      *
      * The order in which elements are iterated is dependent on the chosen Log implementation.
      */
-    class LogIterator : public std::iterator<std::input_iterator_tag, LogEntry> {
+    template<class EntryType>
+    class LogIteratorImpl : public std::iterator<std::input_iterator_tag, typename std::conditional<std::is_const<EntryType>::value, const LogEntry, LogEntry>::type> {
     public:
-        LogIterator(LogPage* page)
+        static constexpr bool is_const_iterator = std::is_const<typename std::remove_pointer<EntryType>::type>::value;
+        using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
+        using const_reference = const LogEntry&;
+        using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
+        using const_pointer = const LogEntry*;
+        LogIteratorImpl(EntryType page)
                 : mPage(page),
                   mPageOffset(mPage ? mPage->offset() : 0),
                   mPos(0) {
@@ -440,8 +458,8 @@ public:
             return mPos;
         }
 
-        LogIterator& operator++() {
-            auto entry = reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+        LogIteratorImpl& operator++() {
+            auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
             mPos += entry->size();
             if (mPos == mPageOffset) {
                 mPage = mPage->next().load();
@@ -451,17 +469,17 @@ public:
             return *this;
         }
 
-        LogIterator operator++(int) {
-            LogIterator result(*this);
+        LogIteratorImpl<EntryType> operator++(int) {
+            LogIteratorImpl<EntryType> result(*this);
             operator++();
             return result;
         }
 
-        bool operator==(const LogIterator& rhs) const {
+        bool operator==(const LogIteratorImpl<EntryType>& rhs) const {
             return ((mPage == rhs.mPage) && (mPos == rhs.mPos));
         }
 
-        bool operator!=(const LogIterator& rhs) const {
+        bool operator!=(const LogIteratorImpl<EntryType>& rhs) const {
             return !operator==(rhs);
         }
 
@@ -469,13 +487,21 @@ public:
             return *operator->();
         }
 
-        pointer operator->() const {
-            return reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+        const_reference operator*() const {
+            return *operator->();
+        }
+
+        pointer operator->() {
+            return reinterpret_cast<pointer>(mPage->data() + mPos);
+        }
+
+        const_pointer operator->() const {
+            return reinterpret_cast<const_pointer>(mPage->data() + mPos);
         }
 
     private:
         /// Current page this iterator operates on
-        LogPage* mPage;
+        EntryType mPage;
 
         /// Maximum offset of the current page
         uint32_t mPageOffset;
@@ -483,6 +509,8 @@ public:
         /// Current offset the iterator is pointing to
         uint32_t mPos;
     };
+    using LogIterator = LogIteratorImpl<LogPage*>;
+    using ConstLogIterator = LogIteratorImpl<const LogPage*>;
 
     Log(PageManager& pageManager)
             : Impl(pageManager) {
@@ -523,8 +551,24 @@ public:
         return LogIterator(Impl::startPage());
     }
 
+    ConstLogIterator begin() const {
+        return ConstLogIterator(Impl::startPage());
+    }
+
+    ConstLogIterator cbegin() const {
+        return begin();
+    }
+
     LogIterator end() {
         return LogIterator(nullptr);
+    }
+
+    ConstLogIterator end() const {
+        return ConstLogIterator(nullptr);
+    }
+
+    ConstLogIterator cend() const {
+        return end();
     }
 };
 
