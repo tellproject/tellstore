@@ -1,8 +1,8 @@
-#include <logstructured/OpenAddressingHash.hpp>
+#include <util/OpenAddressingHash.hpp>
 
 #include <gtest/gtest.h>
 
-using namespace tell::store::logstructured;
+using namespace tell::store;
 
 namespace {
 

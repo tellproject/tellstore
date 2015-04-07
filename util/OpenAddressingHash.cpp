@@ -1,12 +1,11 @@
 #include "OpenAddressingHash.hpp"
 
-#include <util/Logging.hpp>
+#include "Logging.hpp"
 
 #include <boost/functional/hash.hpp>
 
 namespace tell {
 namespace store {
-namespace logstructured {
 
 namespace {
 
@@ -228,6 +227,5 @@ T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F
     }
 }
 
-} // namespace logstructured
 } // namespace store
 } // namespace tell

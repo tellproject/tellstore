@@ -1,13 +1,12 @@
 #pragma once
 
-#include <util/functional.hpp>
+#include "functional.hpp"
 
 #include <atomic>
 #include <cstdint>
 
 namespace tell {
 namespace store {
-namespace logstructured {
 
 /**
  * @brief Lock-Free Open-Addressing hash table for associating a pointer with a <tableId, keyId> pair
@@ -130,6 +129,5 @@ private:
 };
 
 
-} // namespace logstructured
 } // namespace store
 } // namespace tell
