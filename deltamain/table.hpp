@@ -27,6 +27,24 @@ public:
              const char*& data,
              const SnapshotDescriptor& snapshot,
              bool& isNewest) const;
+
+    void insert(uint64_t key,
+                const GenericTuple& tuple,
+                const SnapshotDescriptor& snapshot,
+                bool* succeeded = nullptr);
+    void insert(uint64_t key,
+                const char* const data,
+                const SnapshotDescriptor& snapshot,
+                bool* succeeded = nullptr);
+
+    bool update(uint64_t key,
+                const char* const data,
+                const SnapshotDescriptor& snapshot);
+
+    bool remove(uint64_t key,
+                const SnapshotDescriptor& snapshot);
+
+    void runGC(uint64_t minVersion);
 };
 
 class GarbageCollector {
