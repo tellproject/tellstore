@@ -19,6 +19,18 @@ namespace store {
 class LogEntry : NonCopyable, NonMovable {
 public:
     /**
+     * @brief Returns the LogEntry struct associated with a given data pointer
+     *
+     * The data pointer has to be the pointer that was obtained from LogEntry::data().
+     *
+     * @param data The data pointer
+     * @return The LogEntry struct associated with the data pointer
+     */
+    static LogEntry* entryFromData(char* data) {
+        return reinterpret_cast<LogEntry*>(data - sizeof(LogEntry));
+    }
+
+    /**
      * @brief Constructor will never be called
      *
      * Everything will be zero initialized.

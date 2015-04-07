@@ -37,6 +37,8 @@ set(SOURCE_FILES
     deltamain/Record.cpp
     deltamain/table.hpp
     deltamain/table.cpp
+    util/OpenAddressingHash.hpp
+    util/OpenAddressingHash.cpp
     util/LogOperations.hpp
     util/LogOperations.cpp
     util/NonCopyable.hpp
@@ -77,6 +79,7 @@ set(TEST_SRCS
     tests/testCuckooMap.cpp
     tests/testCommitManager.cpp
     tests/testLog.cpp
+    tests/testOpenAddressingHash.cpp
     tests/simpleTests.cpp)
 add_executable(tests tests/main.cpp ${TEST_SRCS})
 target_link_libraries(tests TellStore gtest gtest_main)

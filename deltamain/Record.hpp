@@ -35,31 +35,31 @@ class SnapshotDescriptor;
  *  the number of versions
  * -8 bytes: key
  *
- *  For log entries:
- *  - 8 bytes: version
- *  - 8 bytes: pointer to a previous version. this will
- *    always be set to null, if the previous version was
- *    not an update log entry. If the previous version
- *    was an insert log entry, the only way to reach the
- *    update is via the insert entry, if it was a multi
- *    version record, we can only reach it via the 
- *    record entry itself. This is an important design
- *    decision: this way me make clear that we do not
- *    introduce cycles.
+ *    For log entries:
+ *    - 8 bytes: version
+ *    - 8 bytes: pointer to a previous version. this will
+ *      always be set to null, if the previous version was
+ *      not an update log entry. If the previous version
+ *      was an insert log entry, the only way to reach the
+ *      update is via the insert entry, if it was a multi
+ *      version record, we can only reach it via the 
+ *      record entry itself. This is an important design
+ *      decision: this way me make clear that we do not
+ *      introduce cycles.
  *  
- *      For insert log entries:
- *      - 8 bytes for a next pointer
+ *       For insert log entries:
+ *       - 8 bytes for a next pointer
+ *
+ *    For multiversion records:
+ *    - A pointer to the newest version
+ *    - An array of version numbers
+ *    - An array of 4 byte integers to store the offsets to
+ *      the data for each version - this offset will be absolute.
+ *      If the offset is zero, it means that the tuple was deleted
+ *      at this version.
+ *    - A 4 byte padding if there are an odd number of versions
+ *
  *  - The data (if not delete)
- *
- *  For multiversion records:
- *  - A pointer to the newest version
- *  - An array of version numbers
- *  - An array of 4 byte integers to store the offsets to
- *    the data for each version - this offset will be absolute.
- *    If the offset is zero, it means that the tuple was deleted
- *    at this version.
- *  - A 4 byte padding if there are an odd number of versions
- *
  *
  *  This class comes in to flavors: const and non-const.
  *  The non-const version provides also functionality for
