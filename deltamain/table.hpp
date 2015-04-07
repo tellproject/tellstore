@@ -19,8 +19,8 @@ class Table {
     PageManager& mPageManager;
     Schema mSchema;
     CuckooTable mHashTable;
-    Log mInsertLog;
-    Log mUpdateLog;
+    Log<OrderedLogImpl> mInsertLog;
+    Log<OrderedLogImpl> mUpdateLog;
 public:
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
