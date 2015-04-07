@@ -1,5 +1,9 @@
 #pragma once
 #include <config.h>
+
+#include "PageManager.hpp"
+
+#include <cstring>
 #include <random>
 
 namespace tell {
