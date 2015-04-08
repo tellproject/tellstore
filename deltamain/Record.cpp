@@ -101,7 +101,7 @@ public:
             isNewest = false;
             if (prev) {
                 DMRecordImpl<T> rec(prev);
-                return rec.data(snapshot, isNewest, wasDeleted);
+                return rec.data(snapshot, size, isNewest, wasDeleted);
             }
             if (wasDeleted) *wasDeleted = false;
             return nullptr;
