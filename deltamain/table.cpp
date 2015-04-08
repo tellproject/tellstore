@@ -14,6 +14,7 @@ Table::Table(PageManager& pageManager, const Schema& schema)
 {}
 
 bool Table::get(uint64_t key,
+                size_t& size,
                 const char*& data,
                 const SnapshotDescriptor& snapshot,
                 bool& isNewest) const {
@@ -21,7 +22,7 @@ bool Table::get(uint64_t key,
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
-        data = rec.data(snapshot, isNewest, &wasDeleted);
+        data = rec.data(snapshot, isNewest, size, &wasDeleted);
         return !wasDeleted;
     }
     // in this case we need to scan through the insert log
@@ -30,7 +31,7 @@ bool Table::get(uint64_t key,
         CDMRecord rec(iter->data());
         if (rec.key() == key) {
             bool wasDeleted;
-            data = rec.data(snapshot, isNewest, &wasDeleted);
+            data = rec.data(snapshot, isNewest, size, &wasDeleted);
             return !wasDeleted;
         }
     }

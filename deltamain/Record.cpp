@@ -1,6 +1,7 @@
 #include "Record.hpp"
 
 #include <util/SnapshotDescriptor.hpp>
+#include <util/Log.hpp>
 
 namespace tell {
 namespace store {
@@ -40,7 +41,10 @@ template<class T>
 class LogInsert : public LogInsOrUp<T> {
 public:
     LogInsert(T data) : LogInsOrUp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot,
+                     size_t& size,
+                     bool& isNewest,
+                     bool* wasDeleted) const {
         auto v = this->version();
         auto next = this->getNext();
         if (next) {
@@ -50,7 +54,7 @@ public:
             // read set (there can be wholes in the read set).
             bool b = false;
             DMRecordImpl<T> rec(next);
-            auto res = rec.data(snapshot, isNewest, &b);
+            auto res = rec.data(snapshot, size, isNewest, &b);
             if (b || res) {
                 if (wasDeleted) *wasDeleted = b;
                 return res;
@@ -60,15 +64,19 @@ public:
         if (snapshot.inReadSet(v)) {
             // we do not need to check for older versions in this case.
             if (wasDeleted) *wasDeleted = false;
+            if (next == nullptr) isNewest = true;
+            auto entry = LogEntry::entryFromData(this->data_ptr());
+            size = size_t(entry->size());
             return this->data_ptr();
         }
         isNewest = false;
         auto prev = this->getPrevious();
         if (prev) {
             DMRecordImpl<T> rec(prev);
-            return rec.data(snapshot, isNewest, wasDeleted);
+            return rec.data(snapshot, size, isNewest, wasDeleted);
         }
         if (wasDeleted) *wasDeleted = false;
+        size = 0;
         return nullptr;
     }
 
@@ -78,10 +86,15 @@ template<class T>
 class LogUpdate : public LogInsOrUp<T> {
 public:
     LogUpdate(T data) : LogInsOrUp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot,
+                     size_t& size,
+                     bool& isNewest,
+                     bool* wasDeleted) const {
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
             if (wasDeleted) *wasDeleted = false;
+            auto entry = LogEntry::entryFromData(this->data_ptr());
+            size = size_t(entry->size());
             return this->data_ptr();
         } else {
             auto prev = this->getPrevious();
@@ -100,17 +113,22 @@ template<class T>
 class LogDelete : public LogOp<T> {
 public:
     LogDelete(T data) : LogOp<T>(data) {}
-    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot,
+                     size_t& size,
+                     bool& isNewest,
+                     bool* wasDeleted) const {
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
             if (wasDeleted) *wasDeleted = true;
+            size = 0;
             return nullptr;
         } else {
             auto prev = this->getPrevious();
             if (prev) {
                 DMRecordImpl<T> rec(prev);
+                auto res = rec.data(snapshot, isNewest, wasDeleted);
                 isNewest = false;
-                return rec.data(snapshot, isNewest, wasDeleted);
+                return res;
             }
             // in this case, the tuple never existed for the running
             // transaction. Therefore it does not see the deletion
@@ -143,16 +161,21 @@ public:
         return reinterpret_cast<const uint32_t*>(mData +off);
     }
 
-    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted) const {
+    const char* data(const SnapshotDescriptor& snapshot,
+                     size_t& size,
+                     bool& isNewest,
+                     bool* wasDeleted) const {
         auto numVersions = getNumberOfVersions();
         auto v = versions();
         auto newest = getNewest();
         if (newest) {
             DMRecordImpl<T> rec(newest);
             bool b;
-            auto res = rec.data(snapshot, isNewest, &b);
+            size_t s;
+            auto res = rec.data(snapshot, s, isNewest, &b);
             if (b || res) {
                 if (wasDeleted) *wasDeleted = b;
+                size = s;
                 return res;
             }
             isNewest = false;
@@ -171,6 +194,7 @@ public:
         auto off = offsets();
         if (off[idx]) {
             if (wasDeleted) *wasDeleted = false;
+            size = size_t(off[idx + 1] - off[idx]);
             return mData + off[idx];
         }
         if (wasDeleted) *wasDeleted = true;
@@ -182,6 +206,7 @@ public:
 
 template<class T>
 const char* DMRecordImpl<T>::data(const SnapshotDescriptor& snapshot,
+                                  size_t& size,
                                   bool& isNewest,
                                   bool *wasDeleted /* = nullptr */) const {
     // we have to execute this at a readable version
@@ -190,22 +215,22 @@ const char* DMRecordImpl<T>::data(const SnapshotDescriptor& snapshot,
     case Type::LOG_INSERT:
         {
             LogInsert<T> ins(this->mData);
-            return ins.data(snapshot, isNewest, wasDeleted);
+            return ins.data(snapshot, size, isNewest, wasDeleted);
         }
     case Type::LOG_UPDATE:
         {
             LogUpdate<T> up(this->mData);
-            return up.data(snapshot, isNewest, wasDeleted);
+            return up.data(snapshot, size, isNewest, wasDeleted);
         }
     case Type::LOG_DELETE:
         {
             LogDelete<T> del(this->mData);
-            return del.data(snapshot, isNewest, wasDeleted);
+            return del.data(snapshot, size, isNewest, wasDeleted);
         }
     case Type::MULTI_VERSION_RECORD:
         {
             MVRecord<T> rec(this->mData);
-            return rec.data(snapshot, isNewest, wasDeleted);
+            return rec.data(snapshot, size, isNewest, wasDeleted);
         }
     }
     return nullptr;

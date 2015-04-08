@@ -103,29 +103,32 @@ public:
 
     bool get(uint64_t tableId,
              uint64_t key,
+             size_t& size,
              const char*& data,
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
-        return mTables[tableId]->get(key, data, snapshot, isNewest);
+        return mTables[tableId]->get(key, size, data, snapshot, isNewest);
     }
 
     bool update(uint64_t tableId,
                 uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
-        return mTables[tableId]->update(key, data, snapshot);
+        return mTables[tableId]->update(key, size, data, snapshot);
     }
 
 
     void insert(uint64_t tableId,
                 uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        mTables[tableId]->insert(key, data, snapshot, succeeded);
+        mTables[tableId]->insert(key, size, data, snapshot, succeeded);
     }
 
     void insert(uint64_t tableId,

@@ -53,11 +53,13 @@ class SnapshotDescriptor;
  *    For multiversion records:
  *    - A pointer to the newest version
  *    - An array of version numbers
- *    - An array of 4 byte integers to store the offsets to
+ *    - An array of size number_of_versions + 1 of 4 byte integers
+ *      to store the offsets to
  *      the data for each version - this offset will be absolute.
  *      If the offset is zero, it means that the tuple was deleted
- *      at this version.
- *    - A 4 byte padding if there are an odd number of versions
+ *      at this version. The last offsets points to the byte after
+ *      the record.
+ *    - A 4 byte padding if there are an even number of versions
  *
  *  - The data (if not delete)
  *
@@ -95,7 +97,7 @@ public:
      * If wasDeleted is provided, it will be set to true if there
      * is a tuple in the read set but it got deleted.
      */
-    const char* data(const SnapshotDescriptor& snapshot, bool& isNewest, bool* wasDeleted = nullptr) const;
+    const char* data(const SnapshotDescriptor& snapshot, size_t& size, bool& isNewest, bool* wasDeleted = nullptr) const;
 };
 
 extern template class DMRecordImpl<const char*>;

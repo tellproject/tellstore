@@ -24,6 +24,7 @@ class Table {
 public:
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
+             size_t& size,
              const char*& data,
              const SnapshotDescriptor& snapshot,
              bool& isNewest) const;
@@ -33,11 +34,13 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr);
     void insert(uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr);
 
     bool update(uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot);
 
@@ -88,28 +91,31 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
 
     bool get(uint64_t tableId,
              uint64_t key,
+             size_t& size,
              const char*& data,
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
-        return tableManager.get(tableId, key, data, snapshot, isNewest);
+        return tableManager.get(tableId, key, size, data, snapshot, isNewest);
     }
 
     bool update(uint64_t tableId,
                 uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
-        return tableManager.update(tableId, key, data, snapshot);
+        return tableManager.update(tableId, key, size, data, snapshot);
     }
 
     void insert(uint64_t tableId,
                 uint64_t key,
+                size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        tableManager.insert(tableId, key, data, snapshot, succeeded);
+        tableManager.insert(tableId, key, size, data, snapshot, succeeded);
     }
 
     void insert(uint64_t tableId,
