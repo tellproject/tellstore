@@ -9,8 +9,8 @@ namespace store {
 
 namespace {
 
-static constexpr void* gDeletedPtr = reinterpret_cast<void*>(0x1u);
-static constexpr void* gInvalidPtr = reinterpret_cast<void*>(0x2u);
+void* const  gDeletedPtr = reinterpret_cast<void*>(0x1u);
+void* const gInvalidPtr = reinterpret_cast<void*>(0x2u);
 
 /**
  * @brief Check the wellformedness of tableId and keyId
