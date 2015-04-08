@@ -27,7 +27,6 @@ public:
      * @return The LogEntry struct associated with the data pointer
      */
     static LogEntry* entryFromData(char* data) {
-        //return reinterpret_cast<LogEntry*>(data - sizeof(LogEntry));
         return const_cast<LogEntry*>(entryFromData(const_cast<const char*>(data)));
     }
 
