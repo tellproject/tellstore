@@ -196,6 +196,14 @@ public:
     LogEntry* append(uint32_t size);
 
     /**
+     * @brief Appends a new entry to the log
+     *
+     * @param size Complete 8 byte padded size of the new entry
+     * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
+     */
+    LogEntry* appendEntry(uint32_t size);
+
+    /**
      * @brief Page preceeding the current page in the log
      */
     std::atomic<LogPage*>& next() {
@@ -258,16 +266,6 @@ public:
     }
 
 private:
-    template <class Impl> friend class Log;
-
-    /**
-     * @brief Appends a new entry to the log
-     *
-     * @param size Complete 8 byte padded size of the new entry
-     * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
-     */
-    LogEntry* appendEntry(uint32_t size);
-
     std::atomic<LogPage*> mNext;
     std::atomic<uint32_t> mOffset;
 };
@@ -275,16 +273,13 @@ private:
 /**
  * @brief Base class for Log implementations
  *
- * Provides the basic page handling mechanism and the head pointer.
+ * Provides the basic page handling mechanism.
  */
 class BaseLogImpl {
-public:
-    LogPage* head() {
-        return mHead.load();
-    }
-
 protected:
-    BaseLogImpl(PageManager& pageManager);
+    BaseLogImpl(PageManager& pageManager)
+            : mPageManager(pageManager) {
+    }
 
     /**
      * @brief Acquires an empty log page from the page manager
@@ -317,9 +312,6 @@ protected:
 
 private:
     PageManager& mPageManager;
-
-protected:
-    std::atomic<LogPage*> mHead;
 };
 
 /**
@@ -331,23 +323,69 @@ protected:
  * Pages are iterated from the head (newest page) to the tail (oldest page).
  */
 class UnorderedLogImpl : public BaseLogImpl {
-protected:
-    UnorderedLogImpl(PageManager& pageManager)
-            : BaseLogImpl(pageManager) {
+public:
+    LogPage* head() {
+        return mHead.load().writeHead;
     }
 
-    LogPage* createPage(LogPage* oldHead);
+    /**
+     * @brief Appends the given pages to the log
+     *
+     * @param begin The first page to append
+     * @param end The last page to append
+     */
+    void appendPage(LogPage* begin, LogPage* end);
+
+    void appendPage(LogPage* page) {
+        appendPage(page, page);
+    }
+
+protected:
+    UnorderedLogImpl(PageManager& pageManager);
+
+    LogEntry* append(uint32_t size);
 
     /**
      * @brief Log iteration starts from the head
      */
     LogPage* startPage() {
-        return mHead.load();
+        auto head = mHead.load();
+        return (head.appendHead ? head.appendHead : head.writeHead);
     }
 
     const LogPage* startPage() const {
-        return mHead.load();
+        auto head = mHead.load();
+        return (head.appendHead ? head.appendHead : head.writeHead);
     }
+
+private:
+    /**
+     * @brief Struct containing the two log heads
+     *
+     * The write head is used when appending entries to the log using Log::append(uint32_t size). The append head stores
+     * the head page of the most recent appended page using Log::appendPage(LogPage* begin, LogPage* end). When the
+     * write head page is full and the append head is not null the append head will become the new head.
+     *
+     * The 16 byte alignment is required on x64 for the 128 bit CAS to work correctly.
+     */
+    struct alignas(16) LogHead {
+        LogHead() noexcept = default;
+
+        LogHead(LogPage* write, LogPage* append)
+                : writeHead(write),
+                  appendHead(append) {
+        }
+
+        LogPage* writeHead;
+        LogPage* appendHead;
+    };
+
+    /**
+     * @brief Tries to allocate a new head page
+     */
+    LogHead createPage(LogHead oldHead);
+
+    std::atomic<LogHead> mHead;
 };
 
 /**
@@ -361,6 +399,10 @@ protected:
  */
 class OrderedLogImpl : public BaseLogImpl {
 public:
+    LogPage* head() {
+        return mHead.load();
+    }
+
     LogPage* tail() {
         return mTail.load();
     }
@@ -380,7 +422,7 @@ public:
 protected:
     OrderedLogImpl(PageManager& pageManager);
 
-    LogPage* createPage(LogPage* oldHead);
+    LogEntry* append(uint32_t size);
 
     /**
      * @brief Log iteration starts from the tail
@@ -394,6 +436,12 @@ protected:
     }
 
 private:
+    /**
+     * @brief Tries to allocate a new head page
+     */
+    LogPage* createPage(LogPage* oldHead);
+
+    std::atomic<LogPage*> mHead;
     std::atomic<LogPage*> mTail;
 };
 

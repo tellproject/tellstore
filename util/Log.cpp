@@ -83,11 +83,6 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
     }
 }
 
-BaseLogImpl::BaseLogImpl(PageManager& pageManager)
-        : mPageManager(pageManager),
-          mHead(new (mPageManager.alloc()) LogPage()) {
-}
-
 void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
     memset(page, 0, sizeof(LogPage));
     mPageManager.free(page);
@@ -106,28 +101,114 @@ void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
     });
 }
 
-LogPage* UnorderedLogImpl::createPage(LogPage* oldHead) {
-    auto nPage = acquirePage();
-    if (!nPage) {
-        LOG_ASSERT(false, "PageManager ran out of space");
-        return nullptr;
-    }
-    nPage->next().store(oldHead);
+UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
+        : BaseLogImpl(pageManager),
+          mHead(LogHead(acquirePage(), nullptr)) {
+    LOG_ASSERT((reinterpret_cast<uintptr_t>(&mHead) % 16) == 0, "Head is not 16 byte aligned");
+    LOG_ASSERT(mHead.is_lock_free(), "LogHead is not lock free");
+}
 
-    // Try to set the page as new head
-    // If this fails then another thread already set a new page and oldHead will point to it
-    if (!mHead.compare_exchange_strong(oldHead, nPage)) {
-        freeEmptyPageNow(nPage);
-        return oldHead;
-    }
+void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
+    auto oldHead = mHead.load();
 
-    return nPage;
+    while (true) {
+        // Next should point to the last appendHead or the writeHead if there are no pages waiting to be appended
+        auto next = (oldHead.appendHead ? oldHead.appendHead : oldHead.writeHead);
+        end->next().store(next);
+
+        // Try to update the head
+        LogHead nHead(oldHead.writeHead, begin);
+        if (mHead.compare_exchange_strong(oldHead, nHead)) {
+            break;
+        }
+    }
+}
+
+LogEntry* UnorderedLogImpl::append(uint32_t size) {
+    auto head = mHead.load();
+    while (true) {
+        // Try to append a new log entry to the page
+        auto entry = head.writeHead->appendEntry(size);
+        if (entry != nullptr) {
+            return entry;
+        }
+
+        // The page must be full, acquire a new one
+        head = createPage(head);
+    }
+}
+
+UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
+    auto writeHead = oldHead.writeHead;
+    while (true) {
+        bool freeHead = false;
+        LogHead nHead(oldHead.appendHead, nullptr);
+
+        // If the append head is null we have to allocate a new head page
+        if (!oldHead.appendHead) {
+            nHead.writeHead = acquirePage();
+            if (!nHead.writeHead) {
+                LOG_ASSERT(false, "PageManager ran out of space");
+                return nHead;
+            }
+            nHead.writeHead->next().store(oldHead.writeHead);
+            freeHead = true;
+        }
+
+        // Try to set the page as new head
+        // If this fails then another thread already set a new page and oldHead will point to it
+        if (!mHead.compare_exchange_strong(oldHead, nHead)) {
+            // We either have a new write or append head so we can free the previously allocated page
+            if (freeHead) {
+                freeEmptyPageNow(nHead.writeHead);
+            }
+
+            // Check if the write head is still the same (i.e. only append head changed)
+            if (oldHead.writeHead == writeHead) {
+                continue;
+            }
+
+            // Write head changed so retry with new head
+            return oldHead;
+        }
+
+        return nHead;
+    }
 }
 
 OrderedLogImpl::OrderedLogImpl(PageManager& pageManager)
         : BaseLogImpl(pageManager),
+          mHead(acquirePage()),
           mTail(mHead.load()) {
     LOG_ASSERT(mHead.load() == mTail.load(), "Head and Tail do not point to the same page");
+}
+
+bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
+    if (oldTail == newTail) {
+        return (mTail.load() == newTail);
+    }
+
+    if (!mTail.compare_exchange_strong(oldTail, newTail)) {
+        return false;
+    }
+
+    freePage(oldTail, newTail);
+
+    return true;
+}
+
+LogEntry* OrderedLogImpl::append(uint32_t size) {
+    auto head = mHead.load();
+    while (true) {
+        // Try to append a new log entry to the page
+        auto entry = head->appendEntry(size);
+        if (entry != nullptr) {
+            return entry;
+        }
+
+        // The page must be full, acquire a new one
+        head = createPage(head);
+    }
 }
 
 LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
@@ -163,20 +244,6 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
     return nPage;
 }
 
-bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
-    if (oldTail == newTail) {
-        return (mTail.load() == newTail);
-    }
-
-    if (!mTail.compare_exchange_strong(oldTail, newTail)) {
-        return false;
-    }
-
-    freePage(oldTail, newTail);
-
-    return true;
-}
-
 template <class Impl>
 Log<Impl>::~Log() {
     // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
@@ -197,17 +264,7 @@ LogEntry* Log<Impl>::append(uint32_t size) {
         return nullptr;
     }
 
-    auto page = Impl::head();
-    while (true) {
-        // Try to append a new log entry to the page
-        auto entry = page->appendEntry(entrySize);
-        if (entry != nullptr) {
-            return entry;
-        }
-
-        // The page must be full, acquire a new one
-        page = Impl::createPage(page);
-    }
+    return Impl::append(entrySize);
 }
 
 template <class Impl>
