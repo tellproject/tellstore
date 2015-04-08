@@ -7,7 +7,6 @@ namespace store {
 
 static_assert(ATOMIC_POINTER_LOCK_FREE, "Atomic pointer operations not supported");
 static_assert(sizeof(LogPage*) == sizeof(std::atomic<LogPage*>), "Atomics won't work correctly");
-static_assert(sizeof(LogPage) <= LogPage::LOG_HEADER_SIZE, "LOG_HEADER_SIZE must be larger or equal than LogPage");
 
 namespace {
 
@@ -60,6 +59,8 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
 
         // Try to acquire the space for the new entry
         auto entry = reinterpret_cast<LogEntry*>(this->data() + position);
+        LOG_ASSERT((reinterpret_cast<uintptr_t>(entry) % 8) == 4 , "Position is not 8 byte aligned with offset 4");
+
         auto res = entry->tryAcquire(size);
         if (res != 0) {
             position += res;

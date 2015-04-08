@@ -107,19 +107,23 @@ private:
  * A Log-Page has the following form:
  *
  * -------------------------------------------------------------------------------
- * | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... |
+ * | next (8 bytes) | offset (4 bytes) | entry | entry | ... | padding (4 bytes) |
  * -------------------------------------------------------------------------------
+ *
+ * Entries require 4 bytes of space followed by the associated data segment. To keep this data segment 8 byte aligned
+ * the log pads the entries to a multiple of 8 bytes and writes the LogEntries at offset 4. Any subsequent entries are
+ * aligned with offset 4 due to the padding.
  */
 class LogPage : NonCopyable, NonMovable {
 public:
     /// Size of the LogPage data structure
-    static constexpr size_t LOG_HEADER_SIZE = 16;
+    static constexpr size_t LOG_HEADER_SIZE = 12;
 
     /// Maximum size of a log entry
     static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
 
     /// Maximum size of a log entries data payload
-    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - sizeof(LogEntry);
+    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - 8;
 
     /**
      * @brief Iterator for iterating over all entries in a page
