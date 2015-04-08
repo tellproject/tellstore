@@ -30,6 +30,10 @@ public:
         return reinterpret_cast<LogEntry*>(data - sizeof(LogEntry));
     }
 
+    static const LogEntry* entryFromData(const char* data) {
+        return reinterpret_cast<const LogEntry*>(data - sizeof(LogEntry));
+    }
+
     /**
      * @brief Constructor will never be called
      *
