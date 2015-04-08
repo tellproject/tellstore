@@ -98,6 +98,8 @@ public:
      * is a tuple in the read set but it got deleted.
      */
     const char* data(const SnapshotDescriptor& snapshot, size_t& size, bool& isNewest, bool* wasDeleted = nullptr) const;
+
+    static size_t spaceOverhead(Type t);
 };
 
 extern template class DMRecordImpl<const char*>;

@@ -22,7 +22,7 @@ bool Table::get(uint64_t key,
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
-        data = rec.data(snapshot, isNewest, size, &wasDeleted);
+        data = rec.data(snapshot, size, isNewest, &wasDeleted);
         return !wasDeleted;
     }
     // in this case we need to scan through the insert log
@@ -31,12 +31,21 @@ bool Table::get(uint64_t key,
         CDMRecord rec(iter->data());
         if (rec.key() == key) {
             bool wasDeleted;
-            data = rec.data(snapshot, isNewest, size, &wasDeleted);
+            data = rec.data(snapshot, size, isNewest, &wasDeleted);
             return !wasDeleted;
         }
     }
     // in this case the tuple does not exist
     return false;
+}
+
+void Table::insert(uint64_t key,
+                   size_t size,
+                   const char* const data,
+                   const SnapshotDescriptor& snapshot,
+                   bool* succeeded /*= nullptr*/) {
+    size += DMRecord::spaceOverhead(DMRecord::Type::LOG_INSERT);
+    auto entry = mInsertLog.append(size);
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {

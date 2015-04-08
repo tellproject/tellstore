@@ -25,14 +25,6 @@ include_directories(${CMAKE_BINARY_DIR})
 set(SOURCE_FILES
     implementation.hpp
     tellstore.hpp
-    deltamainrewrite/dmrewrite.hpp
-    deltamainrewrite/dmrewrite.cpp
-    deltamainrewrite/Page.hpp
-    deltamainrewrite/Page.cpp
-    deltamainrewrite/DMLog.hpp
-    deltamainrewrite/DMLog.cpp
-    deltamainrewrite/DMRecord.cpp
-    deltamainrewrite/DMRecord.hpp
     deltamain/Record.hpp
     deltamain/Record.cpp
     deltamain/table.hpp

@@ -126,7 +126,7 @@ public:
             auto prev = this->getPrevious();
             if (prev) {
                 DMRecordImpl<T> rec(prev);
-                auto res = rec.data(snapshot, isNewest, wasDeleted);
+                auto res = rec.data(snapshot, size, isNewest, wasDeleted);
                 isNewest = false;
                 return res;
             }
@@ -234,6 +234,19 @@ const char* DMRecordImpl<T>::data(const SnapshotDescriptor& snapshot,
         }
     }
     return nullptr;
+}
+
+template<class T>
+size_t DMRecordImpl<T>::spaceOverhead(Type t) {
+    switch(t) {
+    case Type::LOG_INSERT:
+        return 40;
+    case Type::LOG_UPDATE:
+    case Type::LOG_DELETE:
+        return 32;
+    case Type::MULTI_VERSION_RECORD:
+        return 24;
+    }
 }
 
 template class DMRecordImpl<const char*>;
