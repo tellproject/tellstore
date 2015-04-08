@@ -7,6 +7,8 @@ namespace store {
 
 static_assert(ATOMIC_POINTER_LOCK_FREE, "Atomic pointer operations not supported");
 static_assert(sizeof(LogPage*) == sizeof(std::atomic<LogPage*>), "Atomics won't work correctly");
+static_assert(sizeof(LogPage) <= LogPage::LOG_HEADER_SIZE, "LOG_HEADER_SIZE must be larger or equal than LogPage");
+static_assert(sizeof(LogEntry) <= LogEntry::LOG_ENTRY_SIZE, "LOG_ENTRY_SIZE must be larger or equal than LogEntry");
 
 namespace {
 
