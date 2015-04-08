@@ -38,6 +38,8 @@ set(SOURCE_FILES
     deltamainrewrite/DMLog.cpp
     deltamainrewrite/DMRecord.cpp
     deltamainrewrite/DMRecord.hpp
+    logstructured/Table.hpp
+    logstructured/Table.cpp
     util/OpenAddressingHash.hpp
     util/OpenAddressingHash.cpp
     util/LogOperations.hpp
