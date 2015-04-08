@@ -118,7 +118,7 @@ protected:
 using UnorderedLogTest = BaseLogTest<UnorderedLogImpl>;
 
 /**
- * @class Log
+ * @class UnorderedLogImpl
  * @test Check that appends work correctly
  *
  * Allocates 3 entries: One small on head page, then a large one that does not fit directly on the head page, then a
@@ -138,6 +138,136 @@ TEST_F(UnorderedLogTest, append) {
 
     EXPECT_NE(head, mLog.head()) << "New head is the same as the old head";
     EXPECT_EQ(head, mLog.head()->next()) << "Next pointer of head does not point to old head";
+}
+
+/**
+ * @class UnorderedLogImpl
+ * @test Check that appending two pages works
+ */
+TEST_F(UnorderedLogTest, appendPage) {
+    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto page2 = new(mPageManager.alloc()) LogPage();
+    page2->next().store(page1);
+    mLog.appendPage(page2, page1);
+
+    EXPECT_NE(page1, mLog.head()) << "Head pointing to appended page";
+    EXPECT_NE(page2, mLog.head()) << "Head pointing to appended page";
+
+    auto i = mLog.pageBegin();
+    auto end = mLog.pageEnd();
+
+    EXPECT_EQ(page2, &(*i)) << "Iterator not pointing to appended head page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(page1, &(*i)) << "Iterator not pointing to second appended page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to head page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class UnorderedLogImpl
+ * @test Check that appending pages multiple times works
+ */
+TEST_F(UnorderedLogTest, appendMultiplePage) {
+    auto page1 = new(mPageManager.alloc()) LogPage();
+    mLog.appendPage(page1);
+
+    auto page2 = new(mPageManager.alloc()) LogPage();
+    mLog.appendPage(page2);
+
+    auto i = mLog.pageBegin();
+    auto end = mLog.pageEnd();
+
+    EXPECT_EQ(page2, &(*i)) << "Iterator not pointing to second appended head page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(page1, &(*i)) << "Iterator not pointing to first appended head page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to head page";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class UnorderedLogImpl
+ * @test Check that elements are written to head segment when appending
+ */
+TEST_F(UnorderedLogTest, appendPageWriteToHead) {
+    auto entry1 = mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto entry2 = page1->append(16);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    mLog.appendPage(page1);
+
+    auto entry3 = mLog.append(16);
+    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
+
+    auto i = mLog.begin();
+    auto end = mLog.end();
+
+    EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to appended entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class UnorderedLogImpl
+ * @test Check that a new head pages is allocated after the appended pages
+ */
+TEST_F(UnorderedLogTest, appendPageNewHead) {
+    auto entry1 = mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto entry2 = page1->append(16);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    mLog.appendPage(page1);
+
+    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
+    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
+
+    auto i = mLog.begin();
+    auto end = mLog.end();
+
+    EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to second entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to appended entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_NE(end, i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_EQ(end, i) << "Iterator not pointing to end";
 }
 
 using OrderedLogTest = BaseLogTest<OrderedLogImpl>;
@@ -460,6 +590,83 @@ TYPED_TEST(LogTestThreaded, append) {
                 memcpy(entry->data(), &i, sizeof(i));
                 entry->seal();
             }
+        });
+        values += valuesCount;
+    }
+    for (auto& t : worker) {
+        t.join();
+    }
+    auto endTime = std::chrono::steady_clock::now();
+
+    auto diff = endTime - startTime;
+    std::cout << "Wrote " << (values - 1) << " entries in "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() << "ms" << std::endl;
+
+    // Fill set with expected values
+    std::unordered_set<uint64_t> valueSet;
+    valueSet.reserve(values);
+    for (uint64_t i = 1; i < values; ++i) {
+        valueSet.emplace(i);
+    }
+
+    // Iterate over log and remove the value in the entry from the expected values set
+    auto end = this->mLog.end();
+    for (auto i = this->mLog.begin(); i != end; ++i) {
+        EXPECT_TRUE(i->sealed()) << "Entry is not sealed";
+        uint64_t value = *reinterpret_cast<uint64_t*>(i->data());
+
+        auto j = valueSet.find(value);
+        EXPECT_NE(j, valueSet.end()) << "Value from entry is not in values set";
+        valueSet.erase(j);
+    }
+    EXPECT_TRUE(valueSet.empty()) << "Values set is not empty";
+}
+
+using UnorderedLogThreadedTest = LogTestThreaded<UnorderedLogImpl>;
+
+/**
+ * @class UnorderedLogImpl
+ * @test Checks if the log is written correctly if concurrent appends happen to the log and other pages
+ *
+ * Similar to the LogTestThreaded::append test but divides the threads into two groups: One that writes to the head
+ * segment directly and one that writes into private pages, appending the pages to the log when they are full.
+ */
+TEST_F(UnorderedLogThreadedTest, append) {
+    constexpr int headThreadCount = 2; // Number of threads appending to head - 2 Threads
+    constexpr int appendThreadCount = 2; // Number of threads appending to head - 2 Threads
+    constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+
+    // Start threads filling the log
+    auto startTime = std::chrono::steady_clock::now();
+    uint64_t values = 1;
+
+    std::array<std::thread, headThreadCount + appendThreadCount> worker;
+    for (size_t i = 0; i < headThreadCount; ++i) {
+        worker[i] = std::thread([valuesCount, values, this] () {
+            auto end = values + valuesCount;
+            for (auto i = values; i < end; ++i) {
+                auto entry = this->mLog.append(sizeof(i));
+                memcpy(entry->data(), &i, sizeof(i));
+                entry->seal();
+            }
+        });
+        values += valuesCount;
+    }
+    for (size_t i = headThreadCount; i < headThreadCount + appendThreadCount; ++i) {
+        worker[i] = std::thread([valuesCount, values, this] () {
+            auto page = new(this->mPageManager.alloc()) LogPage();
+            auto end = values + valuesCount;
+            for (auto i = values; i < end; ++i) {
+                auto entry = page->append(sizeof(i));
+                if (entry == nullptr) {
+                    this->mLog.appendPage(page);
+                    page = new(this->mPageManager.alloc()) LogPage();
+                    entry = page->append(sizeof(i));
+                }
+                memcpy(entry->data(), &i, sizeof(i));
+                entry->seal();
+            }
+            this->mLog.appendPage(page);
         });
         values += valuesCount;
     }

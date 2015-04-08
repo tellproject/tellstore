@@ -9,6 +9,11 @@ if ( USE_ASAN )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
 endif()
 
+# The cx16 flag is required for GCC to enable 128 bit atomics
+if (CMAKE_COMPILER_IS_GNUCXX)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
+endif()
+
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
