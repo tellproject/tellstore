@@ -18,6 +18,9 @@ namespace store {
  */
 class LogEntry : NonCopyable, NonMovable {
 public:
+    /// Size of the LogEntry data structure
+    static constexpr size_t LOG_ENTRY_SIZE = 4;
+
     /**
      * @brief Returns the LogEntry struct associated with a given data pointer
      *
@@ -120,10 +123,10 @@ public:
     static constexpr size_t LOG_HEADER_SIZE = 12;
 
     /// Maximum size of a log entry
-    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
+    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - (LogPage::LOG_HEADER_SIZE + 4);
 
     /// Maximum size of a log entries data payload
-    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - 8;
+    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE;
 
     /**
      * @brief Iterator for iterating over all entries in a page
