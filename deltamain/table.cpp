@@ -1,6 +1,7 @@
 #include "table.hpp"
 #include "Record.hpp"
 
+
 namespace tell {
 namespace store {
 namespace deltamain {
@@ -8,6 +9,7 @@ namespace deltamain {
 Table::Table(PageManager& pageManager, const Schema& schema)
     : mPageManager(pageManager)
     , mSchema(schema)
+    , mRecord(mSchema)
     , mHashTable(mPageManager)
     , mInsertLog(mPageManager)
     , mUpdateLog(mPageManager)
@@ -100,6 +102,20 @@ void Table::insert(uint64_t key,
         }
     }
     LOG_ASSERT(false, "We should never reach this point");
+}
+
+void Table::insert(uint64_t key,
+                   const GenericTuple& tuple,
+                   const SnapshotDescriptor& snapshot,
+                   bool* succeeded /*= nullptr*/)
+{
+    size_t size;
+    std::unique_ptr<char[]> rec(mRecord.create(tuple, size));
+    insert(key, size, rec.get(), snapshot, succeeded);
+}
+
+void Table::runGC(uint64_t) {
+    // TODO: Implement
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {

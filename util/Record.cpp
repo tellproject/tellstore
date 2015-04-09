@@ -265,10 +265,11 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
     return result;
 }
 
-char* Record::create(const GenericTuple& tuple) const
+char* Record::create(const GenericTuple& tuple, size_t& size) const
 {
     using uchar = unsigned char;
     uint32_t recSize = uint32_t(sizeOfTuple(tuple));
+    size = size_t(recSize);
     std::unique_ptr<char[]> result(new char[recSize]);
     char* res = result.get();
     auto headerSize = 4 + (mFieldMetaData.size() + 7)/8;

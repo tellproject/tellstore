@@ -38,7 +38,8 @@ TEST(simple, insert_and_get)
     ASSERT_TRUE(res) << "This insert must not fail!";
     bool isNewest = false;
     const char* rec;
-    res = storage.get(tId, 1, rec, tx, isNewest);
+    size_t s;
+    res = storage.get(tId, 1, s, rec, tx, isNewest);
     ASSERT_TRUE(res) << "Tuple not found";
     ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
     storage.forceGC();

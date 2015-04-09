@@ -140,6 +140,8 @@ public:
     }
 };
 
+// TODO: The classes below do not need to save the size of the record
+
 /**
 * This class implements the physical representation of a tuple.
 * Note that this class does not handle multiple versions for
@@ -170,7 +172,7 @@ public:
     bool idOf(const crossbow::string& name, id_t& result) const;
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
-    char* create(const GenericTuple& tuple) const;
+    char* create(const GenericTuple& tuple, size_t& size) const;
 
     /**
     * These methods are NOT thread safe.

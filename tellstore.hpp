@@ -2,7 +2,7 @@
 
 #include "implementation.hpp"
 #include <util/TransactionImpl.hpp>
-#include "deltamainrewrite/dmrewrite.hpp"
+#include "deltamain/Table.hpp"
 #include <util/SnapshotDescriptor.hpp>
 
 namespace tell {

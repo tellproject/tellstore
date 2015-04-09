@@ -7,6 +7,7 @@
 #include <util/TableManager.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
+#include <util/Record.hpp>
 
 #include <vector>
 #include <crossbow/string.hpp>
@@ -18,6 +19,7 @@ namespace deltamain {
 class Table {
     PageManager& mPageManager;
     Schema mSchema;
+    Record mRecord;
     CuckooTable mHashTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
