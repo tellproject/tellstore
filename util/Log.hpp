@@ -18,6 +18,9 @@ namespace store {
  */
 class LogEntry : NonCopyable, NonMovable {
 public:
+    /// Size of the LogEntry data structure
+    static constexpr size_t LOG_ENTRY_SIZE = 4;
+
     /**
      * @brief Returns the LogEntry struct associated with a given data pointer
      *
@@ -27,11 +30,23 @@ public:
      * @return The LogEntry struct associated with the data pointer
      */
     static LogEntry* entryFromData(char* data) {
-        return reinterpret_cast<LogEntry*>(data - sizeof(LogEntry));
+        return const_cast<LogEntry*>(entryFromData(const_cast<const char*>(data)));
     }
 
     static const LogEntry* entryFromData(const char* data) {
-        return reinterpret_cast<const LogEntry*>(data - sizeof(LogEntry));
+        return reinterpret_cast<const LogEntry*>(data - LOG_ENTRY_SIZE);
+    }
+
+    /**
+     * @brief Calculates the entry size in the log from the data payload size
+     *
+     * Adds the LogEntry class size and adds padding so the size is 8 byte aligned
+     */
+    static uint32_t entrySizeFromSize(uint32_t size) {
+        size += LOG_ENTRY_SIZE;
+        size += ((size % 8 != 0) ? (8 - (size % 8)) : 0);
+        LOG_ASSERT(size % 8 == 0, "Final LogEntry size must be 8 byte padded");
+        return size;
     }
 
     /**
@@ -47,20 +62,27 @@ public:
     ~LogEntry() = delete;
 
     /**
+     * @brief The size of the data payload in this entry
+     */
+    uint32_t size() const {
+        return (mSize.load() >> 1);
+    }
+
+    /**
      * @brief The size of the entry in the log
      *
      * @note This is not the size of the pure data payload but the size of the whole (8 byte padded) log entry.
      */
-    uint32_t size() const {
-        return (mSize.load() & (0xFFFFFFFFu << 1));
+    uint32_t entrySize() const {
+        return entrySizeFromSize(size());
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + sizeof(LogEntry);
+        return const_cast<char*>(const_cast<const LogEntry*>(this)->data());
     }
 
     const char* data() const {
-        return reinterpret_cast<const char*>(this) + sizeof(LogEntry);
+        return reinterpret_cast<const char*>(this) + LOG_ENTRY_SIZE;
     }
 
     /**
@@ -92,12 +114,13 @@ private:
      * Because the PageManager returns zeroed pages, the object is zero initalized (and size thus 0) if nobody has
      * written to it yet.
      *
-     * @param size Size of the whole 8 byte padded log entry
-     * @return 0 if the log entry was successfully acquired else the previously reserved size of this log entry
+     * @param size Size of the data payload the entry contains
+     * @return 0 if the log entry was successfully acquired else the complete entry size of this log entry
      */
     uint32_t tryAcquire(uint32_t size);
 
-    /// Size of this LogEntry as the 8 byte aligned size of the LogEntry class plus data payload
+    /// Size of the data payload this entry contains shifted to bits 1-31, bit 0 indicates if the entry was sealed
+    /// (if 0) or not (if 1)
     std::atomic<uint32_t> mSize;
 };
 
@@ -106,20 +129,24 @@ private:
  *
  * A Log-Page has the following form:
  *
- * -------------------------------------------------------------------------------
- * | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... |
- * -------------------------------------------------------------------------------
+ * ---------------------------------------------------------------------------------------------------
+ * | next (8 bytes) | offset (4 bytes) | padding (8 bytes) | entry | entry | ... | padding (4 bytes) |
+ * ---------------------------------------------------------------------------------------------------
+ *
+ * Entries require 4 bytes of space followed by the associated data segment. To keep this data segment 8 byte aligned
+ * the log pads the entries to a multiple of 8 bytes and writes the LogEntries at offset 4. Any subsequent entries are
+ * aligned with offset 4 due to the padding.
  */
 class LogPage : NonCopyable, NonMovable {
 public:
     /// Size of the LogPage data structure
-    static constexpr size_t LOG_HEADER_SIZE = 16;
+    static constexpr size_t LOG_HEADER_SIZE = 20;
 
     /// Maximum size of a log entry
-    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
+    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - (LogPage::LOG_HEADER_SIZE + 4);
 
     /// Maximum size of a log entries data payload
-    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - sizeof(LogEntry);
+    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE;
 
     /**
      * @brief Iterator for iterating over all entries in a page
@@ -141,7 +168,7 @@ public:
 
         EntryIterator& operator++() {
             auto entry = reinterpret_cast<LogEntry*>(mPage->data() + mPos);
-            mPos += entry->size();
+            mPos += entry->entrySize();
             return *this;
         }
 
@@ -159,7 +186,7 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
@@ -180,7 +207,7 @@ public:
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + LOG_HEADER_SIZE;
+        return const_cast<char*>(const_cast<const LogPage*>(this)->data());
     }
 
     const char* data() const {
@@ -190,10 +217,19 @@ public:
     /**
      * @brief Appends a new entry to this log page
      *
-     * @param size Size of the new entry
+     * @param size Size of the data payload of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */
     LogEntry* append(uint32_t size);
+
+    /**
+     * @brief Appends a new entry to this log page
+     *
+     * @param size Size of the data payload of the new entry
+     * @param entrySize Complete 8 byte padded size of the new entry
+     * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
+     */
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Page preceeding the current page in the log
@@ -210,7 +246,7 @@ public:
      * @brief Current offset into the page
      */
     uint32_t offset() const {
-        return (mOffset.load() & (0xFFFFFFFFu << 1));
+        return (mOffset.load() >> 1);
     }
 
     EntryIterator begin() {
@@ -252,22 +288,13 @@ public:
      */
     bool seal(uint32_t offset) {
         LOG_ASSERT(!sealed(), "Page is already sealed");
-        LOG_ASSERT((offset & 0x1u) == 0, "LSB has to be zero");
-        auto exp = (offset | 0x1u);
-        return mOffset.compare_exchange_strong(exp, offset);
+        LOG_ASSERT((offset >> 31) == 0, "MSB has to be zero");
+        auto o = (offset << 1);
+        auto exp = (o| 0x1u);
+        return mOffset.compare_exchange_strong(exp, o);
     }
 
 private:
-    template <class Impl> friend class Log;
-
-    /**
-     * @brief Appends a new entry to the log
-     *
-     * @param size Complete 8 byte padded size of the new entry
-     * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
-     */
-    LogEntry* appendEntry(uint32_t size);
-
     std::atomic<LogPage*> mNext;
     std::atomic<uint32_t> mOffset;
 };
@@ -275,16 +302,13 @@ private:
 /**
  * @brief Base class for Log implementations
  *
- * Provides the basic page handling mechanism and the head pointer.
+ * Provides the basic page handling mechanism.
  */
 class BaseLogImpl {
-public:
-    LogPage* head() {
-        return mHead.load();
-    }
-
 protected:
-    BaseLogImpl(PageManager& pageManager);
+    BaseLogImpl(PageManager& pageManager)
+            : mPageManager(pageManager) {
+    }
 
     /**
      * @brief Acquires an empty log page from the page manager
@@ -317,9 +341,6 @@ protected:
 
 private:
     PageManager& mPageManager;
-
-protected:
-    std::atomic<LogPage*> mHead;
 };
 
 /**
@@ -331,23 +352,69 @@ protected:
  * Pages are iterated from the head (newest page) to the tail (oldest page).
  */
 class UnorderedLogImpl : public BaseLogImpl {
-protected:
-    UnorderedLogImpl(PageManager& pageManager)
-            : BaseLogImpl(pageManager) {
+public:
+    LogPage* head() {
+        return mHead.load().writeHead;
     }
 
-    LogPage* createPage(LogPage* oldHead);
+    /**
+     * @brief Appends the given pages to the log
+     *
+     * @param begin The first page to append
+     * @param end The last page to append
+     */
+    void appendPage(LogPage* begin, LogPage* end);
+
+    void appendPage(LogPage* page) {
+        appendPage(page, page);
+    }
+
+protected:
+    UnorderedLogImpl(PageManager& pageManager);
+
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Log iteration starts from the head
      */
     LogPage* startPage() {
-        return mHead.load();
+        auto head = mHead.load();
+        return (head.appendHead ? head.appendHead : head.writeHead);
     }
 
     const LogPage* startPage() const {
-        return mHead.load();
+        auto head = mHead.load();
+        return (head.appendHead ? head.appendHead : head.writeHead);
     }
+
+private:
+    /**
+     * @brief Struct containing the two log heads
+     *
+     * The write head is used when appending entries to the log using Log::append(uint32_t size). The append head stores
+     * the head page of the most recent appended page using Log::appendPage(LogPage* begin, LogPage* end). When the
+     * write head page is full and the append head is not null the append head will become the new head.
+     *
+     * The 16 byte alignment is required on x64 for the 128 bit CAS to work correctly.
+     */
+    struct alignas(16) LogHead {
+        LogHead() noexcept = default;
+
+        LogHead(LogPage* write, LogPage* append)
+                : writeHead(write),
+                  appendHead(append) {
+        }
+
+        LogPage* writeHead;
+        LogPage* appendHead;
+    };
+
+    /**
+     * @brief Tries to allocate a new head page
+     */
+    LogHead createPage(LogHead oldHead);
+
+    std::atomic<LogHead> mHead;
 };
 
 /**
@@ -361,6 +428,10 @@ protected:
  */
 class OrderedLogImpl : public BaseLogImpl {
 public:
+    LogPage* head() {
+        return mHead.load();
+    }
+
     LogPage* tail() {
         return mTail.load();
     }
@@ -380,7 +451,7 @@ public:
 protected:
     OrderedLogImpl(PageManager& pageManager);
 
-    LogPage* createPage(LogPage* oldHead);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Log iteration starts from the tail
@@ -394,6 +465,12 @@ protected:
     }
 
 private:
+    /**
+     * @brief Tries to allocate a new head page
+     */
+    LogPage* createPage(LogPage* oldHead);
+
+    std::atomic<LogPage*> mHead;
     std::atomic<LogPage*> mTail;
 };
 
@@ -434,7 +511,7 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
@@ -453,20 +530,19 @@ public:
      * The order in which elements are iterated is dependent on the chosen Log implementation.
      */
     template<class EntryType>
-    class LogIteratorImpl : public std::iterator<std::input_iterator_tag, typename std::conditional<std::is_const<EntryType>::value, const LogEntry, LogEntry>::type> {
+    class LogIteratorImpl {
     public:
         static constexpr bool is_const_iterator = std::is_const<typename std::remove_pointer<EntryType>::type>::value;
         using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
-        using const_reference = const LogEntry&;
         using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
-        using const_pointer = const LogEntry*;
+
         LogIteratorImpl(EntryType page)
                 : mPage(page),
                   mPageOffset(mPage ? mPage->offset() : 0),
                   mPos(0) {
         }
 
-        LogPage* page() const {
+        EntryType page() const {
             return mPage;
         }
 
@@ -474,9 +550,9 @@ public:
             return mPos;
         }
 
-        LogIteratorImpl& operator++() {
+        LogIteratorImpl<EntryType>& operator++() {
             auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
-            mPos += entry->size();
+            mPos += entry->entrySize();
             if (mPos == mPageOffset) {
                 mPage = mPage->next().load();
                 mPageOffset = (mPage ? mPage->offset() : 0);
@@ -499,20 +575,12 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
-        const_reference operator*() const {
-            return *operator->();
-        }
-
-        pointer operator->() {
+        pointer operator->() const {
             return reinterpret_cast<pointer>(mPage->data() + mPos);
-        }
-
-        const_pointer operator->() const {
-            return reinterpret_cast<const_pointer>(mPage->data() + mPos);
         }
 
     private:
@@ -525,6 +593,7 @@ public:
         /// Current offset the iterator is pointing to
         uint32_t mPos;
     };
+
     using LogIterator = LogIteratorImpl<LogPage*>;
     using ConstLogIterator = LogIteratorImpl<const LogPage*>;
 
@@ -537,7 +606,7 @@ public:
     /**
      * @brief Appends a new entry to the log
      *
-     * @param size Size of the new entry
+     * @param size Size of the data payload of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry
      */
     LogEntry* append(uint32_t size);

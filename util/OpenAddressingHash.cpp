@@ -23,7 +23,7 @@ void checkDataKey(uint64_t table, uint64_t key) {
 /**
  * @brief Check the wellformedness of data pointers
  */
-void checkDataPtr(void* ptr) {
+void checkDataPtr(const void* ptr) {
     LOG_ASSERT(ptr != nullptr, "Data pointer not allowed to be null");
     LOG_ASSERT(ptr != gDeletedPtr, "The two LSBs have to be zero");
     LOG_ASSERT(ptr != gInvalidPtr, "The two LSBs have to be zero");
@@ -42,10 +42,10 @@ OpenAddressingTable::~OpenAddressingTable() {
     delete[] mBuckets;
 }
 
-void* OpenAddressingTable::get(uint64_t table, uint64_t key) {
+const void* OpenAddressingTable::get(uint64_t table, uint64_t key) const {
     checkDataKey(table, key);
 
-    return execOnElement(table, key, static_cast<void*>(nullptr), [] (Entry& /* entry */, void* ptr) {
+    return execOnElement(table, key, static_cast<const void*>(nullptr), [] (const Entry& /* entry */, const void* ptr) {
         return ptr;
     });
 }
@@ -102,23 +102,23 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data) {
     }
 }
 
-bool OpenAddressingTable::update(uint64_t table, uint64_t key, void* oldData, void* newData) {
+bool OpenAddressingTable::update(uint64_t table, uint64_t key, const void* oldData, void* newData) {
     checkDataKey(table, key);
     checkDataPtr(oldData);
     checkDataPtr(newData);
 
-    return execOnElement(table, key, false, [oldData, newData] (Entry& entry, void* /* ptr */) {
+    return execOnElement(table, key, false, [oldData, newData] (Entry& entry, const void* /* ptr */) {
         // Set the element pointer from old to new
         auto expected = oldData;
         return entry.ptr.compare_exchange_strong(expected, newData);
     });
 }
 
-bool OpenAddressingTable::erase(uint64_t table, uint64_t key, void* oldData) {
+bool OpenAddressingTable::erase(uint64_t table, uint64_t key, const void* oldData) {
     checkDataKey(table, key);
     checkDataPtr(oldData);
 
-    return execOnElement(table, key, true, [oldData] (Entry& entry, void* /* ptr */) {
+    return execOnElement(table, key, true, [oldData] (Entry& entry, const void* /* ptr */) {
         // Try to set the pointer to invalid
         // If this fails then somebody else modified the element
         auto expected = oldData;
@@ -137,7 +137,7 @@ void OpenAddressingTable::deleteEntry(Entry& entry) {
     entry.ptr.store(gDeletedPtr);
 }
 
-uint64_t OpenAddressingTable::calculateHash(uint64_t table, uint64_t key) {
+uint64_t OpenAddressingTable::calculateHash(uint64_t table, uint64_t key) const {
     auto hash = mTableHash(table);
     boost::hash_combine(hash, mKeyHash(key));
     return hash;
@@ -194,7 +194,7 @@ bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint6
 }
 
 template <typename T, typename F>
-T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F fun) {
+T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F fun) const {
     for (auto pos = calculateHash(table, key);; ++pos) {
         auto& entry = mBuckets[pos % mCapacity];
         auto ptr = entry.ptr.load();
@@ -225,6 +225,14 @@ T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F
         // Element found
         return fun(entry, ptr);
     }
+}
+
+template <typename T, typename F>
+T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F fun) {
+    return const_cast<const OpenAddressingTable*>(this)->execOnElement(table, key, notFound,
+            [&fun] (const Entry& entry, const void* ptr) {
+        return fun(const_cast<Entry&>(entry), ptr);
+    });
 }
 
 } // namespace store

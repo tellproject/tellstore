@@ -26,7 +26,7 @@ public:
      * @param key The key ID of the entry
      * @return The associated data pointer or nullptr if the element did not exist
      */
-    void* get(uint64_t table, uint64_t key);
+    const void* get(uint64_t table, uint64_t key) const;
 
     /**
      * @brief Tries to insert the element into the hash table
@@ -49,7 +49,7 @@ public:
      * @param newData The new data pointer
      * @return True if the update was successful, false if the element did not exist or the data pointer has changed
      */
-    bool update(uint64_t table, uint64_t key, void* oldData, void* newData);
+    bool update(uint64_t table, uint64_t key, const void* oldData, void* newData);
 
     /**
      * @brief Erases an already existing element from the hash table
@@ -59,7 +59,7 @@ public:
      * @param oldData The previous data pointer
      * @return True if the element did not exist or was successfully removed, false if the data pointer has changed
      */
-    bool erase(uint64_t table, uint64_t key, void* oldData);
+    bool erase(uint64_t table, uint64_t key, const void* oldData);
 
 private:
     /**
@@ -74,7 +74,7 @@ private:
 
         std::atomic<uint64_t> tableId;
         std::atomic<uint64_t> keyId;
-        std::atomic<void*> ptr;
+        std::atomic<const void*> ptr;
     };
 
     /**
@@ -92,7 +92,7 @@ private:
      * @param key The key ID of the entry
      * @return The 64 bit hash of both table and key
      */
-    uint64_t calculateHash(uint64_t table, uint64_t key);
+    uint64_t calculateHash(uint64_t table, uint64_t key) const;
 
     /**
      * @brief Checks for any conflicting inserts happening on the same table and key
@@ -117,6 +117,9 @@ private:
      * @param fun The function to be executed on the target element, interface must match T fun(Entry&, void* ptr)
      * @return The return value of fun or notFound if the element was not found
      */
+    template <typename T, typename F>
+    T execOnElement(uint64_t table, uint64_t key, T notFound, F fun) const;
+
     template <typename T, typename F>
     T execOnElement(uint64_t table, uint64_t key, T notFound, F fun);
 
