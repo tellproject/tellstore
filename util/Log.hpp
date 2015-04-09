@@ -166,7 +166,7 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
@@ -489,7 +489,7 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
@@ -508,20 +508,19 @@ public:
      * The order in which elements are iterated is dependent on the chosen Log implementation.
      */
     template<class EntryType>
-    class LogIteratorImpl : public std::iterator<std::input_iterator_tag, typename std::conditional<std::is_const<EntryType>::value, const LogEntry, LogEntry>::type> {
+    class LogIteratorImpl {
     public:
         static constexpr bool is_const_iterator = std::is_const<typename std::remove_pointer<EntryType>::type>::value;
         using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
-        using const_reference = const LogEntry&;
         using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
-        using const_pointer = const LogEntry*;
+
         LogIteratorImpl(EntryType page)
                 : mPage(page),
                   mPageOffset(mPage ? mPage->offset() : 0),
                   mPos(0) {
         }
 
-        LogPage* page() const {
+        EntryType page() const {
             return mPage;
         }
 
@@ -529,7 +528,7 @@ public:
             return mPos;
         }
 
-        LogIteratorImpl& operator++() {
+        LogIteratorImpl<EntryType>& operator++() {
             auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
             mPos += entry->size();
             if (mPos == mPageOffset) {
@@ -554,20 +553,12 @@ public:
             return !operator==(rhs);
         }
 
-        reference operator*() {
+        reference operator*() const {
             return *operator->();
         }
 
-        const_reference operator*() const {
-            return *operator->();
-        }
-
-        pointer operator->() {
+        pointer operator->() const {
             return reinterpret_cast<pointer>(mPage->data() + mPos);
-        }
-
-        const_pointer operator->() const {
-            return reinterpret_cast<const_pointer>(mPage->data() + mPos);
         }
 
     private:
@@ -580,6 +571,7 @@ public:
         /// Current offset the iterator is pointing to
         uint32_t mPos;
     };
+
     using LogIterator = LogIteratorImpl<LogPage*>;
     using ConstLogIterator = LogIteratorImpl<const LogPage*>;
 
