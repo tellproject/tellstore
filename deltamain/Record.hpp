@@ -100,6 +100,8 @@ public:
     const char* data(const SnapshotDescriptor& snapshot, size_t& size, bool& isNewest, bool* wasDeleted = nullptr) const;
 
     static size_t spaceOverhead(Type t);
+
+    Type typeOfNewestVersion() const;
 };
 
 template<class T>

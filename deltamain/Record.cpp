@@ -66,6 +66,7 @@ public:
 template<class T>
 class LogInsertBase : public LogInsOrUp<T> {
 public:
+    using Type = typename DMRecordImplBase<T>::Type;
     LogInsertBase(T data) : LogInsOrUp<T>(data) {}
     size_t dataOffset() const {
         return 40;
@@ -109,6 +110,14 @@ public:
         return nullptr;
     }
 
+    Type typeOfNewestVersion() const {
+        auto next = this->getNext();
+        if (next) {
+            DMRecordImplBase<T> rec(next);
+            return rec.typeOfNewestVersion();
+        }
+        return Type::LOG_INSERT;
+    }
 };
 
 template<class T>
@@ -129,6 +138,7 @@ public:
 template<class T>
 class LogUpdateBase : public LogInsOrUp<T> {
 public:
+    using Type = typename DMRecordImplBase<T>::Type;
     LogUpdateBase(T data) : LogInsOrUp<T>(data) {}
 
     size_t dataOffset() const {
@@ -156,6 +166,10 @@ public:
             return nullptr;
         }
     }
+
+    Type typeOfNewestVersion() const {
+        return Type::LOG_UPDATE;
+    }
 };
 
 template<class T>
@@ -177,6 +191,7 @@ public:
 template<class T>
 class LogDeleteBase : public LogOp<T> {
 public:
+    using Type = typename DMRecordImplBase<T>::Type;
     LogDeleteBase(T data) : LogOp<T>(data) {}
 
     size_t dataOffset() const {
@@ -206,6 +221,10 @@ public:
             return nullptr;
         }
     }
+
+    Type typeOfNewestVersion() const {
+        return Type::LOG_DELETE;
+    }
 };
 
 template<class T>
@@ -229,6 +248,7 @@ class MVRecordBase {
 protected:
     T mData;
 public:
+    using Type = typename DMRecordImplBase<T>::Type;
     MVRecordBase(T data) : mData(data) {}
     T getNewest() const {
         return mData + 16;
@@ -289,6 +309,15 @@ public:
         }
         if (wasDeleted) *wasDeleted = true;
         return nullptr;
+    }
+
+    Type typeOfNewestVersion() const {
+        auto newest = getNewest();
+        if (newest) {
+            DMRecordImplBase<T> rec(newest);
+            return rec.typeOfNewestVersion();
+        }
+        return Type::MULTI_VERSION_RECORD;
     }
 };
 
@@ -355,6 +384,11 @@ const char* DMRecordImplBase<T>::data(const SnapshotDescriptor& snapshot,
     isNewest = true;
     DISPATCH_METHODT(data, snapshot, size, isNewest, wasDeleted);
     return nullptr;
+}
+
+template<class T>
+auto DMRecordImplBase<T>::typeOfNewestVersion() const -> Type {
+    DISPATCH_METHODT(typeOfNewestVersion);
 }
 
 template<class T>

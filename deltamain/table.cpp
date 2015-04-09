@@ -65,6 +65,7 @@ void Table::insert(uint64_t key,
         // with the insert
         // But we only need to write the previous pointer if it
         // is on the update log.
+        if (rec.typeOfNewestVersion() != CDMRecord::Type::LOG_UPDATE) ptr = nullptr;
     }
     // To do an insert, we optimistically append it to the log.
     // Then we check for conflicts iff the user wants to know whether
