@@ -34,17 +34,18 @@ protected:
 
 /**
  * @class LogPage
- * @test Check if entries are 8 byte padded and aligned
+ * @test Check if entries return the correct size
  */
-TEST_F(LogPageTest, entryAlignment) {
+TEST_F(LogPageTest, entrySize) {
     auto entry = mPage->append(31);
-    EXPECT_EQ(40, entry->size()) << "Entry size is not 8 byte padded";
+    EXPECT_EQ(31, entry->size()) << "Size is not the same as in append";
+    EXPECT_EQ(40, entry->entrySize()) << "Entry size is not 8 byte padded";
     EXPECT_EQ(0, (reinterpret_cast<uintptr_t>(entry->data()) % 8)) << "Entry data is not 8 byte aligned";
 }
 
 /**
  * @class LogPage
- * @test Check if entries are 8 byte aligned
+ * @test Check if entryFromData works correctly
  */
 TEST_F(LogPageTest, entryFromData) {
     auto entry = mPage->append(32);
@@ -61,6 +62,7 @@ TEST_F(LogPageTest, sealEntry) {
 
     entry->seal();
     EXPECT_TRUE(entry->sealed()) << "Sealed entry is not sealed";
+    EXPECT_EQ(31, entry->size()) << "Size is not the same as in append";
 }
 
 /**

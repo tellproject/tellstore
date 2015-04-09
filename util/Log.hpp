@@ -38,6 +38,18 @@ public:
     }
 
     /**
+     * @brief Calculates the entry size in the log from the data payload size
+     *
+     * Adds the LogEntry class size and adds padding so the size is 8 byte aligned
+     */
+    static uint32_t entrySizeFromSize(uint32_t size) {
+        size += LOG_ENTRY_SIZE;
+        size += ((size % 8 != 0) ? (8 - (size % 8)) : 0);
+        LOG_ASSERT(size % 8 == 0, "Final LogEntry size must be 8 byte padded");
+        return size;
+    }
+
+    /**
      * @brief Constructor will never be called
      *
      * Everything will be zero initialized.
@@ -50,12 +62,19 @@ public:
     ~LogEntry() = delete;
 
     /**
+     * @brief The size of the data payload in this entry
+     */
+    uint32_t size() const {
+        return (mSize.load() >> 1);
+    }
+
+    /**
      * @brief The size of the entry in the log
      *
      * @note This is not the size of the pure data payload but the size of the whole (8 byte padded) log entry.
      */
-    uint32_t size() const {
-        return (mSize.load() & (0xFFFFFFFFu << 1));
+    uint32_t entrySize() const {
+        return entrySizeFromSize(size());
     }
 
     char* data() {
@@ -95,12 +114,13 @@ private:
      * Because the PageManager returns zeroed pages, the object is zero initalized (and size thus 0) if nobody has
      * written to it yet.
      *
-     * @param size Size of the whole 8 byte padded log entry
-     * @return 0 if the log entry was successfully acquired else the previously reserved size of this log entry
+     * @param size Size of the data payload the entry contains
+     * @return 0 if the log entry was successfully acquired else the complete entry size of this log entry
      */
     uint32_t tryAcquire(uint32_t size);
 
-    /// Size of this LogEntry as the 8 byte aligned size of the LogEntry class plus data payload
+    /// Size of the data payload this entry contains shifted to bits 1-31, bit 0 indicates if the entry was sealed
+    /// (if 0) or not (if 1)
     std::atomic<uint32_t> mSize;
 };
 
@@ -148,7 +168,7 @@ public:
 
         EntryIterator& operator++() {
             auto entry = reinterpret_cast<LogEntry*>(mPage->data() + mPos);
-            mPos += entry->size();
+            mPos += entry->entrySize();
             return *this;
         }
 
@@ -197,18 +217,19 @@ public:
     /**
      * @brief Appends a new entry to this log page
      *
-     * @param size Size of the new entry
+     * @param size Size of the data payload of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */
     LogEntry* append(uint32_t size);
 
     /**
-     * @brief Appends a new entry to the log
+     * @brief Appends a new entry to this log page
      *
-     * @param size Complete 8 byte padded size of the new entry
+     * @param size Size of the data payload of the new entry
+     * @param entrySize Complete 8 byte padded size of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */
-    LogEntry* appendEntry(uint32_t size);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Page preceeding the current page in the log
@@ -225,7 +246,7 @@ public:
      * @brief Current offset into the page
      */
     uint32_t offset() const {
-        return (mOffset.load() & (0xFFFFFFFFu << 1));
+        return (mOffset.load() >> 1);
     }
 
     EntryIterator begin() {
@@ -267,9 +288,10 @@ public:
      */
     bool seal(uint32_t offset) {
         LOG_ASSERT(!sealed(), "Page is already sealed");
-        LOG_ASSERT((offset & 0x1u) == 0, "LSB has to be zero");
-        auto exp = (offset | 0x1u);
-        return mOffset.compare_exchange_strong(exp, offset);
+        LOG_ASSERT((offset >> 31) == 0, "MSB has to be zero");
+        auto o = (offset << 1);
+        auto exp = (o| 0x1u);
+        return mOffset.compare_exchange_strong(exp, o);
     }
 
 private:
@@ -350,7 +372,7 @@ public:
 protected:
     UnorderedLogImpl(PageManager& pageManager);
 
-    LogEntry* append(uint32_t size);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Log iteration starts from the head
@@ -429,7 +451,7 @@ public:
 protected:
     OrderedLogImpl(PageManager& pageManager);
 
-    LogEntry* append(uint32_t size);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
      * @brief Log iteration starts from the tail
@@ -530,7 +552,7 @@ public:
 
         LogIteratorImpl<EntryType>& operator++() {
             auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
-            mPos += entry->size();
+            mPos += entry->entrySize();
             if (mPos == mPageOffset) {
                 mPage = mPage->next().load();
                 mPageOffset = (mPage ? mPage->offset() : 0);
@@ -584,7 +606,7 @@ public:
     /**
      * @brief Appends a new entry to the log
      *
-     * @param size Size of the new entry
+     * @param size Size of the data payload of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry
      */
     LogEntry* append(uint32_t size);
