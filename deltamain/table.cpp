@@ -9,10 +9,10 @@ namespace deltamain {
 Table::Table(PageManager& pageManager, const Schema& schema)
     : mPageManager(pageManager)
     , mSchema(schema)
-    , mRecord(mSchema)
-    , mHashTable(mPageManager)
-    , mInsertLog(mPageManager)
-    , mUpdateLog(mPageManager)
+    , mRecord(schema)
+    , mHashTable(pageManager)
+    , mInsertLog(pageManager)
+    , mUpdateLog(pageManager)
 {}
 
 bool Table::get(uint64_t key,

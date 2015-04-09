@@ -46,11 +46,7 @@ public:
     }
 
     T getPrevious() const {
-        return mData + 24;
-    }
-
-    T getNext() const {
-        return mData + 32;
+        return *reinterpret_cast<const T*>(mData + 24);
     }
 };
 
@@ -71,6 +67,11 @@ public:
     size_t dataOffset() const {
         return 40;
     }
+
+    T getNext() const {
+        return *reinterpret_cast<const T*>(this->mData + 32);
+    }
+
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
                      bool& isNewest,
