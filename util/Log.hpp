@@ -59,7 +59,7 @@ public:
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + LOG_ENTRY_SIZE;
+        return const_cast<char*>(const_cast<const LogEntry*>(this)->data());
     }
 
     const char* data() const {
@@ -187,7 +187,7 @@ public:
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + LOG_HEADER_SIZE;
+        return const_cast<char*>(const_cast<const LogPage*>(this)->data());
     }
 
     const char* data() const {
