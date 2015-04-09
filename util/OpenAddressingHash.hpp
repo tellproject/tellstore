@@ -26,6 +26,17 @@ public:
      * @param key The key ID of the entry
      * @return The associated data pointer or nullptr if the element did not exist
      */
+    void* get(uint64_t table, uint64_t key) {
+        return const_cast<void*>(const_cast<const OpenAddressingTable*>(this)->get(table, key));
+    }
+
+    /**
+     * @brief Looks up the element in the hash table
+     *
+     * @param table The table ID of the entry
+     * @param key The key ID of the entry
+     * @return The associated data pointer or nullptr if the element did not exist
+     */
     const void* get(uint64_t table, uint64_t key) const;
 
     /**
