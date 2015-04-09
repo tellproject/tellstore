@@ -2,11 +2,37 @@
 
 #include <util/SnapshotDescriptor.hpp>
 #include <util/Log.hpp>
+#include <util/Logging.hpp>
+
+#include <memory.h>
 
 namespace tell {
 namespace store {
 
 namespace {
+
+template<class T>
+struct GeneralUpdates : public T {
+    GeneralUpdates(char* data) : T(data) {}
+    void writeKey(uint64_t key) {
+        memcpy(this->mData + 8, &key, sizeof(key));
+    }
+};
+
+template<class T>
+struct LogUpdates : public GeneralUpdates<T> {
+public:
+    LogUpdates(char* data) : GeneralUpdates<T>(data) {}
+    void writeVersion(uint64_t version) {
+        memcpy(this->mData + 16, &version, sizeof(version));
+    }
+    void writePrevious(const char* prev) {
+        memcpy(this->mData + 24, &prev, sizeof(prev));
+    }
+    void writeData(size_t size, const char* data) {
+        memcpy(this->mData + this->dataOffset(), data, size);
+    }
+};
 
 template<class T>
 class LogOp {
@@ -38,9 +64,12 @@ public:
 };
 
 template<class T>
-class LogInsert : public LogInsOrUp<T> {
+class LogInsertBase : public LogInsOrUp<T> {
 public:
-    LogInsert(T data) : LogInsOrUp<T>(data) {}
+    LogInsertBase(T data) : LogInsOrUp<T>(data) {}
+    size_t dataOffset() const {
+        return 40;
+    }
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
                      bool& isNewest,
@@ -53,7 +82,7 @@ public:
             // snapshots read set even if the current version is not in the
             // read set (there can be wholes in the read set).
             bool b = false;
-            DMRecordImpl<T> rec(next);
+            DMRecordImplBase<T> rec(next);
             auto res = rec.data(snapshot, size, isNewest, &b);
             if (b || res) {
                 if (wasDeleted) *wasDeleted = b;
@@ -65,14 +94,14 @@ public:
             // we do not need to check for older versions in this case.
             if (wasDeleted) *wasDeleted = false;
             if (next == nullptr) isNewest = true;
-            auto entry = LogEntry::entryFromData(this->data_ptr());
+            auto entry = LogEntry::entryFromData(this->mData);
             size = size_t(entry->size());
             return this->data_ptr();
         }
         isNewest = false;
         auto prev = this->getPrevious();
         if (prev) {
-            DMRecordImpl<T> rec(prev);
+            DMRecordImplBase<T> rec(prev);
             return rec.data(snapshot, size, isNewest, wasDeleted);
         }
         if (wasDeleted) *wasDeleted = false;
@@ -83,9 +112,29 @@ public:
 };
 
 template<class T>
-class LogUpdate : public LogInsOrUp<T> {
+class LogInsert : public LogInsertBase<T> {
 public:
-    LogUpdate(T data) : LogInsOrUp<T>(data) {}
+    LogInsert(T data) : LogInsertBase<T>(data) {}
+};
+
+template<>
+class LogInsert<char*> : public LogUpdates<LogInsertBase<char*>> {
+public:
+    LogInsert(char* data) : LogUpdates<LogInsertBase<char*>>(data) {}
+    void writeNextPtr(const char* ptr) {
+        memcpy(this->mData + 32, &ptr, sizeof(ptr));
+    }
+};
+
+template<class T>
+class LogUpdateBase : public LogInsOrUp<T> {
+public:
+    LogUpdateBase(T data) : LogInsOrUp<T>(data) {}
+
+    size_t dataOffset() const {
+        return 32;
+    }
+
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
                      bool& isNewest,
@@ -93,14 +142,14 @@ public:
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
             if (wasDeleted) *wasDeleted = false;
-            auto entry = LogEntry::entryFromData(this->data_ptr());
+            auto entry = LogEntry::entryFromData(this->mData);
             size = size_t(entry->size());
             return this->data_ptr();
         } else {
             auto prev = this->getPrevious();
             isNewest = false;
             if (prev) {
-                DMRecordImpl<T> rec(prev);
+                DMRecordImplBase<T> rec(prev);
                 return rec.data(snapshot, size, isNewest, wasDeleted);
             }
             if (wasDeleted) *wasDeleted = false;
@@ -110,9 +159,30 @@ public:
 };
 
 template<class T>
-class LogDelete : public LogOp<T> {
+class LogUpdate : public LogUpdateBase<T> {
 public:
-    LogDelete(T data) : LogOp<T>(data) {}
+    LogUpdate(T data) : LogUpdateBase<T>(data) {}
+};
+
+template<>
+class LogUpdate<char*> : public LogUpdates<LogUpdateBase<char*>> {
+public:
+    LogUpdate(char* data) : LogUpdates<LogUpdateBase<char*>>(data) {}
+    void writeNextPtr(const char*) {
+        LOG_ERROR("Call not allowed here");
+        std::terminate();
+    }
+};
+
+template<class T>
+class LogDeleteBase : public LogOp<T> {
+public:
+    LogDeleteBase(T data) : LogOp<T>(data) {}
+
+    size_t dataOffset() const {
+        return 32;
+    }
+
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
                      bool& isNewest,
@@ -125,7 +195,7 @@ public:
         } else {
             auto prev = this->getPrevious();
             if (prev) {
-                DMRecordImpl<T> rec(prev);
+                DMRecordImplBase<T> rec(prev);
                 auto res = rec.data(snapshot, size, isNewest, wasDeleted);
                 isNewest = false;
                 return res;
@@ -139,10 +209,27 @@ public:
 };
 
 template<class T>
-class MVRecord {
+class LogDelete : public LogDeleteBase<T> {
+public:
+    LogDelete(T data) : LogDeleteBase<T>(data) {}
+};
+
+template<>
+class LogDelete<char*> : public LogUpdates<LogDeleteBase<char*>> {
+public:
+    LogDelete(char* data) : LogUpdates<LogDeleteBase<char*>>(data) {}
+    void writeNextPtr(const char*) {
+        LOG_ERROR("Call not allowed here");
+        std::terminate();
+    }
+};
+
+template<class T>
+class MVRecordBase {
+protected:
     T mData;
 public:
-    MVRecord(T data) : mData(data) {}
+    MVRecordBase(T data) : mData(data) {}
     T getNewest() const {
         return mData + 16;
     }
@@ -169,7 +256,7 @@ public:
         auto v = versions();
         auto newest = getNewest();
         if (newest) {
-            DMRecordImpl<T> rec(newest);
+            DMRecordImplBase<T> rec(newest);
             bool b;
             size_t s;
             auto res = rec.data(snapshot, s, isNewest, &b);
@@ -193,8 +280,11 @@ public:
         }
         auto off = offsets();
         if (off[idx]) {
-            if (wasDeleted) *wasDeleted = false;
             size = size_t(off[idx + 1] - off[idx]);
+            if (wasDeleted) { 
+                // a tuple is deleted, if its size is 0
+                *wasDeleted = size == 0;
+            }
             return mData + off[idx];
         }
         if (wasDeleted) *wasDeleted = true;
@@ -202,42 +292,73 @@ public:
     }
 };
 
+template<class T>
+struct MVRecord : MVRecordBase<T> {
+    MVRecord(T data) : MVRecordBase<T>(data) {}
+};
+
+template<>
+struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
+    MVRecord(char* data) : GeneralUpdates<MVRecordBase<char*>>(data) {}
+    void writeVersion(uint64_t) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+    void writePrevious(const char*) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+    void writeData(size_t, const char*) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+    void writeNextPtr(const char*) {
+        LOG_ERROR("Call not allowed here");
+        std::terminate();
+    }
+};
+
 } // namespace {}
 
+#define DISPATCH_METHOD(T, methodName,  ...) switch(this->type()) {\
+case Type::LOG_INSERT:\
+    {\
+        LogInsert<T> rec(this->mData);\
+        return rec.methodName(__VA_ARGS__);\
+    }\
+case Type::LOG_UPDATE:\
+    {\
+        LogUpdate<T> rec(this->mData);\
+        return rec.methodName(__VA_ARGS__);\
+    }\
+case Type::LOG_DELETE:\
+    {\
+        LogDelete<T> rec(this->mData);\
+        return rec.methodName(__VA_ARGS__);\
+    }\
+case Type::MULTI_VERSION_RECORD:\
+    {\
+        MVRecord<T> rec(this->mData);\
+        return rec.methodName(__VA_ARGS__);\
+    }\
+}
+
+#define DISPATCH_METHODT(methodName,  ...) DISPATCH_METHOD(T, methodName, __VA_ARGS__)
+#define DISPATCH_METHOD_NCONST(methodName, ...) DISPATCH_METHOD(char*, methodName, __VA_ARGS__)
+
 template<class T>
-const char* DMRecordImpl<T>::data(const SnapshotDescriptor& snapshot,
+const char* DMRecordImplBase<T>::data(const SnapshotDescriptor& snapshot,
                                   size_t& size,
                                   bool& isNewest,
                                   bool *wasDeleted /* = nullptr */) const {
     // we have to execute this at a readable version
     isNewest = true;
-    switch (this->type()) {
-    case Type::LOG_INSERT:
-        {
-            LogInsert<T> ins(this->mData);
-            return ins.data(snapshot, size, isNewest, wasDeleted);
-        }
-    case Type::LOG_UPDATE:
-        {
-            LogUpdate<T> up(this->mData);
-            return up.data(snapshot, size, isNewest, wasDeleted);
-        }
-    case Type::LOG_DELETE:
-        {
-            LogDelete<T> del(this->mData);
-            return del.data(snapshot, size, isNewest, wasDeleted);
-        }
-    case Type::MULTI_VERSION_RECORD:
-        {
-            MVRecord<T> rec(this->mData);
-            return rec.data(snapshot, size, isNewest, wasDeleted);
-        }
-    }
+    DISPATCH_METHODT(data, snapshot, size, isNewest, wasDeleted);
     return nullptr;
 }
 
 template<class T>
-size_t DMRecordImpl<T>::spaceOverhead(Type t) {
+size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
     switch(t) {
     case Type::LOG_INSERT:
         return 40;
@@ -249,6 +370,28 @@ size_t DMRecordImpl<T>::spaceOverhead(Type t) {
     }
 }
 
+void DMRecordImpl<char*>::writeKey(uint64_t key) {
+    DISPATCH_METHOD_NCONST(writeKey, key);
+}
+
+void DMRecordImpl<char*>::writeVersion(uint64_t version) {
+    DISPATCH_METHOD_NCONST(writeVersion, version);
+}
+
+void DMRecordImpl<char*>::writePrevious(const char* prev) {
+    DISPATCH_METHOD_NCONST(writePrevious, prev);
+}
+
+void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
+    DISPATCH_METHOD_NCONST(writeData, size, data);
+}
+
+void DMRecordImpl<char*>::writeNextPtr(const char* ptr) {
+    DISPATCH_METHOD_NCONST(writeNextPtr, ptr);
+}
+
+template class DMRecordImplBase<const char*>;
+template class DMRecordImplBase<char*>;
 template class DMRecordImpl<const char*>;
 template class DMRecordImpl<char*>;
 

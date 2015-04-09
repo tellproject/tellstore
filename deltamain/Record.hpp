@@ -6,7 +6,7 @@
 namespace tell {
 namespace store {
 
-class SnapshotDescriptor;
+struct SnapshotDescriptor;
 
 /**
  * Records should follow the following trait:
@@ -68,13 +68,13 @@ class SnapshotDescriptor;
  *  writing to the memory.
  */
 template<class T>
-class DMRecordImpl {
+class DMRecordImplBase {
     using target_type = typename std::remove_pointer<T>::type;
     static_assert(sizeof(target_type) == 1, "only pointers to one byte size types are supported");
 protected:
     T mData;
 public:
-    DMRecordImpl(T data) : mData(data) {}
+    DMRecordImplBase(T data) : mData(data) {}
     enum class Type : uint8_t {
         LOG_INSERT,
         LOG_UPDATE,
@@ -102,15 +102,56 @@ public:
     static size_t spaceOverhead(Type t);
 };
 
+template<class T>
+class DMRecordImpl : public DMRecordImplBase<T> {
+public:
+    DMRecordImpl(T data) : DMRecordImplBase<T>(data) {}
+};
+
+/**
+ * This is a specialization of the DMRecord class that
+ * contains all writing operations. Most of the functions
+ * in this class will only work correctly for some
+ * types of records. If it is called for the wrong type,
+ * it will crash at runtime.
+ */
+template<>
+class DMRecordImpl<char*> : public DMRecordImplBase<char*> {
+public:
+    DMRecordImpl(char* data) : DMRecordImplBase<char*>(data) {}
+public: // writing functinality
+    void setType(Type type) {
+        this->mData[0] = to_underlying(type);
+    }
+    /**
+     * This can be called on all types
+     */
+    void writeKey(uint64_t key);
+    /**
+     * This can only be called on log entries
+     */
+    void writeVersion(uint64_t version);
+    /**
+     * This can only be called on log entries
+     */
+    void writePrevious(const char* prev);
+    /**
+     * This can only be called on log entries
+     */
+    void writeData(size_t size, const char* data);
+    /**
+     * This can only be called on insert entries
+     */
+    void writeNextPtr(const char* next);
+};
+
+extern template class DMRecordImplBase<const char*>;
+extern template class DMRecordImplBase<char*>;
 extern template class DMRecordImpl<const char*>;
 extern template class DMRecordImpl<char*>;
 
 using CDMRecord = DMRecordImpl<const char*>;
-
-class DMRecord : public DMRecordImpl<char*> {
-public:
-    DMRecord(char* data) : DMRecordImpl<char*>(data) {}
-};
+using DMRecord = DMRecordImpl<char*>;
 
 } // namespace store
 } // namespace tell
