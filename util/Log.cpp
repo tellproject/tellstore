@@ -18,7 +18,7 @@ namespace {
  * Adds the LogEntry class size and adds padding so the size is 8 byte aligned
  */
 uint32_t calculateEntrySize(uint32_t size) {
-    size += sizeof(LogEntry);
+    size += LogEntry::LOG_ENTRY_SIZE;
     size += ((size % 8 != 0) ? (8 - (size % 8)) : 0);
     LOG_ASSERT(size % 8 == 0, "Final LogEntry size must be 8 byte aligned");
     return size;
@@ -87,7 +87,7 @@ LogEntry* LogPage::appendEntry(uint32_t size) {
 }
 
 void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
-    memset(page, 0, sizeof(LogPage));
+    memset(page, 0, LogPage::LOG_HEADER_SIZE);
     mPageManager.free(page);
 }
 

@@ -34,7 +34,7 @@ public:
     }
 
     static const LogEntry* entryFromData(const char* data) {
-        return reinterpret_cast<const LogEntry*>(data - sizeof(LogEntry));
+        return reinterpret_cast<const LogEntry*>(data - LOG_ENTRY_SIZE);
     }
 
     /**
@@ -59,11 +59,11 @@ public:
     }
 
     char* data() {
-        return reinterpret_cast<char*>(this) + sizeof(LogEntry);
+        return reinterpret_cast<char*>(this) + LOG_ENTRY_SIZE;
     }
 
     const char* data() const {
-        return reinterpret_cast<const char*>(this) + sizeof(LogEntry);
+        return reinterpret_cast<const char*>(this) + LOG_ENTRY_SIZE;
     }
 
     /**
