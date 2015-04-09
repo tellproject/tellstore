@@ -32,8 +32,8 @@ set(SOURCE_FILES
     tellstore.hpp
     deltamain/Record.hpp
     deltamain/Record.cpp
-    deltamain/table.hpp
-    deltamain/table.cpp
+    deltamain/Table.hpp
+    deltamain/Table.cpp
     logstructured/Table.cpp
     logstructured/Table.hpp
     util/OpenAddressingHash.hpp
