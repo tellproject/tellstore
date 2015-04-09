@@ -38,6 +38,7 @@ set(SOURCE_FILES
     deltamain/Record.cpp
     deltamain/Table.hpp
     deltamain/Table.cpp
+    logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
     util/OpenAddressingHash.hpp
@@ -83,7 +84,8 @@ set(TEST_SRCS
     tests/testCommitManager.cpp
     tests/testLog.cpp
     tests/testOpenAddressingHash.cpp
-    tests/simpleTests.cpp)
+    tests/simpleTests.cpp
+    tests/logstructured/testTable.cpp)
 add_executable(tests tests/main.cpp ${TEST_SRCS})
 target_link_libraries(tests TellStore gtest gtest_main)
 add_test(tests tests)
