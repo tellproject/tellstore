@@ -557,6 +557,8 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
     EXPECT_FALSE(mLog.truncateLog(begin.page(), j.page()));
 }
 
+#ifdef ENABLE_HEAVYWEIGHT_TESTS
+
 template <typename Impl>
 class LogTestThreaded : public ::testing::Test {
 protected:
@@ -710,5 +712,7 @@ TEST_F(UnorderedLogThreadedTest, append) {
     }
     EXPECT_TRUE(valueSet.empty()) << "Values set is not empty";
 }
+
+#endif // ENABLE_HEAVYWEIGHT_TESTS
 
 }

@@ -4,9 +4,13 @@ project(TellStore)
 include_directories(${CMAKE_SOURCE_DIR})
 
 set(USE_ASAN OFF CACHE BOOL "use the address sanitizer")
+set(ENABLE_HEAVYWEIGHT_TESTS OFF CACHE BOOL "build ressource intensive or long running unit tests")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 if ( USE_ASAN )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
+endif()
+if ( ENABLE_HEAVYWEIGHT_TESTS )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_HEAVYWEIGHT_TESTS")
 endif()
 
 # The cx16 flag is required for GCC to enable 128 bit atomics
