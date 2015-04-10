@@ -23,6 +23,7 @@ DummyManager::DummyManager()
 }
 
 DummyManager::~DummyManager() {
+    delete[] mActiveBaseVersions;
     delete[] mVersions;
 }
 

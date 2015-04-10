@@ -15,11 +15,9 @@ class CuckooTest : public ::testing::Test {
 protected:
     CuckooTest()
     {
-        std::cerr << "CuckooTest()\n";
         table.store(new (allocator::malloc(sizeof(CuckooTable))) CuckooTable(pageManager));
     }
     virtual ~CuckooTest() {
-        std::cerr << "~CuckooTest()\n";
         std::cerr.flush();
         auto t = table.load();
         t->destroy();
