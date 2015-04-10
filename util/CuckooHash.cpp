@@ -16,6 +16,18 @@ CuckooTable::CuckooTable(PageManager& pageManager)
     mPages[2] = new(allocator::malloc(sizeof(PageWrapper))) PageWrapper(pageManager, pageManager.alloc());
 }
 
+CuckooTable::~CuckooTable() {
+}
+
+void CuckooTable::destroy() {
+    for (auto p : mPages) {
+        if (p) {
+            p->~PageWrapper();
+            allocator::free_now(p);
+        }
+    }
+}
+
 void* CuckooTable::get(uint64_t key) const {
     unsigned cnt = 0;
     for (auto& hasher : {hash1, hash2, hash3}) {
@@ -163,8 +175,8 @@ bool Modifier::cow(unsigned h, size_t idx) {
     pageWasModified[3*idx + h] = true;
     auto oldPage = mPages[3*idx + h];
     auto newPage = new(alloc.malloc(sizeof(PageWrapper))) PageWrapper(*oldPage);
-    mPages[3*idx + h] = newPage;
     mToDelete.push_back(mPages[3*idx + h]);
+    mPages[3*idx + h] = newPage;
     return true;
 }
 
@@ -177,7 +189,7 @@ void Modifier::rehash() {
     std::vector<PageT> oldPages = std::move(mPages);
     mPages = std::vector<PageT>(mPages.size(), nullptr);
     for (auto& e : mPages) {
-        e = new PageWrapper(mTable.mPageManager, mTable.mPageManager.alloc());
+        e = new (allocator::malloc(sizeof(PageWrapper))) PageWrapper(mTable.mPageManager, mTable.mPageManager.alloc());
     }
     hash1 = cuckoo_hash_function(capacity);
     hash2 = cuckoo_hash_function(capacity);
@@ -213,7 +225,7 @@ void Modifier::resize() {
     std::vector<PageT> oldPages = std::move(mPages);
     mPages = std::vector<PageT>(numPages, nullptr);
     for (auto& e : mPages) {
-        e = new PageWrapper(mTable.mPageManager, mTable.mPageManager.alloc());
+        e = new (allocator::malloc(sizeof(PageWrapper))) PageWrapper(mTable.mPageManager, mTable.mPageManager.alloc());
     }
     hash1 = cuckoo_hash_function(capacity);
     hash2 = cuckoo_hash_function(capacity);

@@ -15,10 +15,14 @@ class CuckooTest : public ::testing::Test {
 protected:
     CuckooTest()
     {
+        std::cerr << "CuckooTest()\n";
         table.store(new (allocator::malloc(sizeof(CuckooTable))) CuckooTable(pageManager));
     }
     virtual ~CuckooTest() {
+        std::cerr << "~CuckooTest()\n";
+        std::cerr.flush();
         auto t = table.load();
+        t->destroy();
         t->~CuckooTable();
         allocator::free_now(t);
         table.store(nullptr);
@@ -44,8 +48,10 @@ TEST_F(CuckooTest, SimpleInsert) {
     std::unique_ptr<int> value(new int(8713));
     auto modifier = currTable.modifier(alloc);
     ASSERT_TRUE(modifier.insert(key, value.get(), false)) << "Insertion of inexistent value not succeeded";
+    auto oldTable = table.load();
     table.store(modifier.done());
     ASSERT_NE(table.load(), nullptr) << "Modifier done returned nullptr";
+    ASSERT_NE(table.load(), oldTable) << "After modification, the table must change";
     CuckooTable& nTable = *table.load();
     int* ptr = reinterpret_cast<int*>(nTable.get(key));
     ASSERT_EQ(ptr, value.get()) << "Table get returned wrong value";

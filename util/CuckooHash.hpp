@@ -38,6 +38,22 @@ private:
     size_t mSize;
 public:
     CuckooTable(PageManager& pageManager);
+    ~CuckooTable();
+
+    /**
+     * This method should be only used on
+     * Shutdown: it will destroy the table,
+     * therefore the caller has to know, that
+     * it does not get used anymore.
+     *
+     * Usually the CuckooHashMap works as follow:
+     * It is read-only and the Modifier does a COW
+     * and will delete unused data. If the user wants
+     * to delete the table itself, she has to
+     * do it with this method - deleting an instance
+     * of CuckooTable does not delete any data.
+     */
+    void destroy();
 
     friend class Modifier;
 
