@@ -14,6 +14,8 @@ class PageManager;
 
 namespace logstructured {
 
+class ChainedVersionRecord;
+
 /**
  * @brief A table using a Log-Structured Memory approach as its data store
  */
@@ -85,6 +87,23 @@ public:
     void runGC(uint64_t minVersion);
 
 private:
+    /**
+     * @brief Helper function to write a entry
+     *
+     * Writes the data to the log and updates the hash table. If the prev pointer is null the function tries to insert
+     * the new entry into the hash table else the hash table is updated from the prev pointer to the new pointer.
+     *
+     * @param key Key of the entry to insert
+     * @param version Version of the entry to insert
+     * @param prev Pointer to previous version of the same key or null if no previous version exists
+     * @param size Size of the data to write
+     * @param data Pointer to the data to write
+     * @param deleted Whether the entry marks a deletion
+     * @return Whether the entry was successfully written
+     */
+    bool writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* prev, size_t size, const char* data,
+            bool deleted);
+
     PageManager& mPageManager;
     HashTable& mHashMap;
     Schema mSchema;

@@ -1,10 +1,16 @@
-cmake_minimum_required(VERSION 2.8.4)
+cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
-include_directories(${CMAKE_SOURCE_DIR})
+# Declare build options
+option(USE_ASAN "Use the address sanitizer" OFF)
+option(ENABLE_HEAVYWEIGHT_TESTS "Build ressource intensive or long running unit tests" OFF)
 
-set(USE_ASAN OFF CACHE BOOL "use the address sanitizer")
-set(ENABLE_HEAVYWEIGHT_TESTS OFF CACHE BOOL "build ressource intensive or long running unit tests")
+set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
+set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
+set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+
+# Set compile options
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 if ( USE_ASAN )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
@@ -18,18 +24,9 @@ if (CMAKE_COMPILER_IS_GNUCXX)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
 endif()
 
-set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
-set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
-set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
-set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
-
-find_package(Crossbow REQUIRED)
-include_directories(${Crossbow_INCLUDE_DIRS})
+# Find dependencies
 find_package(Boost REQUIRED)
-include_directories(${Boost_INCLUDE_DIRS})
-
-configure_file("${CMAKE_SOURCE_DIR}/config.h.in" "${CMAKE_BINARY_DIR}/config.h")
-include_directories(${CMAKE_BINARY_DIR})
+find_package(Crossbow REQUIRED)
 
 set(SOURCE_FILES
     implementation.hpp
@@ -38,6 +35,7 @@ set(SOURCE_FILES
     deltamain/Record.cpp
     deltamain/Table.hpp
     deltamain/Table.cpp
+    logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
     util/OpenAddressingHash.hpp
@@ -67,14 +65,27 @@ set(SOURCE_FILES
     util/Request.hpp
     util/chunk_allocator.hpp
     util/functional.hpp)
-add_library(TellStore SHARED ${SOURCE_FILES})
+
+# Create configuration file
+configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+
+# Add TellStore library
+add_library(TellStore SHARED ${SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(TellStore PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+# Link against Boost
+target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
+
+# Link against Crossbow
+target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
 
 ###################
 # GTEST
 ###################
 add_subdirectory(externals/gtest)
 enable_testing()
-include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
+
 ###################
 # Unit tests
 ###################
@@ -83,7 +94,16 @@ set(TEST_SRCS
     tests/testCommitManager.cpp
     tests/testLog.cpp
     tests/testOpenAddressingHash.cpp
-    tests/simpleTests.cpp)
+    tests/simpleTests.cpp
+    tests/logstructured/testTable.cpp)
+
+# Add test executable
 add_executable(tests tests/main.cpp ${TEST_SRCS})
-target_link_libraries(tests TellStore gtest gtest_main)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(tests PRIVATE TellStore)
+
+# Link test against GTest
+target_include_directories(tests PRIVATE ${gtest_SOURCE_DIR}/include)
+target_link_libraries(tests PRIVATE gtest gtest_main)
+
 add_test(tests tests)
