@@ -50,6 +50,7 @@ TEST_F(CuckooTest, SimpleInsert) {
     table.store(modifier.done());
     ASSERT_NE(table.load(), nullptr) << "Modifier done returned nullptr";
     ASSERT_NE(table.load(), oldTable) << "After modification, the table must change";
+    allocator::free(oldTable, [oldTable](){oldTable->~CuckooTable();});
     CuckooTable& nTable = *table.load();
     int* ptr = reinterpret_cast<int*>(nTable.get(key));
     ASSERT_EQ(ptr, value.get()) << "Table get returned wrong value";

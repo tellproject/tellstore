@@ -73,6 +73,12 @@ public:
         mShutDown.store(true);
         mStopCondition.notify_all();
         mGCThread.join();
+        for (auto t : mTables) {
+            if (t) {
+                t->~Table();
+                allocator::free_now(t);
+            }
+        }
     }
 
 public:
