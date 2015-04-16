@@ -114,6 +114,71 @@ void Table::insert(uint64_t key,
     insert(key, size, rec.get(), snapshot, succeeded);
 }
 
+bool Table::update(uint64_t key,
+                   size_t size,
+                   const char* const data,
+                   const SnapshotDescriptor& snapshot)
+{
+    auto fun = [this, key, size, data, &snapshot]()
+    {
+        auto logEntrySize = size + DMRecord::spaceOverhead(DMRecord::Type::LOG_UPDATE);
+        auto entry = mUpdateLog.append(logEntrySize);
+        {
+            DMRecord updateRecord(entry->data());
+            updateRecord.setType(DMRecord::Type::LOG_UPDATE);
+            updateRecord.writeKey(key);
+            updateRecord.writeVersion(snapshot.version());
+            updateRecord.writePrevious(nullptr);
+            updateRecord.writeData(size, data);
+        }
+        return entry->data();
+    };
+    return genericUpdate(fun, key, snapshot);
+}
+
+bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
+    auto fun = [this, key, &snapshot]() {
+        auto logEntrySize = DMRecord::spaceOverhead(DMRecord::Type::LOG_DELETE);
+        auto entry = mUpdateLog.append(logEntrySize);
+        DMRecord rmRecord(entry->data());
+        rmRecord.setType(DMRecord::Type::LOG_DELETE);
+        rmRecord.writeKey(key);
+        rmRecord.writeVersion(snapshot.version());
+        rmRecord.writePrevious(nullptr);
+        return entry->data();
+    };
+    return genericUpdate(fun, key, snapshot);
+}
+
+template<class Fun>
+bool Table::genericUpdate(const Fun& appendFun,
+                          uint64_t key,
+                          const SnapshotDescriptor& snapshot)
+{
+    auto iter = mInsertLog.begin();
+    auto iterEnd = mInsertLog.end();
+    auto ptr = mHashTable.get(key);
+    if (!ptr) {
+        while (iter != iterEnd) {
+            CDMRecord rec(iter->data());
+            if (rec.key() == key) {
+                // we found it!
+                ptr = iter->data();
+                break;
+            }
+        }
+    }
+    if (!ptr) {
+        // no record with key exists
+        return false;
+    }
+    // now we found it. Therefore we first append the
+    // update optimistaically
+    char* nextPtr = appendFun();
+    DMRecord rec(reinterpret_cast<char*>(ptr));
+    return rec.update(nextPtr, snapshot);
+}
+
 void Table::runGC(uint64_t) {
     // TODO: Implement
 }

@@ -50,6 +50,11 @@ public:
                 const SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
+private:
+    template<class Fun>
+    bool genericUpdate(const Fun& appendFun,
+                       uint64_t key,
+                       const SnapshotDescriptor& snapshot);
 };
 
 class GarbageCollector {

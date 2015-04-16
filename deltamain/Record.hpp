@@ -146,6 +146,9 @@ public: // writing functinality
      * This can only be called on insert entries
      */
     void writeNextPtr(const char* next);
+
+    bool update(char* next,
+                const SnapshotDescriptor& snapshot);
 };
 
 extern template class DMRecordImplBase<const char*>;

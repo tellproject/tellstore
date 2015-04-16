@@ -51,12 +51,24 @@ public:
 };
 
 template<class T>
-class LogInsOrUp : public LogOp<T> {
+class LogInsOrUpBase : public LogOp<T> {
 public:
-    LogInsOrUp(T data) : LogOp<T>(data) {}
+    LogInsOrUpBase(T data) : LogOp<T>(data) {}
     T data_ptr() const {
         return this->mData + 40;
     }
+};
+
+template<class T>
+class LogInsOrUp : public LogInsOrUpBase<T> {
+public:
+    LogInsOrUp(T data) : LogInsOrUpBase<T>(data) {}
+};
+
+template<>
+class LogInsOrUp<char*> : public LogInsOrUpBase<char*> {
+public:
+    LogInsOrUp(char* data) : LogInsOrUpBase<char*>(data) {}
 };
 
 template<class T>
@@ -134,6 +146,25 @@ public:
     void writeNextPtr(const char* ptr) {
         memcpy(this->mData + 32, &ptr, sizeof(ptr));
     }
+
+    bool casNextPtr(char* expected, char* desired) {
+        std::atomic<char*>& next = *reinterpret_cast<std::atomic<char*>*>(this->mData + 32);
+        while (true) {
+            if (next.compare_exchange_strong(expected, desired)) return true;
+            if (next.load() != expected) return false;
+        }
+    }
+
+    bool update(char* next, const SnapshotDescriptor& snapshot) {
+        if (!snapshot.inReadSet(version())) return false;
+        auto newest = getNext();
+        if (newest) {
+            DMRecord rec(newest);
+            auto res = rec.update(next, snapshot);
+            if (!res) return false;
+        }
+        return casNextPtr(newest, next);
+    }
 };
 
 template<class T>
@@ -186,6 +217,15 @@ public:
     void writeNextPtr(const char*) {
         LOG_ERROR("Call not allowed here");
         std::terminate();
+    }
+
+    bool update(char* data, const SnapshotDescriptor& snapshot)
+    {
+        if (!snapshot.inReadSet(version()))
+            return false;
+        DMRecord rec(data);
+        rec.writePrevious(this->mData);
+        return true;
     }
 };
 
@@ -242,6 +282,15 @@ public:
         LOG_ERROR("Call not allowed here");
         std::terminate();
     }
+
+    bool update(char* data, const SnapshotDescriptor& snapshot)
+    {
+        if (!snapshot.inReadSet(version()))
+            return false;
+        DMRecord rec(data);
+        rec.writePrevious(this->mData);
+        return true;
+    }
 };
 
 template<class T>
@@ -254,7 +303,7 @@ public:
     T getNewest() const {
         return mData + 16;
     }
-
+    
     uint32_t getNumberOfVersions() const {
         return *reinterpret_cast<const uint32_t*>(mData + 4);
     }
@@ -346,6 +395,29 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
         LOG_ERROR("Call not allowed here");
         std::terminate();
     }
+
+    bool casNewest(const char*, const char*) {
+        // TODO: Implement
+        return false;
+    }
+
+    bool update(char* next,
+                const SnapshotDescriptor& snapshot) {
+        auto newest = getNewest();
+        if (newest) {
+            DMRecord rec(newest);
+            bool res = rec.update(next, snapshot);
+            if (!res) return false;
+            return casNewest(newest, next);
+        }
+        auto nVersions = getNumberOfVersions();
+        auto v = versions();
+        if (snapshot.inReadSet(v[nVersions - 1]))
+            return false;
+        DMRecord nextRec(next);
+        nextRec.writePrevious(this->mData);
+        return casNewest(newest, next);
+    }
 };
 
 } // namespace {}
@@ -424,6 +496,11 @@ void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
 void DMRecordImpl<char*>::writeNextPtr(const char* ptr) {
     DISPATCH_METHOD_NCONST(writeNextPtr, ptr);
 }
+
+bool DMRecordImpl<char*>::update(char* next,
+                                 const SnapshotDescriptor& snapshot) {
+    DISPATCH_METHOD_NCONST(update, next, snapshot);
+} 
 
 template class DMRecordImplBase<const char*>;
 template class DMRecordImplBase<char*>;
