@@ -13,6 +13,7 @@ Table::Table(PageManager& pageManager, const Schema& schema)
     , mHashTable(pageManager)
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
+    , mPages(new (allocator::malloc(sizeof(std::vector<char*>))) std::vector<char*>())
 {}
 
 bool Table::get(uint64_t key,

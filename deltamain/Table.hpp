@@ -10,6 +10,7 @@
 #include <util/Record.hpp>
 
 #include <vector>
+#include <atomic>
 #include <crossbow/string.hpp>
 
 namespace tell {
@@ -23,6 +24,7 @@ class Table {
     CuckooTable mHashTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
+    std::atomic<std::vector<char*>*> mPages;
 public:
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
