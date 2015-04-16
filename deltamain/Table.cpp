@@ -1,5 +1,6 @@
 #include "Table.hpp"
 #include "Record.hpp"
+#include "Page.hpp"
 
 
 namespace tell {
@@ -182,6 +183,17 @@ bool Table::genericUpdate(const Fun& appendFun,
 
 void Table::runGC(uint64_t) {
     // TODO: Implement
+    // mark the whole gc phase as an epoch
+    allocator _;
+    auto& roPages = *mPages.load();
+    auto nPagesPtr = new (malloc(sizeof(PageList))) PageList(roPages);
+    auto& nPages = *nPagesPtr;
+    // this loop just iterates over all pages
+    for (int i = 0; i < nPages.size(); ++i) {
+        Page page(nPages[i]);
+        nPages[i] = page.gc();
+    }
+    mPages.store(nPagesPtr);
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {

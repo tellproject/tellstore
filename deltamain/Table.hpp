@@ -18,13 +18,14 @@ namespace store {
 namespace deltamain {
 
 class Table {
+    using PageList = std::vector<char*>;
     PageManager& mPageManager;
     Schema mSchema;
     Record mRecord;
     CuckooTable mHashTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
-    std::atomic<std::vector<char*>*> mPages;
+    std::atomic<PageList*> mPages;
 public:
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
