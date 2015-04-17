@@ -48,6 +48,17 @@ public:
     T getPrevious() const {
         return *reinterpret_cast<const T*>(mData + 24);
     }
+
+    uint64_t size() const {
+        auto en = LogEntry::entryFromData(mData);
+        return uint64_t(en->size());
+    }
+
+    uint64_t needsCleaning(uint64_t) const {
+        LOG_ERROR("needsCleaning does not make sense on Log operations");
+        std::terminate();
+    }
+
 };
 
 template<class T>
@@ -131,6 +142,12 @@ public:
         }
         return Type::LOG_INSERT;
     }
+
+    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+        // TODO: Implement!
+        LOG_ERROR("Not yet implemented");
+        std::terminate();
+    }
 };
 
 template<class T>
@@ -202,6 +219,11 @@ public:
     Type typeOfNewestVersion() const {
         return Type::LOG_UPDATE;
     }
+
+    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+        LOG_ERROR("copyAndCompact does not make sense on Log operations");
+        std::terminate();
+    }
 };
 
 template<class T>
@@ -266,6 +288,11 @@ public:
     Type typeOfNewestVersion() const {
         return Type::LOG_DELETE;
     }
+
+    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+        LOG_ERROR("copyAndCompact does not make sense on Log operations");
+        std::terminate();
+    }
 };
 
 template<class T>
@@ -301,7 +328,33 @@ public:
     using Type = typename DMRecordImplBase<T>::Type;
     MVRecordBase(T data) : mData(data) {}
     T getNewest() const {
-        return mData + 16;
+        // The pointer format is like the following:
+        // If (ptr % 2) -> this is a link, we need to
+        //      follow this version.
+        // If (ptr % 4) -> This is null if we did not
+        //      follow a link before
+        // else This is just a normal version
+        //
+        // This const_cast is a hack - we might fix it
+        // later
+        char* data = const_cast<char*>(mData);
+        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
+        bool followedLink = false;
+        auto p = ptr->load();
+        while (ptr->load() % 2) {
+            // we need to follow this pointer
+            followedLink = true;
+            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+            p = ptr->load();
+        }
+        if (p % 4) {
+            if (followedLink) {
+                return reinterpret_cast<char*>(p - 2);
+            } else {
+                return nullptr;
+            }
+        }
+        return reinterpret_cast<char*>(p);
     }
     
     uint32_t getNumberOfVersions() const {
@@ -316,6 +369,22 @@ public:
         auto nVersions = getNumberOfVersions();
         size_t off = 24 + 8*nVersions;
         return reinterpret_cast<const uint32_t*>(mData +off);
+    }
+
+    uint64_t size() const {
+        auto off = offsets();
+        auto v = getNumberOfVersions();
+        auto res = uint64_t(off[v]);
+        // res is the used size, but records are always
+        // 8 byte aligned. Therefore we need to add this
+        res = res % 8 ? res + (8 - res % 8) : res;
+        return res;
+    }
+
+    bool needsCleaning(uint64_t lowestActiveVersion) {
+        if (versions()[0] < lowestActiveVersion) return true;
+        if (getNewest()) return true;
+        return false;
     }
 
     const char* data(const SnapshotDescriptor& snapshot,
@@ -369,6 +438,36 @@ public:
         }
         return Type::MULTI_VERSION_RECORD;
     }
+
+    uint64_t copyAndCompact(
+            uint64_t lowestActiveVersion,
+            char* dest,
+            uint64_t maxSize,
+            bool& success) const {
+        auto v = versions();
+        auto nV = getNumberOfVersions();
+        auto newest = getNewest();
+        decltype(nV) cleanUpTo = 0;
+        for (; cleanUpTo < nV; ++cleanUpTo) {
+            if (v[cleanUpTo] >= lowestActiveVersion) break;
+        }
+        if (cleanUpTo == nV && newest == nullptr) {
+            auto offs = offsets();
+            if (offs[nV] == offs[nV - 1]) {
+                // This tuple got deleted and we can
+                // safely discard it!
+                success = true;
+                return 0;
+            }
+            // we need to make sure, that there is at least
+            // one version in the record
+            --cleanUpTo;
+        }
+        uint64_t offset = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
+        if (offset >= maxSize) return 0;
+        dest[0] = to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
+        return 0;
+    }
 };
 
 template<class T>
@@ -396,9 +495,28 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
         std::terminate();
     }
 
-    bool casNewest(const char*, const char*) {
-        // TODO: Implement
-        return false;
+    bool casNewest(const char* expected, const char* desired) {
+        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(mData + 16);
+        bool followedLink = false;
+        auto p = ptr->load();
+        while (ptr->load() % 2) {
+            // we need to follow this pointer
+            followedLink = true;
+            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+            p = ptr->load();
+        }
+        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
+        uint64_t des = reinterpret_cast<const uint64_t>(desired);
+        if (p % 4) {
+            if (!followedLink && expected) return false; // the current pointer is a null pointer
+            if (followedLink && expected == nullptr) return false;
+            if (followedLink && exp != (p - 2)) {
+                return false;
+            }
+            return ptr->compare_exchange_strong(p, des);
+        }
+        if (p != exp) return false;
+        return ptr->compare_exchange_strong(exp, des);
     }
 
     bool update(char* next,
@@ -475,6 +593,26 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
     case Type::MULTI_VERSION_RECORD:
         return 24;
     }
+}
+
+template<class T>
+bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion) const {
+    DISPATCH_METHODT(needsCleaning, lowestActiveVersion);
+}
+
+template<class T>
+uint64_t DMRecordImplBase<T>::size() const {
+    DISPATCH_METHODT(size);
+}
+
+template<class T>
+uint64_t DMRecordImplBase<T>::copyAndCompact(
+        uint64_t lowestActiveVersion,
+        char* newLocation,
+        uint64_t maxSize,
+        bool& success) const
+{
+    DISPATCH_METHODT(copyAndCompact, lowestActiveVersion, newLocation, maxSize, success);
 }
 
 void DMRecordImpl<char*>::writeKey(uint64_t key) {

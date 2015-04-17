@@ -181,18 +181,32 @@ bool Table::genericUpdate(const Fun& appendFun,
     return rec.update(nextPtr, snapshot);
 }
 
-void Table::runGC(uint64_t) {
-    // TODO: Implement
-    // mark the whole gc phase as an epoch
+void Table::runGC(uint64_t minVersion) {
     allocator _;
     auto& roPages = *mPages.load();
     auto nPagesPtr = new (malloc(sizeof(PageList))) PageList(roPages);
     auto& nPages = *nPagesPtr;
+    auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
+    PageList newPages;
     // this loop just iterates over all pages
-    for (int i = 0; i < nPages.size(); ++i) {
-        Page page(nPages[i]);
-        nPages[i] = page.gc();
+    for (size_t i = 0; i < nPages.size(); ++i) {
+        Page page(mPageManager, nPages[i]);
+        bool done;
+        nPages[i] = page.gc(minVersion, fillPage, done);
+        while (!done) {
+            if (nPages[i]) {
+                newPages.push_back(nPages[i]);
+            }
+            fillPage = reinterpret_cast<char*>(mPageManager.alloc());
+            nPages[i] = page.gc(minVersion, fillPage, done);
+        }
+        if (nPages[i] == nullptr) {
+            // This means that this page got merged with the older page.
+            // Therefore we can remove it from the list
+            nPages.erase(nPages.begin() + i);
+        }
     }
+    // TODO: Process insert log
     mPages.store(nPagesPtr);
 }
 

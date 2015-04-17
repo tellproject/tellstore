@@ -103,6 +103,14 @@ public:
     static size_t spaceOverhead(Type t);
 
     Type typeOfNewestVersion() const;
+    uint64_t size() const;
+    bool needsCleaning(uint64_t lowestActiveVersion) const;
+
+    /**
+     * This method will GC the record to a new location. It will then return
+     * how much data it has written or 0 iff the new location is too small
+     */
+    uint64_t copyAndCompact(uint64_t lowestActiveVersion, char* newLocation, uint64_t maxSize, bool& success) const;
 };
 
 template<class T>
@@ -149,6 +157,7 @@ public: // writing functinality
 
     bool update(char* next,
                 const SnapshotDescriptor& snapshot);
+
 };
 
 extern template class DMRecordImplBase<const char*>;
