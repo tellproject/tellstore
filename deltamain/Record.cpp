@@ -592,7 +592,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         CDMRecord myRec(mData);
         auto key = myRec.key();
         auto iter = insertMap.find(key);
-        DMRecord::VersionMap versions;
+        impl::VersionMap versions;
         const char* current = newest;
         if (current == nullptr && iter != insertMap.end()
                 && offs[nV] == offs[nV - 1]) {
@@ -636,15 +636,17 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         }
         versions.erase(versions.begin(), firstValidVersion);
         for (auto iter = versions.begin(); iter != versions.end(); ++iter) {
-            LOG_ASSERT(iter->second.first % 8 == 0, "All records need to be 8 byte aligned");
-            tupleDataSize += iter->second.first;
+            LOG_ASSERT(reinterpret_cast<const uint64_t>(iter->second.record) % 8 == 0,
+                    "Record needs to be 8 byte aligned");
+            LOG_ASSERT(iter->second.size % 8 == 0, "The size of a record has to be a multiple of 8");
+            tupleDataSize += iter->second.size;
             ++newNumberOfVersions;
         }
         if (newNumberOfVersions == 0) {
             // this should only happen under high load or if with only short running txs
             // or if times between gc phases are long
             newNumberOfVersions = 1;
-            tupleDataSize = versions.rend()->second.first;
+            tupleDataSize = versions.rend()->second.size;
         }
         auto newTotalSize = offset;
         newTotalSize += 8*newNumberOfVersions;
@@ -668,14 +670,24 @@ uint64_t MVRecordBase<T>::copyAndCompact(
             memcpy(dest, mData + offs[offsetCounter], sz);
             newVersions[offsetCounter] = v[offsetCounter];
         }
+        std::atomic<const char*>* newestIns = nullptr;
         for (auto i = versions.begin(); i != versions.end(); ++i) {
             newVersions[offsetCounter] = i->first;
-            newOffsets[offsetCounter + 1] = newOffsets[offsetCounter] + i->second.first;
-            memcpy(dest + newOffsets[offsetCounter], i->second.second, i->second.first);
+            newOffsets[offsetCounter + 1] = newOffsets[offsetCounter] + i->second.size;
+            CDMRecord rec(i->second.record);
+            memcpy(dest + newOffsets[offsetCounter], rec.dataPtr(), i->second.size);
+            // only if the newest inserted version comes from a insert log entry we want
+            // to indirect this pointer
+            newestIns = nullptr;
+            if (rec.type() == DMRecord::Type::LOG_INSERT) {
+                newestIns = i->second.nextPtr;
+            }
             ++offsetCounter;
         }
         // The new record is written, now we just have to write the new-pointer
-        auto newNewestPtr = reinterpret_cast<std::atomic<const char*>*>(dest + 16);
+        auto newNewestPtr = newestIns;
+        if (newNewestPtr == nullptr)
+            newNewestPtr = reinterpret_cast<std::atomic<const char*>*>(dest + 16);
         newNewestPtr->store(nullptr);
         while (!casNewest(newest, dest + 1)) {
             newest = getNewest();

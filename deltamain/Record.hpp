@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <atomic>
 
 #include <util/helper.hpp>
 
@@ -11,6 +12,21 @@ namespace tell {
 namespace store {
 struct SnapshotDescriptor;
 namespace deltamain {
+namespace impl {
+struct VersionHolder {
+    const char* record;
+    size_t size;
+    std::atomic<const char*>* nextPtr;
+};
+using VersionMap = std::map<uint64_t, VersionHolder>;
+}
+
+enum class RecordType : uint8_t {
+    LOG_INSERT,
+    LOG_UPDATE,
+    LOG_DELETE,
+    MULTI_VERSION_RECORD
+};
 
 /**
  * This class handles Records which are either in the
@@ -64,16 +80,10 @@ class DMRecordImplBase {
 protected:
     T mData;
 public:
-    using VersionMap = std::map<uint64_t, std::pair<size_t, const char*>>;
+    using Type = RecordType;
     DMRecordImplBase(T data) : mData(data) {}
-    enum class Type : uint8_t {
-        LOG_INSERT,
-        LOG_UPDATE,
-        LOG_DELETE,
-        MULTI_VERSION_RECORD
-    };
 
-    Type type() const {
+    RecordType type() const {
         return from_underlying<Type>(*mData);
     }
 
@@ -94,13 +104,16 @@ public:
             bool& isNewest,
             bool* wasDeleted = nullptr) const;
 
+
+    T dataPtr();
+
     static size_t spaceOverhead(Type t);
 
-    Type typeOfNewestVersion() const;
+    RecordType typeOfNewestVersion() const;
     uint64_t size() const;
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
     void collect(
-            VersionMap& versions,
+            impl::VersionMap& versions,
             bool& newestIsDelete) const;
 
     /**
