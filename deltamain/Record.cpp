@@ -5,9 +5,11 @@
 #include <util/Logging.hpp>
 
 #include <memory.h>
+#include <map>
 
 namespace tell {
 namespace store {
+namespace deltamain {
 
 namespace {
 
@@ -54,7 +56,7 @@ public:
         return uint64_t(en->size());
     }
 
-    uint64_t needsCleaning(uint64_t) const {
+    uint64_t needsCleaning(uint64_t, InsertMap&) const {
         LOG_ERROR("needsCleaning does not make sense on Log operations");
         std::terminate();
     }
@@ -143,7 +145,7 @@ public:
         return Type::LOG_INSERT;
     }
 
-    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+    uint64_t copyAndCompact(uint64_t, InsertMap&, char*, uint64_t,bool&) const {
         // TODO: Implement!
         LOG_ERROR("Not yet implemented");
         std::terminate();
@@ -220,7 +222,7 @@ public:
         return Type::LOG_UPDATE;
     }
 
-    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+    uint64_t copyAndCompact(uint64_t, InsertMap, char*, uint64_t,bool&) const {
         LOG_ERROR("copyAndCompact does not make sense on Log operations");
         std::terminate();
     }
@@ -289,7 +291,7 @@ public:
         return Type::LOG_DELETE;
     }
 
-    uint64_t copyAndCompact(uint64_t, char*, uint64_t,bool&) const {
+    uint64_t copyAndCompact(uint64_t, InsertMap&, char*, uint64_t,bool&) const {
         LOG_ERROR("copyAndCompact does not make sense on Log operations");
         std::terminate();
     }
@@ -357,6 +359,31 @@ public:
         return reinterpret_cast<char*>(p);
     }
     
+    bool casNewest(const char* expected, const char* desired) const {
+        char* dataPtr = const_cast<char*>(mData);
+        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
+        bool followedLink = false;
+        auto p = ptr->load();
+        while (ptr->load() % 2) {
+            // we need to follow this pointer
+            followedLink = true;
+            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+            p = ptr->load();
+        }
+        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
+        uint64_t des = reinterpret_cast<const uint64_t>(desired);
+        if (p % 4) {
+            if (!followedLink && expected) return false; // the current pointer is a null pointer
+            if (followedLink && expected == nullptr) return false;
+            if (followedLink && exp != (p - 2)) {
+                return false;
+            }
+            return ptr->compare_exchange_strong(p, des);
+        }
+        if (p != exp) return false;
+        return ptr->compare_exchange_strong(exp, des);
+    }
+
     uint32_t getNumberOfVersions() const {
         return *reinterpret_cast<const uint32_t*>(mData + 4);
     }
@@ -374,16 +401,37 @@ public:
     uint64_t size() const {
         auto off = offsets();
         auto v = getNumberOfVersions();
-        auto res = uint64_t(off[v]);
-        // res is the used size, but records are always
+        uint64_t sz = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
+        sz += v*8 + 4*(v+1) + (v % 2 == 0 ? 4 : 0);
+        sz += uint64_t(off[v]);
+        // res is the used sz, but records are always
         // 8 byte aligned. Therefore we need to add this
-        res = res % 8 ? res + (8 - res % 8) : res;
-        return res;
+        sz = sz % 8 ? sz + (8 - sz % 8) : sz;
+        return sz;
     }
 
-    bool needsCleaning(uint64_t lowestActiveVersion) {
-        if (versions()[0] < lowestActiveVersion) return true;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
         if (getNewest()) return true;
+        auto offs = offsets();
+        auto nV = getNumberOfVersions();
+        if (versions()[0] < lowestActiveVersion) {
+            if (nV == 1) {
+                // Check if this was a delition
+                // in that case we will either have
+                // to delete the record from the table,
+                // or merge it if there was an update.
+                // We do not need to test which case
+                // is true here.
+                return offs[0] == offs[1];
+            }
+            return true;
+        }
+        if (offs[nV] == offs[nV - 1]) {
+            // The last version got deleted - it could be that
+            // there is an insert record
+            CDMRecord rec(mData);
+            return insertMap.count(rec.key());
+        }
         return false;
     }
 
@@ -418,7 +466,7 @@ public:
             return nullptr;
         }
         auto off = offsets();
-        if (off[idx]) {
+        if (off[idx] != off[idx + 1]) {
             size = size_t(off[idx + 1] - off[idx]);
             if (wasDeleted) { 
                 // a tuple is deleted, if its size is 0
@@ -441,33 +489,10 @@ public:
 
     uint64_t copyAndCompact(
             uint64_t lowestActiveVersion,
+            InsertMap& insertMap,
             char* dest,
             uint64_t maxSize,
-            bool& success) const {
-        auto v = versions();
-        auto nV = getNumberOfVersions();
-        auto newest = getNewest();
-        decltype(nV) cleanUpTo = 0;
-        for (; cleanUpTo < nV; ++cleanUpTo) {
-            if (v[cleanUpTo] >= lowestActiveVersion) break;
-        }
-        if (cleanUpTo == nV && newest == nullptr) {
-            auto offs = offsets();
-            if (offs[nV] == offs[nV - 1]) {
-                // This tuple got deleted and we can
-                // safely discard it!
-                success = true;
-                return 0;
-            }
-            // we need to make sure, that there is at least
-            // one version in the record
-            --cleanUpTo;
-        }
-        uint64_t offset = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
-        if (offset >= maxSize) return 0;
-        dest[0] = to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
-        return 0;
-    }
+            bool& success) const;
 };
 
 template<class T>
@@ -495,28 +520,21 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
         std::terminate();
     }
 
-    bool casNewest(const char* expected, const char* desired) {
-        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(mData + 16);
-        bool followedLink = false;
-        auto p = ptr->load();
-        while (ptr->load() % 2) {
-            // we need to follow this pointer
-            followedLink = true;
-            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
-            p = ptr->load();
-        }
-        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
-        uint64_t des = reinterpret_cast<const uint64_t>(desired);
-        if (p % 4) {
-            if (!followedLink && expected) return false; // the current pointer is a null pointer
-            if (followedLink && expected == nullptr) return false;
-            if (followedLink && exp != (p - 2)) {
-                return false;
-            }
-            return ptr->compare_exchange_strong(p, des);
-        }
-        if (p != exp) return false;
-        return ptr->compare_exchange_strong(exp, des);
+    uint64_t* versions() {
+        return reinterpret_cast<uint64_t*>(mData + 24);
+    }
+
+    uint32_t* offsets() {
+        auto nVersions = getNumberOfVersions();
+        size_t off = 24 + 8*nVersions;
+        return reinterpret_cast<uint32_t*>(mData +off);
+    }
+
+    char* dataPtr() {
+        auto nVersions = getNumberOfVersions();
+        size_t off = 24 + 8*nVersions + 4*(nVersions + 1);
+        off += nVersions % 2 == 0 ? 4 : 0;
+        return mData + off;
     }
 
     bool update(char* next,
@@ -537,6 +555,156 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
         return casNewest(newest, next);
     }
 };
+
+template<class T>
+uint64_t MVRecordBase<T>::copyAndCompact(
+        uint64_t lowestActiveVersion,
+        InsertMap& insertMap,
+        char* dest,
+        uint64_t maxSize,
+        bool& success) const
+{
+        uint64_t offset = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
+        auto v = versions();
+        auto offs = offsets();
+        auto nV = getNumberOfVersions();
+        if (!needsCleaning(lowestActiveVersion, insertMap)) {
+            // just copy the record
+            auto sz = size();
+            if (sz > maxSize) {
+                success = false;
+                return 0;
+            }
+            success = true;
+            memcpy(dest, mData, sz);
+            return sz;
+        }
+        auto newest = getNewest();
+        decltype(nV) cleanUpTo = 0;
+        for (; cleanUpTo < nV; ++cleanUpTo) {
+            if (v[cleanUpTo] >= lowestActiveVersion) break;
+        }
+        if (cleanUpTo == nV && newest == nullptr) {
+            if (offs[nV] == offs[nV - 1]) {
+                // this record got deleted - but we need to check
+                // if another transaction did reinsert it afterwards
+                CDMRecord myRec(mData);
+                auto iter = insertMap.find(myRec.key());
+                if (iter != insertMap.end()) {
+                    auto& vec = iter->second;
+                    auto insLogEntry = vec.front();
+                    if (vec.size() == 1) {
+                        insertMap.erase(iter);
+                    } else {
+                        vec.pop_front();
+                    }
+                    CDMRecord insRec(insLogEntry);
+                    return insRec.copyAndCompact(lowestActiveVersion, insertMap, dest, maxSize, success);
+                }
+                // This tuple got deleted and we can
+                // safely discard it!
+                success = true;
+                return 0;
+            }
+            // we need to make sure, that there is at least
+            // one version in the record
+            --cleanUpTo;
+        }
+        // now we need to collect all versions which are in the update and insert log
+        CDMRecord myRec(mData);
+        auto key = myRec.key();
+        auto iter = insertMap.find(key);
+        DMRecord::VersionMap versions;
+        const char* current = newest;
+        if (current == nullptr && iter != insertMap.end()
+                && offs[nV] == offs[nV - 1]) {
+            // there are inserts that need to be processed
+            current = *(iter->second.begin());
+            iter->second.pop_front();
+        }
+        bool newestIsDelete;
+        while (current) {
+            CDMRecord rec(current);
+            rec.collect(versions, newestIsDelete);
+            if (newestIsDelete) {
+                if (iter != insertMap.end()) {
+                    if (iter->second.empty()) {
+                        insertMap.erase(iter);
+                        break;
+                    }
+                    current = iter->second.front();
+                    iter->second.pop_front();
+                }
+            }
+        }
+        // this should be a very rare corner case, but it could happen, that there
+        // are still no versions in the read set and the newest version is already
+        // a delete operation
+        // Note that we compare here for greater equal and not just greater: if
+        // the version got deleted anyway, it will not be seen by any active transaction
+        // with the version equal to the lowest active version. 
+        if (newestIsDelete && lowestActiveVersion >= versions.rend()->first) {
+            // we are done
+            success = true;
+            return 0;
+        }
+        // now we need to check whether the tuple will fit in the available memory
+        // first we calculate the size of all tuples:
+        size_t tupleDataSize = size_t(offs[nV] - offs[cleanUpTo]);
+        auto newNumberOfVersions = nV - cleanUpTo;
+        auto firstValidVersion = versions.lower_bound(lowestActiveVersion);
+        if (firstValidVersion == versions.end()) {
+            --firstValidVersion;
+        }
+        versions.erase(versions.begin(), firstValidVersion);
+        for (auto iter = versions.begin(); iter != versions.end(); ++iter) {
+            LOG_ASSERT(iter->second.first % 8 == 0, "All records need to be 8 byte aligned");
+            tupleDataSize += iter->second.first;
+            ++newNumberOfVersions;
+        }
+        if (newNumberOfVersions == 0) {
+            // this should only happen under high load or if with only short running txs
+            // or if times between gc phases are long
+            newNumberOfVersions = 1;
+            tupleDataSize = versions.rend()->second.first;
+        }
+        auto newTotalSize = offset;
+        newTotalSize += 8*newNumberOfVersions;
+        newTotalSize += 4*(newNumberOfVersions + 1);
+        newTotalSize += newNumberOfVersions % 2 == 0 ? 4 : 0;
+        newTotalSize += tupleDataSize;
+        if (newTotalSize >= maxSize) return 0;
+        dest[0] = to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
+        // now we can write the new version
+        MVRecord<char*> newRec(dest);
+        newRec.writeKey(key);
+        *reinterpret_cast<uint32_t*>(dest+ 4) = uint32_t(newNumberOfVersions);
+        uint64_t* newVersions = newRec.versions();
+        uint32_t* newOffsets = newRec.offsets();
+        newOffsets[0] = dest - newRec.dataPtr();
+        newOffsets[newNumberOfVersions] = newTotalSize;
+        uint32_t offsetCounter = 0;
+        for (offsetCounter = cleanUpTo; offsetCounter < nV; ++offsetCounter) {
+            auto sz = offs[offsetCounter + 1] - offs[offsetCounter];
+            newOffsets[offsetCounter + 1] = newOffsets[offsetCounter] + sz;
+            memcpy(dest, mData + offs[offsetCounter], sz);
+            newVersions[offsetCounter] = v[offsetCounter];
+        }
+        for (auto i = versions.begin(); i != versions.end(); ++i) {
+            newVersions[offsetCounter] = i->first;
+            newOffsets[offsetCounter + 1] = newOffsets[offsetCounter] + i->second.first;
+            memcpy(dest + newOffsets[offsetCounter], i->second.second, i->second.first);
+            ++offsetCounter;
+        }
+        // The new record is written, now we just have to write the new-pointer
+        auto newNewestPtr = reinterpret_cast<std::atomic<const char*>*>(dest + 16);
+        newNewestPtr->store(newest + 2);
+        while (!casNewest(newest, dest + 1)) {
+            newest = getNewest();
+            newNewestPtr->store(newest); // this newest version is also valid after GC finished
+        }
+        return newTotalSize;
+}
 
 } // namespace {}
 
@@ -596,8 +764,8 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
 }
 
 template<class T>
-bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion) const {
-    DISPATCH_METHODT(needsCleaning, lowestActiveVersion);
+bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+    DISPATCH_METHODT(needsCleaning, lowestActiveVersion, insertMap);
 }
 
 template<class T>
@@ -608,11 +776,12 @@ uint64_t DMRecordImplBase<T>::size() const {
 template<class T>
 uint64_t DMRecordImplBase<T>::copyAndCompact(
         uint64_t lowestActiveVersion,
+        InsertMap& insertMap,
         char* newLocation,
         uint64_t maxSize,
         bool& success) const
 {
-    DISPATCH_METHODT(copyAndCompact, lowestActiveVersion, newLocation, maxSize, success);
+    DISPATCH_METHODT(copyAndCompact, lowestActiveVersion, insertMap, newLocation, maxSize, success);
 }
 
 void DMRecordImpl<char*>::writeKey(uint64_t key) {
@@ -645,5 +814,6 @@ template class DMRecordImplBase<char*>;
 template class DMRecordImpl<const char*>;
 template class DMRecordImpl<char*>;
 
+} // namespace deltamain
 } // namespace store
 } // namespace tell

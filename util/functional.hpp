@@ -39,7 +39,6 @@ public:
     }
 };
 
-
 /**
 * This is a very simple general hash function.
 */

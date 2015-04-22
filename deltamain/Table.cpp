@@ -1,7 +1,7 @@
 #include "Table.hpp"
 #include "Record.hpp"
 #include "Page.hpp"
-
+#include "InsertMap.hpp"
 
 namespace tell {
 namespace store {
@@ -183,6 +183,16 @@ bool Table::genericUpdate(const Fun& appendFun,
 
 void Table::runGC(uint64_t minVersion) {
     allocator _;
+    // we need to process the insert-log first. There might be delted
+    // records which have an insert
+    auto insIter = mInsertLog.begin();
+    auto end = mInsertLog.end();
+    InsertMap insertMap;
+    while (insIter != end && insIter->sealed()) {
+        CDMRecord rec(insIter->data());
+        auto k = rec.key();
+        insertMap[InsertMapKey(k)].push_back(insIter->data());
+    }
     auto& roPages = *mPages.load();
     auto nPagesPtr = new (malloc(sizeof(PageList))) PageList(roPages);
     auto& nPages = *nPagesPtr;
@@ -192,13 +202,13 @@ void Table::runGC(uint64_t minVersion) {
     for (size_t i = 0; i < nPages.size(); ++i) {
         Page page(mPageManager, nPages[i]);
         bool done;
-        nPages[i] = page.gc(minVersion, fillPage, done);
+        nPages[i] = page.gc(minVersion, insertMap, fillPage, done);
         while (!done) {
             if (nPages[i]) {
                 newPages.push_back(nPages[i]);
             }
             fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-            nPages[i] = page.gc(minVersion, fillPage, done);
+            nPages[i] = page.gc(minVersion, insertMap, fillPage, done);
         }
         if (nPages[i] == nullptr) {
             // This means that this page got merged with the older page.
@@ -206,7 +216,7 @@ void Table::runGC(uint64_t minVersion) {
             nPages.erase(nPages.begin() + i);
         }
     }
-    // TODO: Process insert log
+    // now we can process the inserts
     mPages.store(nPagesPtr);
 }
 

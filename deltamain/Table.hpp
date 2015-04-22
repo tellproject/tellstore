@@ -10,6 +10,7 @@
 #include <util/Record.hpp>
 
 #include <vector>
+#include <limits>
 #include <atomic>
 #include <crossbow/string.hpp>
 

@@ -1,27 +1,16 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <map>
 
 #include <util/helper.hpp>
 
+#include "InsertMap.hpp"
+
 namespace tell {
 namespace store {
-
 struct SnapshotDescriptor;
-
-/**
- * Records should follow the following trait:
- *
- * - uint64_t key() const;
- *   The key of the record.
- * - uint64_t newest_version() const;
- *   This should be the newest version accessible from
- *   this record. The exact semantic of this depends
- *   on the implementation
- * - const char* data(snapshot) const;
- *   Return a pointer to the newest readable version,
- *   might return nullptr if no such version exists.
- */
+namespace deltamain {
 
 /**
  * This class handles Records which are either in the
@@ -57,9 +46,9 @@ struct SnapshotDescriptor;
  *    - An array of size number_of_versions + 1 of 4 byte integers
  *      to store the offsets to
  *      the data for each version - this offset will be absolute.
- *      If the offset is zero, it means that the tuple was deleted
- *      at this version. The last offsets points to the byte after
- *      the record.
+ *      If the offset is euqal to the next offset, it means that the
+ *      tuple was deleted at this version. The last offsets points to
+ *      the byte after the record.
  *    - A 4 byte padding if there are an even number of versions
  *
  *  - The data (if not delete)
@@ -75,6 +64,7 @@ class DMRecordImplBase {
 protected:
     T mData;
 public:
+    using VersionMap = std::map<uint64_t, std::pair<size_t, const char*>>;
     DMRecordImplBase(T data) : mData(data) {}
     enum class Type : uint8_t {
         LOG_INSERT,
@@ -98,19 +88,31 @@ public:
      * If wasDeleted is provided, it will be set to true if there
      * is a tuple in the read set but it got deleted.
      */
-    const char* data(const SnapshotDescriptor& snapshot, size_t& size, bool& isNewest, bool* wasDeleted = nullptr) const;
+    const char* data(
+            const SnapshotDescriptor& snapshot,
+            size_t& size,
+            bool& isNewest,
+            bool* wasDeleted = nullptr) const;
 
     static size_t spaceOverhead(Type t);
 
     Type typeOfNewestVersion() const;
     uint64_t size() const;
-    bool needsCleaning(uint64_t lowestActiveVersion) const;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+    void collect(
+            VersionMap& versions,
+            bool& newestIsDelete) const;
 
     /**
      * This method will GC the record to a new location. It will then return
      * how much data it has written or 0 iff the new location is too small
      */
-    uint64_t copyAndCompact(uint64_t lowestActiveVersion, char* newLocation, uint64_t maxSize, bool& success) const;
+    uint64_t copyAndCompact(
+            uint64_t lowestActiveVersion,
+            InsertMap& insertMap,
+            char* newLocation,
+            uint64_t maxSize,
+            bool& success) const;
 };
 
 template<class T>
@@ -168,6 +170,7 @@ extern template class DMRecordImpl<char*>;
 using CDMRecord = DMRecordImpl<const char*>;
 using DMRecord = DMRecordImpl<char*>;
 
+} // namespace deltamain
 } // namespace store
 } // namespace tell
 

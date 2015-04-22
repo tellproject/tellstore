@@ -35,6 +35,8 @@ set(SOURCE_FILES
     deltamain/Record.cpp
     deltamain/Table.hpp
     deltamain/Table.cpp
+    deltamain/Page.hpp
+    deltamain/Page.cpp
     logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
