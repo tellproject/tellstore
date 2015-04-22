@@ -29,6 +29,8 @@ enum class RecordType : uint8_t {
 };
 
 /**
+ * // TODO: Implement revert
+ *
  * This class handles Records which are either in the
  * log or in a table. The base pointer must be set in
  * a way, that it is able to find all relevant versions
@@ -39,6 +41,8 @@ enum class RecordType : uint8_t {
  * -7 bytes padding if it is a log entry, otherwise it
  *  stores 3 bytes padding plus a 4 byte integer to store
  *  the number of versions
+ *  If the entry is a log entry, the first byt is set to
+ *  one if the operation got reverted
  * -8 bytes: key
  *
  *    For log entries:
@@ -52,9 +56,8 @@ enum class RecordType : uint8_t {
  *      record entry itself. This is an important design
  *      decision: this way me make clear that we do not
  *      introduce cycles.
- *  
- *       For insert log entries:
- *       - 8 bytes for a next pointer
+ *      If the log operation is an insert, this position
+ *      holds the pointer to the newest version
  *
  *    For multiversion records:
  *    - A pointer to the newest version
@@ -65,6 +68,9 @@ enum class RecordType : uint8_t {
  *      If the offset is euqal to the next offset, it means that the
  *      tuple was deleted at this version. The last offsets points to
  *      the byte after the record.
+ *      If an offset is negative, its absolute value is still the
+ *      size of the value, but the tuple is marked as reverted, it
+ *      will be deleted at the next GC phase
  *    - A 4 byte padding if there are an even number of versions
  *
  *  - The data (if not delete)
@@ -126,6 +132,8 @@ public:
             char* newLocation,
             uint64_t maxSize,
             bool& success) const;
+
+    void revert();
 };
 
 template<class T>

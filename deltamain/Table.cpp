@@ -27,7 +27,11 @@ bool Table::get(uint64_t key,
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
         data = rec.data(snapshot, size, isNewest, &wasDeleted);
-        return !wasDeleted;
+        // if the newest version is a delete, it might be that there is
+        // a new insert in the insert log
+        if (!(wasDeleted && isNewest)) {
+            return !wasDeleted;
+        }
     }
     // in this case we need to scan through the insert log
     for (auto iter = mInsertLog.begin(); iter != mInsertLog.end(); ++iter) {
@@ -36,6 +40,11 @@ bool Table::get(uint64_t key,
         if (rec.key() == key) {
             bool wasDeleted;
             data = rec.data(snapshot, size, isNewest, &wasDeleted);
+            if (isNewest && wasDeleted) {
+                // same as above, it could be that the record was inserted and
+                // then updated - in this case we to continue scanning
+                continue;
+            }
             return !wasDeleted;
         }
     }
@@ -76,29 +85,28 @@ void Table::insert(uint64_t key,
     // the insert succeeded.
     auto logEntrySize = size + DMRecord::spaceOverhead(DMRecord::Type::LOG_INSERT);
     auto entry = mInsertLog.append(logEntrySize);
-    {
-        // We do this in another scope, after this scope is closed, the log
-        // is read only (when seal is called)
-        DMRecord insertRecord(entry->data());
-        insertRecord.setType(DMRecord::Type::LOG_INSERT);
-        insertRecord.writeKey(key);
-        insertRecord.writeVersion(snapshot.version());
-        insertRecord.writePrevious(reinterpret_cast<const char*>(ptr));
-        insertRecord.writeNextPtr(nullptr);
-        insertRecord.writeData(size, data);
-    }
-    entry->seal();
-    if (succeeded == nullptr) return;
+    // We do this in another scope, after this scope is closed, the log
+    // is read only (when seal is called)
+    DMRecord insertRecord(entry->data());
+    insertRecord.setType(DMRecord::Type::LOG_INSERT);
+    insertRecord.writeKey(key);
+    insertRecord.writeVersion(snapshot.version());
+    insertRecord.writePrevious(reinterpret_cast<const char*>(ptr));
+    insertRecord.writeNextPtr(nullptr);
+    insertRecord.writeData(size, data);
     while (iter != iterEnd) {
         // we busy wait if the entry was not sealed
         while (!iter->sealed()) {}
         const LogEntry* en = iter.operator->();
         if (en == entry) {
+            entry->seal();
             *succeeded = true;
             return;
         }
         CDMRecord rec(en->data());
         if (rec.key() == key) {
+            insertRecord.revert();
+            entry->seal();
             *succeeded = false;
             return;
         }
