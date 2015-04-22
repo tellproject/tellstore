@@ -312,13 +312,10 @@ public:
         std::terminate();
     }
 
-    bool update(char* data, const SnapshotDescriptor& snapshot)
+    bool update(char*, const SnapshotDescriptor&)
     {
-        if (!snapshot.inReadSet(version()))
-            return false;
-        DMRecord rec(data);
-        rec.writePrevious(this->mData);
-        return true;
+        // the client has to do an insert in this case!!
+        return false;
     }
 };
 
@@ -333,28 +330,18 @@ public:
         // The pointer format is like the following:
         // If (ptr % 2) -> this is a link, we need to
         //      follow this version.
-        // If (ptr % 4) -> This is null if we did not
-        //      follow a link before
-        // else This is just a normal version
+        // else This is just a normal version - but it might be
+        //      a MVRecord
         //
         // This const_cast is a hack - we might fix it
         // later
         char* data = const_cast<char*>(mData);
         auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
-        bool followedLink = false;
         auto p = ptr->load();
         while (ptr->load() % 2) {
             // we need to follow this pointer
-            followedLink = true;
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();
-        }
-        if (p % 4) {
-            if (followedLink) {
-                return reinterpret_cast<char*>(p - 2);
-            } else {
-                return nullptr;
-            }
         }
         return reinterpret_cast<char*>(p);
     }
@@ -362,24 +349,14 @@ public:
     bool casNewest(const char* expected, const char* desired) const {
         char* dataPtr = const_cast<char*>(mData);
         auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
-        bool followedLink = false;
         auto p = ptr->load();
         while (ptr->load() % 2) {
             // we need to follow this pointer
-            followedLink = true;
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();
         }
         uint64_t exp = reinterpret_cast<const uint64_t>(expected);
         uint64_t des = reinterpret_cast<const uint64_t>(desired);
-        if (p % 4) {
-            if (!followedLink && expected) return false; // the current pointer is a null pointer
-            if (followedLink && expected == nullptr) return false;
-            if (followedLink && exp != (p - 2)) {
-                return false;
-            }
-            return ptr->compare_exchange_strong(p, des);
-        }
         if (p != exp) return false;
         return ptr->compare_exchange_strong(exp, des);
     }
@@ -544,6 +521,7 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
             DMRecord rec(newest);
             bool res = rec.update(next, snapshot);
             if (!res) return false;
+            if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;
             return casNewest(newest, next);
         }
         auto nVersions = getNumberOfVersions();
@@ -698,7 +676,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         }
         // The new record is written, now we just have to write the new-pointer
         auto newNewestPtr = reinterpret_cast<std::atomic<const char*>*>(dest + 16);
-        newNewestPtr->store(newest + 2);
+        newNewestPtr->store(nullptr);
         while (!casNewest(newest, dest + 1)) {
             newest = getNewest();
             newNewestPtr->store(newest); // this newest version is also valid after GC finished
