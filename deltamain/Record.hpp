@@ -12,21 +12,22 @@ namespace tell {
 namespace store {
 struct SnapshotDescriptor;
 namespace deltamain {
-namespace impl {
-struct VersionHolder {
-    const char* record;
-    size_t size;
-    std::atomic<const char*>* nextPtr;
-};
-using VersionMap = std::map<uint64_t, VersionHolder>;
-}
-
 enum class RecordType : uint8_t {
     LOG_INSERT,
     LOG_UPDATE,
     LOG_DELETE,
     MULTI_VERSION_RECORD
 };
+
+namespace impl {
+struct VersionHolder {
+    const char* record;
+    RecordType type;
+    size_t size;
+    std::atomic<const char*>* nextPtr;
+};
+using VersionMap = std::map<uint64_t, VersionHolder>;
+}
 
 /**
  * // TODO: Implement revert
@@ -38,11 +39,13 @@ enum class RecordType : uint8_t {
  * DMRecord looks like follows:
  *
  * -1 byte: Record::Type
- * -7 bytes padding if it is a log entry, otherwise it
- *  stores 3 bytes padding plus a 4 byte integer to store
- *  the number of versions
- *  If the entry is a log entry, the first byt is set to
- *  one if the operation got reverted
+ * - For Log Entries
+ *   - 1 byte with a boolean, indicating whether the entry
+ *     got reverted
+ *   - 6 bytes padding
+ * - For multiversion record:
+ *   - 3 bytes padding
+ *   - 4 bytes integer storing the number of versions
  * -8 bytes: key
  *
  *    For log entries:
@@ -103,11 +106,15 @@ public:
      *
      * If wasDeleted is provided, it will be set to true if there
      * is a tuple in the read set but it got deleted.
+     *
+     * isValid will be set to false iff all versions accessible from
+     * this tuple got reverted.
      */
     const char* data(
             const SnapshotDescriptor& snapshot,
             size_t& size,
             bool& isNewest,
+            bool& isValid,
             bool* wasDeleted = nullptr) const;
 
 
@@ -115,7 +122,7 @@ public:
 
     static size_t spaceOverhead(Type t);
 
-    RecordType typeOfNewestVersion() const;
+    RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
     void collect(
@@ -133,7 +140,12 @@ public:
             uint64_t maxSize,
             bool& success) const;
 
-    void revert();
+    void revert(uint64_t version);
+    /**
+     * This function return true iff the underlying item is a log entry and it
+     * is not a tombstone or a reverted operation.
+     */
+    bool isValidDataRecord() const;
 };
 
 template<class T>
@@ -173,12 +185,9 @@ public: // writing functinality
      * This can only be called on log entries
      */
     void writeData(size_t size, const char* data);
-    /**
-     * This can only be called on insert entries
-     */
-    void writeNextPtr(const char* next);
 
     bool update(char* next,
+                bool& isValid,
                 const SnapshotDescriptor& snapshot);
 
 };

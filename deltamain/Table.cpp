@@ -26,10 +26,11 @@ bool Table::get(uint64_t key,
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
-        data = rec.data(snapshot, size, isNewest, &wasDeleted);
+        bool isValid;
+        data = rec.data(snapshot, size, isNewest, isValid, &wasDeleted);
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
-        if (!(wasDeleted && isNewest)) {
+        if (isValid && !(wasDeleted && isNewest)) {
             return !wasDeleted;
         }
     }
@@ -37,9 +38,10 @@ bool Table::get(uint64_t key,
     for (auto iter = mInsertLog.begin(); iter != mInsertLog.end(); ++iter) {
         if (!iter->sealed()) continue;
         CDMRecord rec(iter->data());
-        if (rec.key() == key) {
+        if (rec.isValidDataRecord() && rec.key() == key) {
             bool wasDeleted;
-            data = rec.data(snapshot, size, isNewest, &wasDeleted);
+            bool isValid;
+            data = rec.data(snapshot, size, isNewest, isValid, &wasDeleted);
             if (isNewest && wasDeleted) {
                 // same as above, it could be that the record was inserted and
                 // then updated - in this case we to continue scanning
@@ -68,17 +70,15 @@ void Table::insert(uint64_t key,
         CDMRecord rec(reinterpret_cast<const char*>(ptr));
         bool wasDeleted, isNewest;
         size_t s;
-        rec.data(snapshot, s, isNewest, &wasDeleted);
-        if (!(wasDeleted && isNewest)) {
+        bool isValid;
+        rec.data(snapshot, s, isNewest, isValid, &wasDeleted);
+        if (isValid && !(wasDeleted && isNewest)) {
             if (succeeded) *succeeded = false;
             return;
         }
-        // the tuple was deleted and we don't have a
+        // the tuple was deleted/reverted and we don't have a
         // write-write conflict, therefore we can continue
         // with the insert
-        // But we only need to write the previous pointer if it
-        // is on the update log.
-        if (rec.typeOfNewestVersion() != CDMRecord::Type::LOG_UPDATE) ptr = nullptr;
     }
     // To do an insert, we optimistically append it to the log.
     // Then we check for conflicts iff the user wants to know whether
@@ -91,8 +91,7 @@ void Table::insert(uint64_t key,
     insertRecord.setType(DMRecord::Type::LOG_INSERT);
     insertRecord.writeKey(key);
     insertRecord.writeVersion(snapshot.version());
-    insertRecord.writePrevious(reinterpret_cast<const char*>(ptr));
-    insertRecord.writeNextPtr(nullptr);
+    insertRecord.writePrevious(nullptr);
     insertRecord.writeData(size, data);
     while (iter != iterEnd) {
         // we busy wait if the entry was not sealed
@@ -104,8 +103,8 @@ void Table::insert(uint64_t key,
             return;
         }
         CDMRecord rec(en->data());
-        if (rec.key() == key) {
-            insertRecord.revert();
+        if (rec.isValidDataRecord() && rec.key() == key) {
+            insertRecord.revert(snapshot.version());
             entry->seal();
             *succeeded = false;
             return;
@@ -171,7 +170,7 @@ bool Table::genericUpdate(const Fun& appendFun,
     if (!ptr) {
         while (iter != iterEnd) {
             CDMRecord rec(iter->data());
-            if (rec.key() == key) {
+            if (rec.isValidDataRecord() && rec.key() == key) {
                 // we found it!
                 ptr = iter->data();
                 break;
@@ -186,7 +185,8 @@ bool Table::genericUpdate(const Fun& appendFun,
     // update optimistaically
     char* nextPtr = appendFun();
     DMRecord rec(reinterpret_cast<char*>(ptr));
-    return rec.update(nextPtr, snapshot);
+    bool isValid;
+    return rec.update(nextPtr, isValid, snapshot);
 }
 
 void Table::runGC(uint64_t minVersion) {
@@ -198,6 +198,7 @@ void Table::runGC(uint64_t minVersion) {
     InsertMap insertMap;
     while (insIter != end && insIter->sealed()) {
         CDMRecord rec(insIter->data());
+        if (!rec.isValidDataRecord()) continue;
         auto k = rec.key();
         insertMap[InsertMapKey(k)].push_back(insIter->data());
     }
