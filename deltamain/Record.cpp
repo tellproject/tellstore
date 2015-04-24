@@ -55,6 +55,12 @@ public:
         return *reinterpret_cast<const T*>(mData + 24);
     }
 
+    size_t recordSize() const {
+        auto sz = size_t(size());
+        sz -= DMRecord::spaceOverhead(type());
+        return sz;
+    }
+
     uint64_t size() const {
         auto en = LogEntry::entryFromData(mData);
         return uint64_t(en->size());
@@ -69,7 +75,7 @@ public:
         return mData[1] == 0;
     }
 
-    T dataPtr()
+    T dataPtr() const
     {
         return mData + DMRecord::spaceOverhead(type());
     }
@@ -104,6 +110,11 @@ public:
     LogInsertBase(T data) : LogInsOrUp<T>(data) {}
     size_t dataOffset() const {
         return 40;
+    }
+
+    std::atomic<const char*>* getNewestAtomic() const {
+        char* data = const_cast<char*>(this->mData);
+        return reinterpret_cast<std::atomic<const char*>*>(data + 24);
     }
 
     // insert log operations only have a newest pointer
@@ -210,6 +221,25 @@ public:
         return Type::LOG_INSERT;
     }
 
+    void collect(impl::VersionMap& versionMap, bool& newestIsDelete, bool& allVersionsInvalid) const {
+        allVersionsInvalid = true;
+        if (this->isValidDataRecord()) {
+            versionMap.insert(std::make_pair(this->version(),
+                    impl::VersionHolder{
+                        this->dataPtr(),
+                        RecordType::LOG_INSERT,
+                        this->recordSize(),
+                        getNewestAtomic() }));
+            newestIsDelete = false;
+            allVersionsInvalid = false;
+        }
+        auto newest = getNewest();
+        if (newest) {
+            CDMRecord rec(newest);
+            rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+        }
+    }
+
     uint64_t copyAndCompact(uint64_t, InsertMap&, char*, uint64_t,bool&) const {
         // TODO: Implement!
         LOG_ERROR("Not yet implemented");
@@ -286,6 +316,26 @@ public:
             }
             if (wasDeleted) *wasDeleted = false;
             return nullptr;
+        }
+    }
+
+    void collect(impl::VersionMap& versionMap, bool& newestIsDelete, bool& allVersionsInvalid) const
+    {
+        allVersionsInvalid = allVersionsInvalid || this->isValidDataRecord();
+        auto prev = this->getPrevious();
+        if (prev) {
+            CDMRecord rec(prev);
+            rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+        }
+        if (this->isValidDataRecord()) {
+            newestIsDelete = false;
+            versionMap.emplace(this->version(),
+                    impl::VersionHolder{
+                        this->dataPtr(),
+                        RecordType::LOG_UPDATE,
+                        this->recordSize(),
+                        nullptr
+                    });
         }
     }
 
@@ -370,6 +420,26 @@ public:
             if (wasDeleted) *wasDeleted = false;
             size = 0;
             return nullptr;
+        }
+    }
+
+    void collect(impl::VersionMap& versionMap, bool& newestIsDelete, bool& allVersionsInvalid) const
+    {
+        allVersionsInvalid = allVersionsInvalid || this->isValidDataRecord();
+        auto prev = this->getPrevious();
+        if (prev) {
+            CDMRecord rec(prev);
+            rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+        }
+        if (this->isValidDataRecord()) {
+            newestIsDelete = true;
+            versionMap.emplace(this->version(),
+                    impl::VersionHolder{
+                        this->dataPtr(),
+                        RecordType::LOG_DELETE,
+                        this->recordSize(),
+                        nullptr
+                    });
         }
     }
 
@@ -606,6 +676,12 @@ public:
         return Type::MULTI_VERSION_RECORD;
     }
 
+    void collect(impl::VersionMap&, bool&, bool&) const {
+        LOG_ASSERT(false, "should never call collect on MVRecord");
+        std::cerr << "Fatal error!" << std::endl;
+        std::terminate();
+    }
+
     uint64_t copyAndCompact(
             uint64_t lowestActiveVersion,
             InsertMap& insertMap,
@@ -774,8 +850,9 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         bool newestIsDelete;
         while (current) {
             CDMRecord rec(current);
-            rec.collect(versions, newestIsDelete);
-            if (newestIsDelete) {
+            bool allVersionsInvalid;
+            rec.collect(versions, newestIsDelete, allVersionsInvalid);
+            if (newestIsDelete || allVersionsInvalid) {
                 if (iter != insertMap.end()) {
                     if (iter->second.empty()) {
                         insertMap.erase(iter);
@@ -784,6 +861,10 @@ uint64_t MVRecordBase<T>::copyAndCompact(
                     current = iter->second.front();
                     iter->second.pop_front();
                 }
+            } else {
+                // in this case we do not need to check further for 
+                // inserts
+                break;
             }
         }
         // this should be a very rare corner case, but it could happen, that there
@@ -914,6 +995,12 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
 template<class T>
 bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
     DISPATCH_METHODT(needsCleaning, lowestActiveVersion, insertMap);
+}
+
+template<class T>
+void DMRecordImplBase<T>::collect(impl::VersionMap& versions, bool& newestIsDelete, bool& allVersionsInvalid) const
+{
+    DISPATCH_METHODT(collect, versions, newestIsDelete, allVersionsInvalid);
 }
 
 template<class T>

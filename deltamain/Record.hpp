@@ -127,7 +127,8 @@ public:
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
     void collect(
             impl::VersionMap& versions,
-            bool& newestIsDelete) const;
+            bool& newestIsDelete,
+            bool& allVersionsInvalid) const;
 
     /**
      * This method will GC the record to a new location. It will then return
