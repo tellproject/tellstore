@@ -43,12 +43,11 @@ public:
 * This is a very simple general hash function.
 */
 class cuckoo_hash_function {
-    size_t mTableSize;
     uint64_t mSalt;
     uint64_t w_M; // m==64 w_M = w - M
 public:
     cuckoo_hash_function(size_t tableSize)
-        : mTableSize(tableSize), mSalt(0) {
+        : mSalt(0) {
         std::random_device rd;
         std::uniform_int_distribution<uint64_t> dist;
         while (mSalt == 0) {

@@ -14,6 +14,19 @@
 #include <vector>
 #include <atomic>
 
+#include <tbb/queuing_rw_mutex.h>
+#include <tbb/compat/condition_variable>
+
+namespace tbb {
+size_t tbb_hasher(const crossbow::string& str)
+{
+    std::hash<crossbow::string> h;
+    return h(str);
+}
+} // namespace tbb
+
+#include <tbb/concurrent_unordered_map.h>
+
 namespace tell {
 namespace store {
 
@@ -32,26 +45,35 @@ private:
     GC& mGC;
     PageManager& mPageManager;
     CommitManager& mCommitManager;
-    std::thread mGCThread;
     std::atomic<bool> mShutDown;
-    crossbow::concurrent_map<crossbow::string, uint64_t> mNames;
-    std::vector<Table*> mTables;
+    mutable tbb::queuing_rw_mutex mTablesMutex;
+    tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
+    tbb::concurrent_unordered_map<uint64_t, Table*> mTables;
     std::atomic<uint64_t> mLastTableIdx;
     std::condition_variable mStopCondition;
+    mutable std::mutex mGCMutex;
+    std::thread mGCThread;
 private:
     void gcThread() {
-        std::mutex m;
-        std::unique_lock<std::mutex> lock(m);
+        std::unique_lock<std::mutex> lock(mGCMutex);
         auto begin = Clock::now();
         auto duration = std::chrono::seconds(mConfig.gcIntervall);
         while (!mShutDown.load()) {
             auto now = Clock::now();
             if (begin + duration > now) {
-                mStopCondition.wait_for(lock, begin + duration - now);
+                mStopCondition.wait_until(lock, begin + duration);
             }
             if (mShutDown.load()) return;
             begin = Clock::now();
-            mGC.run(mTables, mCommitManager.getLowestActiveVersion());
+            std::vector<Table*> tables;
+            tables.reserve(mNames.size());
+            {
+                tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+                for (auto& p : mTables) {
+                    tables.push_back(p.second);
+                }
+            }
+            mGC.run(tables, mCommitManager.getLowestActiveVersion());
         }
     }
 
@@ -61,12 +83,10 @@ public:
         , mGC(gc)
         , mPageManager(pageManager)
         , mCommitManager(commitManager)
+        , mShutDown(false)
+        , mLastTableIdx(0)
         , mGCThread(std::bind(&TableManager::gcThread, this))
-        // TODO: This is a hack, we need to think
-        // about a better wat to handle tables (this will eventually crash!!)
-        , mTables(1024, nullptr), mLastTableIdx(0)
     {
-        mShutDown.store(false);
     }
 
     ~TableManager() {
@@ -74,9 +94,9 @@ public:
         mStopCondition.notify_all();
         mGCThread.join();
         for (auto t : mTables) {
-            if (t) {
-                t->~Table();
-                allocator::free_now(t);
+            if (t.second) {
+                t.second->~Table();
+                allocator::free_now(t.second);
             }
         }
     }
@@ -85,26 +105,22 @@ public:
     bool createTable(const crossbow::string& name,
                      const Schema& schema,
                      uint64_t& idx) {
-        bool success = false;
-        mNames.exec_on(name, [this, &idx, &success](uint64_t& val) {
-            if (val != 0) {
-                return true;
-            }
-            val = ++mLastTableIdx;
-            idx = val;
-            success = true;
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        idx = ++mLastTableIdx;
+        auto res = mNames.insert(std::make_pair(name, idx));
+        if (!res.second) {
             return false;
-        });
-        if (success) {
-            mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema);
         }
-        return success;
+        mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema);
+        return true;
     }
 
     bool getTableId(const crossbow::string& name, uint64_t& id) {
-        auto res = mNames.at(name);
-        id = res.second;
-        return res.first;
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        auto res = mNames.find(name);
+        if (res == mNames.end()) return false;
+        id = res->second;
+        return true;
     }
 
     bool get(uint64_t tableId,
@@ -114,6 +130,7 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->get(key, size, data, snapshot, isNewest);
     }
 
@@ -123,6 +140,7 @@ public:
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->update(key, size, data, snapshot);
     }
 
@@ -134,6 +152,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, size, data, snapshot, succeeded);
     }
 
@@ -143,6 +162,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, tuple, snapshot, succeeded);
     }
 
@@ -150,6 +170,7 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->remove(key, snapshot);
     }
 

@@ -85,6 +85,10 @@ target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
 
+# Link against TBB
+target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
+
 ###################
 # GTEST
 ###################

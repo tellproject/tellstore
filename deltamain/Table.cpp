@@ -95,7 +95,7 @@ void Table::insert(uint64_t key,
     insertRecord.writeData(size, data);
     while (iter != iterEnd) {
         // we busy wait if the entry was not sealed
-        while (!iter->sealed()) {}
+        while (iter->data() != entry->data() && !iter->sealed()) {}
         const LogEntry* en = iter.operator->();
         if (en == entry) {
             entry->seal();
@@ -196,7 +196,7 @@ void Table::runGC(uint64_t minVersion) {
     auto insIter = mInsertLog.begin();
     auto end = mInsertLog.end();
     InsertMap insertMap;
-    while (insIter != end && insIter->sealed()) {
+    for (; insIter != end && insIter->sealed(); ++insIter) {
         CDMRecord rec(insIter->data());
         if (!rec.isValidDataRecord()) continue;
         auto k = rec.key();
