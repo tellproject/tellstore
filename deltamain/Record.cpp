@@ -241,8 +241,7 @@ public:
     }
 
     uint64_t copyAndCompact(uint64_t, InsertMap&, char*, uint64_t,bool&) const {
-        // TODO: Implement!
-        LOG_ERROR("Not yet implemented");
+        LOG_ERROR("Do not call this on a log insert!");
         std::terminate();
     }
 };
@@ -799,42 +798,22 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         }
         if (versions.empty() && newest == nullptr) {
             if (newestValidVersionIdx < 0) {
-                // All versions are invalid. This means that it even never got
-                // inserted, therefore wo do not need to check anything else but
-                // can return right away
-                success = true;
-                return 0;
-            }
-            if (std::abs(offs[newestValidVersionIdx]) == std::abs(offs[newestValidVersionIdx - 1])) {
+                // All versions in this set are invalid, therefore, we could delete
+                // the record right away. But there might be another insert with the
+                // same key
+            } else if (std::abs(offs[newestValidVersionIdx]) == std::abs(offs[newestValidVersionIdx - 1])) {
                 // this tuple got deleted 
-                // but we need to check
-                // if another transaction did reinsert it afterwards
-                CDMRecord myRec(mData);
-                auto iter = insertMap.find(myRec.key());
-                if (iter != insertMap.end()) {
-                    auto& vec = iter->second;
-                    auto insLogEntry = vec.front();
-                    if (vec.size() == 1) {
-                        insertMap.erase(iter);
-                    } else {
-                        vec.pop_front();
-                    }
-                    CDMRecord insRec(insLogEntry);
-                    return insRec.copyAndCompact(lowestActiveVersion, insertMap, dest, maxSize, success);
-                }
-                // This tuple got deleted and we can
-                // safely discard it!
-                success = true;
-                return 0;
-            }
-            // we need to make sure, that there is at least
-            // one version in the record
-            versions.insert(std::make_pair(v[newestValidVersionIdx],
-                        impl::VersionHolder {
+            } else {
+                // All records are older than the lowest active version
+                // we need to make sure, that there is at least
+                // one version in the record
+                versions.insert(std::make_pair(v[newestValidVersionIdx],
+                            impl::VersionHolder {
                             mData + offs[newestValidVersionIdx],
                             RecordType::MULTI_VERSION_RECORD,
                             size_t(std::abs(offs[newestValidVersionIdx+1]) - offs[newestValidVersionIdx]),
                             nullptr}));
+            }
         }
         // now we need to collect all versions which are in the update and insert log
         CDMRecord myRec(mData);
@@ -842,12 +821,12 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         auto iter = insertMap.find(key);
         const char* current = newest;
         if (current == nullptr && iter != insertMap.end()
-                && offs[nV] == offs[nV - 1]) {
+                && (versions.empty() || versions.rbegin()->second.size == 0)) {
             // there are inserts that need to be processed
-            current = *(iter->second.begin());
+            current = iter->second.front();
             iter->second.pop_front();
         }
-        bool newestIsDelete;
+        bool newestIsDelete = versions.rbegin()->second.size == 0;
         while (current) {
             CDMRecord rec(current);
             bool allVersionsInvalid;
@@ -866,6 +845,13 @@ uint64_t MVRecordBase<T>::copyAndCompact(
                 // inserts
                 break;
             }
+        }
+        if (versions.empty()) {
+            // there are no inserts with that key and the tuple
+            // got either deleted or has no valid inserts. Therefore
+            // we can delete the whole MVRecord
+            success = true;
+            return 0;
         }
         // this should be a very rare corner case, but it could happen, that there
         // are still no versions in the read set and the newest version is already
@@ -899,7 +885,10 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         newTotalSize += 4*(newNumberOfVersions + 1);
         newTotalSize += newNumberOfVersions % 2 == 0 ? 4 : 0;
         newTotalSize += tupleDataSize;
-        if (newTotalSize >= maxSize) return 0;
+        if (newTotalSize >= maxSize) {
+            success = false;
+            return 0;
+        }
         dest[0] = to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
         // now we can write the new version
         MVRecord<char*> newRec(dest);
@@ -932,6 +921,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
             newest = getNewest();
             newNewestPtr->store(newest); // this newest version is also valid after GC finished
         }
+        success = true;
         return newTotalSize;
 }
 

@@ -226,6 +226,16 @@ void Table::runGC(uint64_t minVersion) {
         }
     }
     // now we can process the inserts
+    char dummyPage[8];
+    while (!insertMap.empty()) {
+        *reinterpret_cast<uint64_t*>(dummyPage) = 0;
+        Page page(mPageManager, dummyPage);
+        bool done;
+        fillPage = reinterpret_cast<char*>(mPageManager.alloc());
+        page.gc(minVersion, insertMap, fillPage, done);
+        nPages.push_back(fillPage);
+    }
+    // The garbage collection is finished - we can now reset the read only table
     mPages.store(nPagesPtr);
 }
 
