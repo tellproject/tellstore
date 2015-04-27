@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
 # Declare build options
 option(USE_ASAN "Use the address sanitizer" OFF)
 option(ENABLE_HEAVYWEIGHT_TESTS "Build ressource intensive or long running unit tests" OFF)
@@ -27,6 +29,7 @@ endif()
 # Find dependencies
 find_package(Boost REQUIRED)
 find_package(Crossbow REQUIRED)
+find_package(TBB REQUIRED)
 
 set(SOURCE_FILES
     implementation.hpp
