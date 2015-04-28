@@ -72,33 +72,39 @@ char* Page::gc(
             offset += rec.size();
         }
         // we are done. It might now be, that this page has some free space left
-        char dummyRecord[DMRecord::spaceOverhead(RecordType::MULTI_VERSION_RECORD) + 4];
-        dummyRecord[0] = to_underlying(RecordType::MULTI_VERSION_RECORD);
-        // there are 0 number of versions
-        *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 0;
-        *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr;
-        *reinterpret_cast<uint32_t*>(dummyRecord + 24) = 32;
-        DMRecord dummy(dummyRecord);
-        while (!insertMap.empty()) {
-            bool couldRelocate;
-            auto fst = insertMap.begin();
-            uint64_t key = fst->first.key;
-            dummy.writeKey(key);
-            dummy.copyAndCompact(lowestActiveVersion,
-                    insertMap,
-                    fillPage + fillOffset,
-                    TELL_PAGE_SIZE - fillOffset,
-                    couldRelocate);
-            if (couldRelocate) {
-                insertMap.erase(fst);
-            } else {
-                break;
-            }
-        }
-        // now we write back the new size
         *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
+        fillWithInserts(lowestActiveVersion, insertMap, fillPage);
+        // now we write back the new size
         done = true;
         return res;
+}
+
+void Page::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage)
+{
+    auto fillOffset = *reinterpret_cast<uint64_t*>(fillPage);
+    char dummyRecord[DMRecord::spaceOverhead(RecordType::MULTI_VERSION_RECORD) + 4];
+    dummyRecord[0] = to_underlying(RecordType::MULTI_VERSION_RECORD);
+    // there are 0 number of versions
+    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 0;
+    *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr;
+    *reinterpret_cast<uint32_t*>(dummyRecord + 24) = 32;
+    DMRecord dummy(dummyRecord);
+    while (!insertMap.empty()) {
+        bool couldRelocate;
+        auto fst = insertMap.begin();
+        uint64_t key = fst->first.key;
+        dummy.writeKey(key);
+        dummy.copyAndCompact(lowestActiveVersion,
+                insertMap,
+                fillPage + fillOffset,
+                TELL_PAGE_SIZE - fillOffset,
+                couldRelocate);
+        if (couldRelocate) {
+            insertMap.erase(fst);
+        } else {
+            break;
+        }
+    }
 }
 
 } // namespace deltamain

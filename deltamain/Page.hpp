@@ -48,6 +48,7 @@ public:
     }
 
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done);
+    static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage);
 };
 
 } // namespace deltamain
