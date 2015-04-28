@@ -284,6 +284,11 @@ TEST_F(UnorderedLogTest, appendPageNewHead) {
 
 using OrderedLogTest = BaseLogTest<OrderedLogImpl>;
 
+TEST_F(OrderedLogTest, emptyLogIteration) {
+    EXPECT_EQ(mLog.begin(), mLog.end()) << "We must not be able to iterate over an empty log";
+}
+
+
 /**
  * @class Log
  * @test Check that appends work correctly
