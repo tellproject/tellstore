@@ -17,7 +17,7 @@ char* Page::gc(
         // in the first iteration we just decide wether we
         // need to collect any garbage here
         bool hasToClean = mStartOffset != 8;
-        while (offset < size && !hasToClean) {
+        while (offset <= size && !hasToClean) {
             CDMRecord rec(mData + offset);
             if (rec.needsCleaning(lowestActiveVersion, insertMap)) {
                 hasToClean = true;
