@@ -127,17 +127,72 @@ protected:
     Log<Impl> mLog;
 };
 
-using UnorderedLogTest = BaseLogTest<UnorderedLogImpl>;
+using BaseLogTestImplementations = ::testing::Types<UnorderedLogImpl, OrderedLogImpl>;
+TYPED_TEST_CASE(BaseLogTest, BaseLogTestImplementations);
 
 /**
- * @class UnorderedLogImpl
+ * @class Log
  * @test Check that begin() == end() when the log is empty
  */
-TEST_F(UnorderedLogTest, emptyLogIteration) {
-    auto begin = mLog.begin();
-    auto end = mLog.end();
+TYPED_TEST(BaseLogTest, emptyLogIteration) {
+    auto begin = this->mLog.begin();
+    auto end = this->mLog.end();
     EXPECT_TRUE(begin == end) << "begin() == end() iterator in empty log";
 }
+
+/**
+ * @class Log
+ * @test Check that the iterator is valid when an append on the same page happened in the meantime
+ *
+ * Allocates 1 entry, retrieves the iterator, increments it, inserts another element and checks if the iterator still
+ * points to the end element (not the second inserted element).
+ */
+TYPED_TEST(BaseLogTest, logIteratorAppendSamePage) {
+    auto entry1 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto i = this->mLog.begin();
+    auto end = this->mLog.end();
+
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+
+    auto entry2 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that the iterator is valid when an append on the same page happened in the meantime
+ *
+ * Allocates 1 entry, retrieves the iterator, increments it, inserts another element (which lands on a new page) and
+ * checks if the iterator still points to the end element (not the second inserted element).
+ */
+TYPED_TEST(BaseLogTest, logIteratorAppendNewPage) {
+    auto entry1 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto i = this->mLog.begin();
+    auto end = this->mLog.end();
+
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+
+    auto entry2 = this->mLog.append(LogPage::MAX_DATA_SIZE);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+}
+
+using UnorderedLogTest = BaseLogTest<UnorderedLogImpl>;
 
 /**
  * @class UnorderedLogImpl
@@ -293,16 +348,6 @@ TEST_F(UnorderedLogTest, appendPageNewHead) {
 }
 
 using OrderedLogTest = BaseLogTest<OrderedLogImpl>;
-
-/**
- * @class OorderedLogImpl
- * @test Check that begin() == end() when the log is empty
- */
-TEST_F(OrderedLogTest, emptyLogIteration) {
-    auto begin = mLog.begin();
-    auto end = mLog.end();
-    EXPECT_TRUE(begin == end) << "begin() == end() iterator in empty log";
-}
 
 /**
  * @class Log
