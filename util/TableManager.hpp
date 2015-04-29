@@ -4,6 +4,7 @@
 #include "Epoch.hpp"
 #include "Record.hpp"
 #include "CommitManager.hpp"
+#include "Scan.hpp"
 
 #include <crossbow/concurrent_map.hpp>
 #include <crossbow/string.hpp>
@@ -45,6 +46,7 @@ private:
     GC& mGC;
     PageManager& mPageManager;
     CommitManager& mCommitManager;
+    ScanThreads<Table> mScanThreads;
     std::atomic<bool> mShutDown;
     mutable tbb::queuing_rw_mutex mTablesMutex;
     tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
@@ -83,10 +85,12 @@ public:
         , mGC(gc)
         , mPageManager(pageManager)
         , mCommitManager(commitManager)
+        , mScanThreads(config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
         , mGCThread(std::bind(&TableManager::gcThread, this))
     {
+        mScanThreads.run();
     }
 
     ~TableManager() {
