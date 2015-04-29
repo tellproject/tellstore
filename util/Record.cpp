@@ -7,14 +7,14 @@ namespace store {
 
 
 Field::Field(Field&& other)
-    : mType(other.mType)
+    : FieldBase(other.mType)
     , mName(std::move(other.mName))
     , mNotNull(other.mNotNull)
     , mData(other.mData)
 {}
 
 Field::Field(const Field& other)
-    : mType(other.mType)
+    : FieldBase(other.mType)
     , mName(other.mName)
     , mNotNull(other.mNotNull)
     , mData(other.mData)
@@ -38,33 +38,6 @@ Field& Field::operator=(const Field& other)
     return *this;
 }
 
-
-size_t Field::staticSize() const {
-    switch (mType) {
-        case FieldType::NULLTYPE:
-            return 0;
-        case FieldType::SMALLINT:
-            return sizeof(int16_t);
-        case FieldType::INT:
-            return sizeof(int32_t);
-        case FieldType::BIGINT:
-            return sizeof(int64_t);
-        case FieldType::FLOAT:
-            return sizeof(float);
-        case FieldType::DOUBLE:
-            return sizeof(double);
-        case FieldType::TEXT:
-            LOG_DEBUG("Tried to get static size of TEXT Field, which does not have a static size");
-            return std::numeric_limits<size_t>::max();
-        case FieldType::BLOB:
-            LOG_DEBUG("Tried to get static size of BLOB Field, which does not have a static size");
-            return std::numeric_limits<size_t>::max();
-        case FieldType::NOTYPE:
-            assert(false);
-            LOG_ERROR("One should never use a field of type NOTYPE");
-            return std::numeric_limits<size_t>::max();
-    }
-}
 
 size_t Field::defaultSize() const {
     if (isFixedSized()) return staticSize();
@@ -272,11 +245,10 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const
     size = size_t(recSize);
     std::unique_ptr<char[]> result(new char[recSize]);
     char* res = result.get();
-    auto headerSize = 4 + (mFieldMetaData.size() + 7)/8;
+    auto headerSize = (mFieldMetaData.size() + 7)/8;
     headerSize += (headerSize % sizeof(char*)) ? (sizeof(char*) - (headerSize % 8)) : 0;
     char* current = res + headerSize;
     memset(res, 0, recSize);
-    memcpy(res, &recSize, sizeof(recSize));
     for (id_t id = 0; id < mFieldMetaData.size(); ++id) {
         auto& f = mFieldMetaData[id];
         const auto& name = f.first.name();
@@ -416,7 +388,6 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
         assert(false);
         return nullptr;
     }
-    uint32_t recSize = *reinterpret_cast<const uint32_t* const>(ptr);
     using uchar = unsigned char;
     isNull = false;
     if (!mSchema.allNotNull()) {
@@ -429,7 +400,7 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     if (type != nullptr) {
         *type = p.first.type();
     }
-    if (p.second > recSize) {
+    if (p.second < 0) {
         // we need to calc the position
         auto baseId = mSchema.fixedSizeFields().size();
         off_t pos = mFieldMetaData[baseId].second;

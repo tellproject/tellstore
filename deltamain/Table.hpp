@@ -28,6 +28,15 @@ class Table {
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<PageList*> mPages;
 public:
+    class Iterator {
+        friend class Table;
+    public:
+        Iterator& operator++();
+        const IteratorEntry& operator*() const;
+        const IteratorEntry* operator->() const;
+        bool operator==(const Iterator&) const;
+        bool operator!=(const Iterator&) const;
+    };
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
              size_t& size,
@@ -54,6 +63,7 @@ public:
                 const SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
+    std::vector<std::pair<Iterator, Iterator>> startScan(int numThreads) const;
 private:
     template<class Fun>
     bool genericUpdate(const Fun& appendFun,

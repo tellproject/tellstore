@@ -28,29 +28,25 @@ enum class FieldType
 
 class Record;
 
-class Field {
-    friend class Record;
-private:
+enum class PredicateType : uint8_t {
+    EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
+    LIKE,
+    IS_NULL,
+    IS_NOT_NULL
+};
+
+
+class FieldBase {
+protected:
     FieldType mType;
-    crossbow::string mName;
-    bool mNotNull = false;
-    char* mData = nullptr;
 public:
-    Field()
-        : mType(FieldType::NOTYPE) {
-    }
-
-    Field(FieldType type, const crossbow::string& name, bool notNull)
-        : mType(type), mName(name), mNotNull(notNull) {
-    }
-
-    Field(Field&& f);
-    Field(const Field& f);
-
-    Field& operator=(Field&& other);
-    Field& operator=(const Field& other);
+    FieldBase(FieldType type) : mType(type) {}
 public:
-
     bool isFixedSized() const {
         switch (mType) {
             case FieldType::NULLTYPE:
@@ -71,6 +67,71 @@ public:
         }
     }
 
+    off_t offsetInQuery() const {
+        if (isFixedSized()) {
+            auto sz = staticSize();
+            if (sz <= 2) return 0;
+            if (sz <= 4) return 2;
+            else return 6;
+        }
+        return 6;
+    }
+
+    size_t staticSize() const
+    {
+        switch (mType) {
+        case FieldType::NULLTYPE:
+            return 0;
+        case FieldType::SMALLINT:
+            return sizeof(int16_t);
+        case FieldType::INT:
+            return sizeof(int32_t);
+        case FieldType::BIGINT:
+            return sizeof(int64_t);
+        case FieldType::FLOAT:
+            return sizeof(float);
+        case FieldType::DOUBLE:
+            return sizeof(double);
+        case FieldType::TEXT:
+            LOG_DEBUG("Tried to get static size of TEXT Field, which does not have a static size");
+            return std::numeric_limits<size_t>::max();
+        case FieldType::BLOB:
+            LOG_DEBUG("Tried to get static size of BLOB Field, which does not have a static size");
+            return std::numeric_limits<size_t>::max();
+        case FieldType::NOTYPE:
+            assert(false);
+            LOG_ERROR("One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        }
+    }
+
+    size_t sizeOf(const char* data);
+
+    bool cmp(PredicateType type, const char* left, const char* right) const;
+};
+
+class Field : public FieldBase {
+    friend class Record;
+private:
+    crossbow::string mName;
+    bool mNotNull = false;
+    char* mData = nullptr;
+public:
+    Field()
+        : FieldBase(FieldType::NOTYPE) {
+    }
+
+    Field(FieldType type, const crossbow::string& name, bool notNull)
+        : FieldBase(type), mName(name), mNotNull(notNull) {
+    }
+
+    Field(Field&& f);
+    Field(const Field& f);
+
+    Field& operator=(Field&& other);
+    Field& operator=(const Field& other);
+public:
+
     const crossbow::string& name() const {
         return mName;
     }
@@ -79,7 +140,6 @@ public:
         return mType;
     }
 
-    size_t staticSize() const;
     size_t defaultSize() const;
     size_t sizeOf(const boost::any& value) const;
 
@@ -140,7 +200,6 @@ public:
     }
 };
 
-// TODO: The classes below do not need to save the size of the record
 
 /**
 * This class implements the physical representation of a tuple.
@@ -149,7 +208,6 @@ public:
 * table itself (it depends on the approach).
 *
 * The format look as follows (in the following order):
-*  - 4 bytes: size of the tuple (including the header, padding, etc)
 *  - NULL bitmap (size of bitmap is (|Columns|+7)/8 bytes)
 *    This is omitted, if all columns are declared as NOT NULL
 *  - A padding to the next multiple of pointer size
@@ -160,11 +218,11 @@ public:
 */
 class Record {
 public:
-    using id_t = size_t;
+    using id_t = uint16_t;
 private:
     const Schema& mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
-    std::vector<std::pair<Field, off_t>> mFieldMetaData;
+    std::vector<std::pair<Field, int32_t>> mFieldMetaData;
     size_t sizeOfTuple(const GenericTuple& tuple) const;
 public:
     Record(const Schema& schema);
@@ -179,6 +237,9 @@ public:
     */
     char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
 
+    const std::pair<Field, int32_t>& getFieldMeta(id_t id) const {
+        return mFieldMetaData.at(id);
+    }
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
 
