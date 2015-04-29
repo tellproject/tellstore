@@ -249,6 +249,14 @@ public:
         return (mOffset.load() >> 1);
     }
 
+    /**
+     * @brief Atomically retrieves the offset and whether the page is sealed
+     */
+    std::pair<uint32_t, bool> offsetAndSealed() const {
+        auto offset = mOffset.load();
+        return std::make_pair(offset >> 1, (offset & 0x1u) == 0);
+    }
+
     EntryIterator begin() {
         return EntryIterator(this, 0x0u);
     }
@@ -304,6 +312,96 @@ private:
  * Provides the basic page handling mechanism.
  */
 class BaseLogImpl {
+public:
+    /**
+     * @brief Iterator base class for iterating over all entries in the log
+     *
+     * Provides common functionality shared between all Log iterator implementations.
+     */
+    template<class EntryType>
+    class BaseLogIterator {
+    public:
+        static constexpr bool is_const_iterator = std::is_const<typename std::remove_pointer<EntryType>::type>::value;
+        using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
+        using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
+
+        BaseLogIterator(EntryType page, uint32_t pos)
+                : mPage(page),
+                  mCachedOffset(mPage->offsetAndSealed()),
+                  mPos(pos) {
+        }
+
+        EntryType page() const {
+            return mPage;
+        }
+
+        uint32_t offset() const {
+            return mPos;
+        }
+
+        reference operator*() const {
+            return *operator->();
+        }
+
+        pointer operator->() const {
+            return reinterpret_cast<pointer>(mPage->data() + mPos);
+        }
+
+    protected:
+        /**
+         * @brief Advance to the next entry on the current page
+         *
+         * @return True if the pointer was successfully advanced, false if we already reached the end
+         */
+        bool advanceEntry() {
+            LOG_ASSERT(mPos <= mCachedOffset.first, "Current position is larger than the page offset");
+
+            // Check if we already point past the last element
+            if (mPos == mCachedOffset.first) {
+                return false;
+            }
+
+            auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
+            mPos += entry->entrySize();
+            return true;
+        }
+
+        /**
+         * @brief Advance to the next page
+         *
+         * @return True if the page was successfully advanced, false if the next page does not exist
+         */
+        bool advancePage() {
+            // Only advance to the next page if it is valid
+            auto next = mPage->next().load();
+            if (!next) {
+                return false;
+            }
+
+            mPage = next;
+            mCachedOffset = next->offsetAndSealed();
+            mPos = 0;
+            return true;
+        }
+
+        /**
+         * @brief Helper function checking the BaseLogIterator for equality
+         */
+        bool compare(const BaseLogIterator<EntryType>& rhs) const {
+            return ((mPage == rhs.mPage) && (mPos == rhs.mPos));
+        }
+
+        /// Current page this iterator operates on
+        EntryType mPage;
+
+        /// Cached offset and sealed state of the page - by caching this value we don't have to read the offset from the
+        /// page - with a potential cache miss - everytime we increment the iterator.
+        std::pair<uint32_t, bool> mCachedOffset;
+
+        /// Current offset the iterator is pointing to
+        uint32_t mPos;
+    };
+
 protected:
     BaseLogImpl(PageManager& pageManager)
             : mPageManager(pageManager) {
@@ -352,8 +450,61 @@ private:
  */
 class UnorderedLogImpl : public BaseLogImpl {
 public:
+    /**
+     * @brief Iterator for iterating over all entries in the log
+     *
+     * Iterates over each page's elements from oldest to newest element written from the head (newest page) to the tail
+     * (oldest page). The iterator is either pointing to a valid element or the invalid position at the tail of the log.
+     */
+    template<class EntryType>
+    class UnorderedLogIteratorImpl : public BaseLogImpl::BaseLogIterator<EntryType> {
+    public:
+        using Base = BaseLogImpl::BaseLogIterator<EntryType>;
+
+        UnorderedLogIteratorImpl(EntryType page, uint32_t pos)
+                : Base(page, pos) {
+            // Skip empty pages
+            while (Base::mCachedOffset.first == 0 && Base::advancePage()) {}
+        }
+
+        UnorderedLogIteratorImpl(EntryType page)
+                : UnorderedLogIteratorImpl(page, 0) {
+        }
+
+        UnorderedLogIteratorImpl<EntryType>& operator++() {
+            Base::advanceEntry();
+
+            // Advance to the next page if the iterator points to a invalid positon (i.e. pos == offset) while skipping
+            // any empty pages (pos == offset == 0)
+            while (Base::mPos == Base::mCachedOffset.first && Base::advancePage()) {}
+
+            return *this;
+        }
+
+        UnorderedLogIteratorImpl<EntryType> operator++(int) {
+            UnorderedLogIteratorImpl<EntryType> result(*this);
+            operator++();
+            return result;
+        }
+
+        bool operator==(UnorderedLogIteratorImpl<EntryType>& rhs) const {
+            return Base::compare(rhs);
+        }
+
+        bool operator!=(UnorderedLogIteratorImpl<EntryType>& rhs) const {
+            return !operator==(rhs);
+        }
+    };
+
+    using LogIterator = UnorderedLogIteratorImpl<LogPage*>;
+    using ConstLogIterator = UnorderedLogIteratorImpl<const LogPage*>;
+
     LogPage* head() {
         return mHead.load().writeHead;
+    }
+
+    LogPage* tail() {
+        return mTail.load();
     }
 
     /**
@@ -370,22 +521,68 @@ public:
         appendPage(page, page);
     }
 
+    /**
+     * @brief Deletes all pages between the begin page and the end page (excluding both begin and end)
+     *
+     * After calling this function all active iterators will become invalid.
+     *
+     * This function is not 100 percent thread safe, multiple threads deleting overlapping regions will result in a
+     * corrupted log.
+     *
+     * @param begin The page preceeding the first deleted page
+     * @param end The page succeeding the last deleted page
+     */
+    void erase(LogPage* begin, LogPage* end);
+
 protected:
     UnorderedLogImpl(PageManager& pageManager);
 
     LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
-     * @brief Log iteration starts from the head
+     * @brief Page iteration starts from the head
      */
-    LogPage* startPage() {
+    LogPage* pageBegin() {
+        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->pageBegin());
+    }
+
+    const LogPage* pageBegin() const {
         auto head = mHead.load();
         return (head.appendHead ? head.appendHead : head.writeHead);
     }
 
-    const LogPage* startPage() const {
+    /**
+     * @brief Page iteration stops at the nullptr page
+     */
+    LogPage* pageEnd() {
+        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->pageEnd());
+    }
+
+    const LogPage* pageEnd() const {
+        return nullptr;
+    }
+
+    /**
+     * @brief Log iteration starts from the head
+     */
+    LogPage* entryBegin() {
+        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->entryBegin());
+    }
+
+    const LogPage* entryBegin() const {
         auto head = mHead.load();
         return (head.appendHead ? head.appendHead : head.writeHead);
+    }
+
+    /**
+     * @brief Entry iteration stops at the tail page
+     */
+    LogPage* entryEnd() {
+        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->entryEnd());
+    }
+
+    const LogPage* entryEnd() const {
+        return mTail.load();
     }
 
 private:
@@ -416,6 +613,8 @@ private:
     LogHead createPage(LogHead oldHead);
 
     std::atomic<LogHead> mHead;
+
+    std::atomic<LogPage*> mTail;
 };
 
 /**
@@ -429,6 +628,98 @@ private:
  */
 class OrderedLogImpl : public BaseLogImpl {
 public:
+    /**
+     * @brief Iterator for iterating over all entries in the log
+     *
+     * Iterates through the log elements from oldest written to newest written. The iterator is either pointing to a
+     * valid element or the invalid position at the head of the log. The invalid position can change as new entries are
+     * appended at the head of the log. As a consequence an invalid iterator might become valid again when incrementing
+     * or comparing the iterator.
+     */
+    template<class EntryType>
+    class OrderedLogIteratorImpl : public BaseLogImpl::BaseLogIterator<EntryType> {
+    public:
+        using Base = BaseLogImpl::BaseLogIterator<EntryType>;
+
+        OrderedLogIteratorImpl(EntryType page, uint32_t pos)
+                : Base(page, pos) {
+        }
+
+        OrderedLogIteratorImpl(EntryType page)
+                : OrderedLogIteratorImpl(page, 0) {
+        }
+
+        OrderedLogIteratorImpl<EntryType>& operator++() {
+            // We might have to update the cached offset
+            // This avoids a race condition when the end iterator is acquired after the begin iterator and they both
+            // point to the same (head) page, the end iterator could store a larger offset as the begin iterator and as
+            // such the begin iterator would skip the page before reaching the end pointer
+            maybeUpdateCachedOffset();
+
+            // Advance the actual iterator
+            Base::advanceEntry();
+
+            // Advance to the next page if the iterator points to a invalid positon (i.e. pos == offset)
+            maybeAdvancePage();
+
+            return *this;
+        }
+
+        OrderedLogIteratorImpl<EntryType> operator++(int) {
+            OrderedLogIteratorImpl<EntryType> result(*this);
+            operator++();
+            return result;
+        }
+
+        bool operator==(OrderedLogIteratorImpl<EntryType>& rhs) {
+            if (Base::compare(rhs)) {
+                return true;
+            }
+
+            // The iterators could point to old invalid positions (i.e. to the offset of an old head page)
+            // We might have to update the cached offsets and advance to the next page if the iterators point to a
+            // invalid positon (i.e. pos == offset)
+            maybeUpdateCachedOffset();
+            maybeAdvancePage();
+
+            rhs.maybeUpdateCachedOffset();
+            rhs.maybeAdvancePage();
+
+            // Note: One might think there is a race condition between lhs.maybeAdvanceToNextPage() and
+            // rhs.maybeAdvanceToNextPage() - i.e. rhs advanced to the next page while lhs did not because when
+            // advancing lhs its next pointer was still null. This can not happen as both of them would previously point
+            // to the same invalid position on the same (head) page and as such the first comparison already evaluated
+            // to true (the only invalid position is at the unique end of the log)
+
+            return Base::compare(rhs);
+        }
+
+        bool operator!=(OrderedLogIteratorImpl<EntryType>& rhs) {
+            return !operator==(rhs);
+        }
+
+    private:
+        void maybeUpdateCachedOffset() {
+            // Only update the cached offset if it is not yet sealed and we reached the end of the page
+            if (!Base::mCachedOffset.second && Base::mPos == Base::mCachedOffset.first) {
+                Base::mCachedOffset = Base::mPage->offsetAndSealed();
+            }
+        }
+
+        void maybeAdvancePage() {
+            // We only advance to the next page if the page is sealed and we reached the end of the page
+            if (!Base::mCachedOffset.second || Base::mPos != Base::mCachedOffset.first) {
+                return;
+            }
+
+            // There could be a race condition where the page was already sealed but the next page is not yet set
+            Base::advancePage();
+        }
+    };
+
+    using LogIterator = OrderedLogIteratorImpl<LogPage*>;
+    using ConstLogIterator = OrderedLogIteratorImpl<const LogPage*>;
+
     LogPage* head() {
         return mHead.load();
     }
@@ -455,14 +746,47 @@ protected:
     LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
 
     /**
-     * @brief Log iteration starts from the tail
+     * @brief Page iteration starts from the tail
      */
-    LogPage* startPage() {
+    LogPage* pageBegin() {
+        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->pageBegin());
+    }
+
+    const LogPage* pageBegin() const {
         return mTail.load();
     }
 
-    const LogPage* startPage() const {
+    /**
+     * @brief Page iteration ends with a nullptr
+     */
+    LogPage* pageEnd() {
+        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->pageEnd());
+    }
+
+    const LogPage* pageEnd() const {
+        return nullptr;
+    }
+
+    /**
+     * @brief Entry iteration starts from the tail
+     */
+    LogPage* entryBegin() {
+        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->entryBegin());
+    }
+
+    const LogPage* entryBegin() const {
         return mTail.load();
+    }
+
+    /**
+     * @brief Entry iteration ends at the current head
+     */
+    LogPage* entryEnd() {
+        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->entryEnd());
+    }
+
+    const LogPage* entryEnd() const {
+        return mHead.load();
     }
 
 private:
@@ -525,78 +849,8 @@ public:
         LogPage* mPage;
     };
 
-    /**
-     * @brief Iterator for iterating over all entries in the log
-     *
-     * The order in which elements are iterated is dependent on the chosen Log implementation.
-     */
-    template<class EntryType>
-    class LogIteratorImpl {
-    public:
-        static constexpr bool is_const_iterator = std::is_const<typename std::remove_pointer<EntryType>::type>::value;
-        using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
-        using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
-
-        LogIteratorImpl(EntryType page)
-                : mPage(page),
-                  mPageOffset(mPage ? mPage->offset() : 0),
-                  mPos(0) {
-        }
-
-        EntryType page() const {
-            return mPage;
-        }
-
-        uint32_t offset() const {
-            return mPos;
-        }
-
-        LogIteratorImpl<EntryType>& operator++() {
-            auto entry = reinterpret_cast<pointer>(mPage->data() + mPos);
-            mPos += entry->entrySize();
-            if (mPos == mPageOffset) {
-                mPage = mPage->next().load();
-                mPageOffset = (mPage ? mPage->offset() : 0);
-                mPos = 0;
-            }
-            return *this;
-        }
-
-        LogIteratorImpl<EntryType> operator++(int) {
-            LogIteratorImpl<EntryType> result(*this);
-            operator++();
-            return result;
-        }
-
-        bool operator==(const LogIteratorImpl<EntryType>& rhs) const {
-            return ((mPage == rhs.mPage) && (mPos == rhs.mPos));
-        }
-
-        bool operator!=(const LogIteratorImpl<EntryType>& rhs) const {
-            return !operator==(rhs);
-        }
-
-        reference operator*() const {
-            return *operator->();
-        }
-
-        pointer operator->() const {
-            return reinterpret_cast<pointer>(mPage->data() + mPos);
-        }
-
-    private:
-        /// Current page this iterator operates on
-        EntryType mPage;
-
-        /// Maximum offset of the current page
-        uint32_t mPageOffset;
-
-        /// Current offset the iterator is pointing to
-        uint32_t mPos;
-    };
-
-    using LogIterator = LogIteratorImpl<LogPage*>;
-    using ConstLogIterator = LogIteratorImpl<const LogPage*>;
+    using LogIterator = typename Impl::LogIterator;
+    using ConstLogIterator = typename Impl::ConstLogIterator;
 
     Log(PageManager& pageManager)
             : Impl(pageManager) {
@@ -612,49 +866,38 @@ public:
      */
     LogEntry* append(uint32_t size);
 
-    /**
-     * @brief Deletes all pages between the begin page and the end page (excluding both begin and end)
-     *
-     * After calling this function all active iterators will become invalid.
-     *
-     * This function is not 100 percent thread safe, multiple threads deleting overlapping regions will result in a
-     * corrupted log.
-     *
-     * @param begin The page preceeding the first deleted page
-     * @param end The page succeeding the last deleted page
-     */
-    void erase(LogPage* begin, LogPage* end);
-
     PageIterator pageBegin() {
-        return PageIterator(Impl::startPage());
+        return PageIterator(Impl::pageBegin());
     }
 
     PageIterator pageEnd() {
-        return PageIterator(nullptr);
+        return PageIterator(Impl::pageEnd());
     }
 
     LogIterator begin() {
-        return LogIterator(Impl::startPage());
+        return LogIterator(Impl::entryBegin());
     }
 
     ConstLogIterator begin() const {
-        return ConstLogIterator(Impl::startPage());
+        return cbegin();
     }
 
     ConstLogIterator cbegin() const {
-        return begin();
+        return ConstLogIterator(Impl::entryBegin());
     }
 
     LogIterator end() {
-        return LogIterator(nullptr);
+        auto page = Impl::entryEnd();
+        return LogIterator(page, page->offset());
     }
 
     ConstLogIterator end() const {
-        return ConstLogIterator(nullptr);
+        return cend();
     }
 
     ConstLogIterator cend() const {
-        return end();
+        auto page = Impl::entryEnd();
+        return ConstLogIterator(page, page->offset());
     }
 };
 
