@@ -114,6 +114,11 @@ void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
         auto next = (oldHead.appendHead ? oldHead.appendHead : oldHead.writeHead);
         end->next().store(next);
 
+        // Seal the old append head
+        if (oldHead.appendHead) {
+            oldHead.appendHead->seal();
+        }
+
         // Try to update the head
         LogHead nHead(oldHead.writeHead, begin);
         if (mHead.compare_exchange_strong(oldHead, nHead)) {
@@ -138,6 +143,10 @@ LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
 
 UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
     auto writeHead = oldHead.writeHead;
+
+    // Seal the old write head so no one can append
+    writeHead->seal();
+
     while (true) {
         bool freeHead = false;
         LogHead nHead(oldHead.appendHead, nullptr);
@@ -220,6 +229,9 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
         }
         return next;
     }
+
+    // Seal the old head so no one can append
+    oldHead->seal();
 
     // Not enough space left in page - acquire new page
     auto nPage = acquirePage();

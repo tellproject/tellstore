@@ -272,7 +272,6 @@ public:
      * Sets the LSB of offset to 0.
      */
     void seal() {
-        LOG_ASSERT(!sealed(), "Page is already sealed");
         mOffset.fetch_and(0xFFFFFFFFu << 1);
     }
 
@@ -359,6 +358,8 @@ public:
 
     /**
      * @brief Appends the given pages to the log
+     *
+     * All pages except the begin page must be sealed.
      *
      * @param begin The first page to append
      * @param end The last page to append
