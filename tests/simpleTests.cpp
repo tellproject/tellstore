@@ -27,7 +27,7 @@ TEST(simple, insert_and_get)
     crossbow::string tableName = "testTable";
     {
         tell::store::allocator _; // needed to free memory
-        auto res = storage.creteTable(tableName, schema, tId);
+        auto res = storage.createTable(tableName, schema, tId);
         ASSERT_TRUE(res) << "creating table failed";
         EXPECT_TRUE(correctTableId(tableName, tId, storage));
         // Force GC - since we did not do anything yet, this should
