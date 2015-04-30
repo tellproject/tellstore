@@ -1,6 +1,6 @@
 .idea
 *.swp
 *.pyc
-.ycm_extra_conf.py
+compile_commands.json
 .clang_complete
 
