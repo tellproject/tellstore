@@ -194,8 +194,11 @@ void Table::runGC(uint64_t minVersion) {
     auto hashTable = mHashTable.load()->modifier(_);
     // we need to process the insert-log first. There might be delted
     // records which have an insert
-    auto insIter = mInsertLog.begin();
+    auto insBegin = mInsertLog.begin();
+    auto insIter = insBegin;
     auto end = mInsertLog.end();
+    auto updateBegin = mUpdateLog.end();
+    auto updateEnd = mUpdateLog.end();
     InsertMap insertMap;
     for (; insIter != end && insIter->sealed(); ++insIter) {
         CDMRecord rec(insIter->data());
@@ -234,12 +237,13 @@ void Table::runGC(uint64_t minVersion) {
     }
     // The garbage collection is finished - we can now reset the read only table
     mPages.store(nPagesPtr);
-    mInsertLog.truncateLog(insIter.page(), end.page());
     {
         auto ht = mHashTable.load();
         mHashTable.store(hashTable.done());
         allocator::free(ht, [ht](){ ht->~CuckooTable(); });
     }
+    while (!mInsertLog.truncateLog(insIter.page(), end.page()));
+    while (!mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page())); 
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
