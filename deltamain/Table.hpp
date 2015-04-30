@@ -89,9 +89,9 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return Transaction(*this, commitManager.startTx());
     }
 
-    bool creteTable(const crossbow::string &name,
-                    const Schema& schema,
-                    uint64_t& idx)
+    bool createTable(const crossbow::string &name,
+                     const Schema& schema,
+                     uint64_t& idx)
     {
         return tableManager.createTable(name, schema, idx);
     }
