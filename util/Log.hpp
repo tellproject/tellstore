@@ -325,6 +325,11 @@ public:
         using reference = typename std::conditional<is_const_iterator, const LogEntry&, LogEntry&>::type;
         using pointer = typename std::conditional<is_const_iterator, const LogEntry*, LogEntry*>::type;
 
+        BaseLogIterator()
+                : mPage(nullptr),
+                  mPos(0) {
+        }
+
         BaseLogIterator(EntryType page, uint32_t pos)
                 : mPage(page),
                   mCachedOffset(mPage->offsetAndSealed()),
@@ -469,6 +474,10 @@ public:
 
         UnorderedLogIteratorImpl(EntryType page)
                 : UnorderedLogIteratorImpl(page, 0) {
+        }
+
+        UnorderedLogIteratorImpl()
+                : Base() {
         }
 
         UnorderedLogIteratorImpl<EntryType>& operator++() {
@@ -647,6 +656,10 @@ public:
 
         OrderedLogIteratorImpl(EntryType page)
                 : OrderedLogIteratorImpl(page, 0) {
+        }
+
+        OrderedLogIteratorImpl()
+                : Base() {
         }
 
         OrderedLogIteratorImpl<EntryType>& operator++() {
