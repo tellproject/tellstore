@@ -9,6 +9,7 @@
 #include <util/Log.hpp>
 #include <util/Record.hpp>
 
+#include <memory>
 #include <vector>
 #include <limits>
 #include <atomic>
@@ -30,6 +31,10 @@ class Table {
 public:
     class Iterator {
         friend class Table;
+        const PageList* pages;
+        std::shared_ptr<allocator::allocator> mAllocator;
+        size_t pageIdx;
+        Log<OrderedLogImpl>::ConstLogIterator logIter;
     public:
         Iterator& operator++();
         const IteratorEntry& operator*() const;

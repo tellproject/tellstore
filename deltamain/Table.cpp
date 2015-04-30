@@ -3,6 +3,8 @@
 #include "Page.hpp"
 #include "InsertMap.hpp"
 
+#include <memory>
+
 namespace tell {
 namespace store {
 namespace deltamain {
@@ -187,6 +189,37 @@ bool Table::genericUpdate(const Fun& appendFun,
     DMRecord rec(reinterpret_cast<char*>(ptr));
     bool isValid;
     return rec.update(nextPtr, isValid, snapshot);
+}
+
+auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, Iterator>>
+{
+    auto alloc = std::make_shared<allocator::allocator>();
+    auto insIter = mInsertLog.begin();
+    auto endIns = mInsertLog.end();
+    auto& hashTable = *mHashTable.load();
+    const auto* pages = mPages.load();
+    auto numPages = pages->size();
+    std::vector<std::pair<Iterator, Iterator>> result(numThreads);
+    size_t beginIdx = 0;
+    auto mod = numPages % numThreads;
+    for (decltype(numPages) i = 0; i < numPages; ++i) {
+        auto& item = result[i];
+        item.first.mAllocator = alloc;
+        item.first.pages = pages;
+        item.first.pageIdx = beginIdx;
+        item.first.logIter = insIter;
+        item.second.mAllocator = alloc;
+        item.second.pages = pages;
+        beginIdx += numPages / numThreads + (i < mod ? 1 : 0);
+        item.second.pageIdx = beginIdx;
+        if (i == numPages - 1) {
+            // add log iterators here
+            item.second.logIter = endIns;
+        } else {
+            item.second.logIter = insIter;
+        }
+    }
+    return std::vector<std::pair<Iterator, Iterator>>();
 }
 
 void Table::runGC(uint64_t minVersion) {
