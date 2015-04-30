@@ -23,7 +23,7 @@ class Table {
     PageManager& mPageManager;
     Schema mSchema;
     Record mRecord;
-    CuckooTable mHashTable;
+    std::atomic<CuckooTable*> mHashTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<PageList*> mPages;

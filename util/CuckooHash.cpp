@@ -75,6 +75,22 @@ CuckooTable* Modifier::done() const {
                                                               hash3, mSize);
 }
 
+void* Modifier::get(uint64_t key) const
+{
+    unsigned cnt = 0;
+    for (auto& h : {hash1, hash2, hash3}) {
+        size_t pageIdx;
+        auto idx = h(key);
+        auto& entry = at(cnt, idx, pageIdx);
+        if (entry.first == key) {
+            return entry.second;
+            break;
+        }
+        ++cnt;
+    }
+    return nullptr;
+}
+
 bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
     // we first check, whether the value exists
     bool res = false;
@@ -168,6 +184,11 @@ Modifier::EntryT& Modifier::at(unsigned h, size_t idx, size_t& pageIdx) {
     pageIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - pageIdx * ENTRIES_PER_PAGE;
     return (*mPages[3*pageIdx + h])[pIdx];
+}
+
+auto Modifier::at(unsigned h, size_t idx, size_t& pageIdx) const -> const EntryT&
+{
+    return const_cast<Modifier*>(this)->at(h, idx, pageIdx);
 }
 
 bool Modifier::cow(unsigned h, size_t idx) {

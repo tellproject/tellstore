@@ -11,7 +11,7 @@ Table::Table(PageManager& pageManager, const Schema& schema)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)
-    , mHashTable(pageManager)
+    , mHashTable(new (allocator::malloc(sizeof(CuckooTable))) CuckooTable(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
     , mPages(new (allocator::malloc(sizeof(std::vector<char*>))) std::vector<char*>())
@@ -22,7 +22,7 @@ bool Table::get(uint64_t key,
                 const char*& data,
                 const SnapshotDescriptor& snapshot,
                 bool& isNewest) const {
-    auto ptr = mHashTable.get(key);
+    auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
@@ -64,7 +64,7 @@ void Table::insert(uint64_t key,
     // at this point in time
     auto iter = mInsertLog.begin();
     auto iterEnd = mInsertLog.end();
-    auto ptr = mHashTable.get(key);
+    auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         // the key exists... but it could be, that it got deleted
         CDMRecord rec(reinterpret_cast<const char*>(ptr));
@@ -166,7 +166,7 @@ bool Table::genericUpdate(const Fun& appendFun,
 {
     auto iter = mInsertLog.begin();
     auto iterEnd = mInsertLog.end();
-    auto ptr = mHashTable.get(key);
+    auto ptr = mHashTable.load()->get(key);
     if (!ptr) {
         while (iter != iterEnd) {
             CDMRecord rec(iter->data());
@@ -191,10 +191,14 @@ bool Table::genericUpdate(const Fun& appendFun,
 
 void Table::runGC(uint64_t minVersion) {
     allocator _;
+    auto hashTable = mHashTable.load()->modifier(_);
     // we need to process the insert-log first. There might be delted
     // records which have an insert
-    auto insIter = mInsertLog.begin();
+    auto insBegin = mInsertLog.begin();
+    auto insIter = insBegin;
     auto end = mInsertLog.end();
+    auto updateBegin = mUpdateLog.end();
+    auto updateEnd = mUpdateLog.end();
     InsertMap insertMap;
     for (; insIter != end && insIter->sealed(); ++insIter) {
         CDMRecord rec(insIter->data());
@@ -211,13 +215,13 @@ void Table::runGC(uint64_t minVersion) {
     for (size_t i = 0; i < nPages.size(); ++i) {
         Page page(mPageManager, nPages[i]);
         bool done;
-        nPages[i] = page.gc(minVersion, insertMap, fillPage, done);
+        nPages[i] = page.gc(minVersion, insertMap, fillPage, done, hashTable);
         while (!done) {
             if (nPages[i]) {
                 newPages.push_back(nPages[i]);
             }
             fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-            nPages[i] = page.gc(minVersion, insertMap, fillPage, done);
+            nPages[i] = page.gc(minVersion, insertMap, fillPage, done, hashTable);
         }
         if (nPages[i] == nullptr) {
             // This means that this page got merged with the older page.
@@ -228,11 +232,18 @@ void Table::runGC(uint64_t minVersion) {
     // now we can process the inserts
     while (!insertMap.empty()) {
         fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-        Page::fillWithInserts(minVersion, insertMap, fillPage);
+        Page::fillWithInserts(minVersion, insertMap, fillPage, hashTable);
         nPages.push_back(fillPage);
     }
     // The garbage collection is finished - we can now reset the read only table
     mPages.store(nPagesPtr);
+    {
+        auto ht = mHashTable.load();
+        mHashTable.store(hashTable.done());
+        allocator::free(ht, [ht](){ ht->~CuckooTable(); });
+    }
+    while (!mInsertLog.truncateLog(insIter.page(), end.page()));
+    while (!mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page())); 
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
