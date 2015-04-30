@@ -101,9 +101,11 @@ void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
 
 UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
         : BaseLogImpl(pageManager),
-          mHead(LogHead(acquirePage(), nullptr)) {
+          mHead(LogHead(acquirePage(), nullptr)),
+          mTail(mHead.load().writeHead) {
     LOG_ASSERT((reinterpret_cast<uintptr_t>(&mHead) % 16) == 0, "Head is not 16 byte aligned");
     LOG_ASSERT(mHead.is_lock_free(), "LogHead is not lock free");
+    LOG_ASSERT(mHead.load().writeHead == mTail.load(), "Head and Tail do not point to the same page");
 }
 
 void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
@@ -114,12 +116,32 @@ void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
         auto next = (oldHead.appendHead ? oldHead.appendHead : oldHead.writeHead);
         end->next().store(next);
 
+        // Seal the old append head
+        if (oldHead.appendHead) {
+            oldHead.appendHead->seal();
+        }
+
         // Try to update the head
         LogHead nHead(oldHead.writeHead, begin);
         if (mHead.compare_exchange_strong(oldHead, nHead)) {
             break;
         }
     }
+}
+
+void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
+    LOG_ASSERT(begin != nullptr, "Begin page must not be null");
+
+    if (begin == end) {
+        return;
+    }
+
+    if (!end) {
+        mTail.store(begin);
+    }
+
+    auto next = begin->next().exchange(end);
+    freePage(next, end);
 }
 
 LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
@@ -138,6 +160,10 @@ LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
 
 UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
     auto writeHead = oldHead.writeHead;
+
+    // Seal the old write head so no one can append
+    writeHead->seal();
+
     while (true) {
         bool freeHead = false;
         LogHead nHead(oldHead.appendHead, nullptr);
@@ -221,6 +247,9 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
         return next;
     }
 
+    // Seal the old head so no one can append
+    oldHead->seal();
+
     // Not enough space left in page - acquire new page
     auto nPage = acquirePage();
     if (!nPage) {
@@ -246,8 +275,9 @@ template <class Impl>
 Log<Impl>::~Log() {
     // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
     // anymore so we can safely delete all pages here
-    auto page = Impl::startPage();
-    while (page) {
+    auto page = Impl::pageBegin();
+    auto end = Impl::pageEnd();
+    while (page != end) {
         auto next = page->next().load();
         Impl::freePageNow(page);
         page = next;
@@ -263,20 +293,6 @@ LogEntry* Log<Impl>::append(uint32_t size) {
     }
 
     return Impl::appendEntry(size, entrySize);
-}
-
-template <class Impl>
-void Log<Impl>::erase(LogPage* begin, LogPage* end) {
-    LOG_ASSERT(begin != nullptr, "Begin page must not be null");
-
-    // TODO nullptr as end is not allowed in OrderedLogImpl because this means that we are deleting the head
-
-    if (begin == end) {
-        return;
-    }
-
-    auto next = begin->next().exchange(end);
-    Impl::freePage(next, end);
 }
 
 template class Log<UnorderedLogImpl>;

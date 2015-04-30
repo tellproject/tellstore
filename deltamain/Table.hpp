@@ -104,9 +104,9 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return Transaction(*this, commitManager.startTx());
     }
 
-    bool creteTable(const crossbow::string &name,
-                    const Schema& schema,
-                    uint64_t& idx)
+    bool createTable(const crossbow::string &name,
+                     const Schema& schema,
+                     uint64_t& idx)
     {
         return tableManager.createTable(name, schema, idx);
     }
@@ -170,20 +170,17 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         tableManager.forceGC();
     }
 
-    template<class T>
-    void commit(T& transaction)
+    void commit(SnapshotDescriptor& snapshot)
     {
-        commitManager.commitTx(transaction.mDescriptor);
-        transaction.mCommitted = true;
+        commitManager.commitTx(snapshot);
     }
 
-    void abort(Transaction& transaction)
+    void abort(SnapshotDescriptor& snapshot)
     {
         // TODO: Roll-back. I am not sure whether this would generally
         // work. Probably not (since we might also need to roll back the
         // index which has to be done in the processing layer).
-        commitManager.abortTx(transaction.mDescriptor);
-        transaction.mCommitted = true;
+        commitManager.abortTx(snapshot);
     }
 
 };

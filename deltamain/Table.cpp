@@ -37,7 +37,8 @@ bool Table::get(uint64_t key,
         }
     }
     // in this case we need to scan through the insert log
-    for (auto iter = mInsertLog.begin(); iter != mInsertLog.end(); ++iter) {
+    auto iterEnd = mInsertLog.end();
+    for (auto iter = mInsertLog.begin(); iter != iterEnd; ++iter) {
         if (!iter->sealed()) continue;
         CDMRecord rec(iter->data());
         if (rec.isValidDataRecord() && rec.key() == key) {

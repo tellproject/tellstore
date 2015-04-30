@@ -101,14 +101,14 @@ TEST_F(LogPageTest, entryIterator) {
     auto end = mPage->end();
 
     EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -126,6 +126,71 @@ protected:
 
     Log<Impl> mLog;
 };
+
+using BaseLogTestImplementations = ::testing::Types<UnorderedLogImpl, OrderedLogImpl>;
+TYPED_TEST_CASE(BaseLogTest, BaseLogTestImplementations);
+
+/**
+ * @class Log
+ * @test Check that begin() == end() when the log is empty
+ */
+TYPED_TEST(BaseLogTest, emptyLogIteration) {
+    auto begin = this->mLog.begin();
+    auto end = this->mLog.end();
+    EXPECT_TRUE(begin == end) << "begin() == end() iterator in empty log";
+}
+
+/**
+ * @class Log
+ * @test Check that the iterator is valid when an append on the same page happened in the meantime
+ *
+ * Allocates 1 entry, retrieves the iterator, increments it, inserts another element and checks if the iterator still
+ * points to the end element (not the second inserted element).
+ */
+TYPED_TEST(BaseLogTest, logIteratorAppendSamePage) {
+    auto entry1 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto i = this->mLog.begin();
+    auto end = this->mLog.end();
+
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+
+    auto entry2 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+}
+
+/**
+ * @class Log
+ * @test Check that the iterator is valid when an append on the same page happened in the meantime
+ *
+ * Allocates 1 entry, retrieves the iterator, increments it, inserts another element (which lands on a new page) and
+ * checks if the iterator still points to the end element (not the second inserted element).
+ */
+TYPED_TEST(BaseLogTest, logIteratorAppendNewPage) {
+    auto entry1 = this->mLog.append(31);
+    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+
+    auto i = this->mLog.begin();
+    auto end = this->mLog.end();
+
+    EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
+
+    ++i;
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+
+    auto entry2 = this->mLog.append(LogPage::MAX_DATA_SIZE);
+    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
+}
 
 using UnorderedLogTest = BaseLogTest<UnorderedLogImpl>;
 
@@ -169,18 +234,18 @@ TEST_F(UnorderedLogTest, appendPage) {
     auto end = mLog.pageEnd();
 
     EXPECT_EQ(page2, &(*i)) << "Iterator not pointing to appended head page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(page1, &(*i)) << "Iterator not pointing to second appended page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to head page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -198,18 +263,18 @@ TEST_F(UnorderedLogTest, appendMultiplePage) {
     auto end = mLog.pageEnd();
 
     EXPECT_EQ(page2, &(*i)) << "Iterator not pointing to second appended head page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(page1, &(*i)) << "Iterator not pointing to first appended head page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to head page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -233,18 +298,18 @@ TEST_F(UnorderedLogTest, appendPageWriteToHead) {
     auto end = mLog.end();
 
     EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to appended entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -268,26 +333,21 @@ TEST_F(UnorderedLogTest, appendPageNewHead) {
     auto end = mLog.end();
 
     EXPECT_EQ(entry3, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(entry2, &(*i)) << "Iterator not pointing to appended entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(entry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 using OrderedLogTest = BaseLogTest<OrderedLogImpl>;
-
-TEST_F(OrderedLogTest, emptyLogIteration) {
-    EXPECT_EQ(mLog.begin(), mLog.end()) << "We must not be able to iterate over an empty log";
-}
-
 
 /**
  * @class Log
@@ -353,18 +413,18 @@ TEST_F(UnorderedLogFilledTest, pageIterator) {
     auto end = mLog.pageEnd();
 
     EXPECT_EQ(mLog.head(), &(*i)) << "Iterator not pointing to first page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mLog.head()->next().load(), &(*i)) << "Iterator not pointing to second page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mLog.head()->next().load()->next().load(), &(*i)) << "Iterator not pointing to third page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -379,22 +439,22 @@ TEST_F(UnorderedLogFilledTest, logIterator) {
     auto end = mLog.end();
 
     EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -412,18 +472,18 @@ TEST_F(UnorderedLogFilledTest, erase) {
     auto end = mLog.end();
 
     EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 using OrderedLogFilledTest = BaseLogFilledTest<OrderedLogImpl>;
@@ -438,18 +498,18 @@ TEST_F(OrderedLogFilledTest, pageIterator) {
     auto end = mLog.pageEnd();
 
     EXPECT_EQ(tail, &(*i)) << "Iterator not pointing to first page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(tail->next().load(), &(*i)) << "Iterator not pointing to second page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(tail->next().load()->next().load(), &(*i)) << "Iterator not pointing to third page";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**
@@ -464,49 +524,22 @@ TEST_F(OrderedLogFilledTest, logIterator) {
     auto end = mLog.end();
 
     EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
     EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
+    EXPECT_TRUE(end != i) << "Iterator pointing to end";
 
     ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
-}
-
-/**
- * @class Log
- * @test Check that erase works correctly
- *
- * Erases the second page between head and tail.
- */
-TEST_F(OrderedLogFilledTest, erase) {
-    mLog.erase(mLog.tail(), mLog.head());
-
-    auto i = mLog.begin();
-    auto end = mLog.end();
-
-    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(mEntry4, &(*i)) << "Iterator not pointing to fourth entry";
-    EXPECT_NE(end, i) << "Iterator pointing to end";
-
-    ++i;
-    EXPECT_EQ(end, i) << "Iterator not pointing to end";
+    EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
 
 /**

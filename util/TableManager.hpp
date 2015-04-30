@@ -16,10 +16,9 @@
 #include <atomic>
 
 #include <tbb/queuing_rw_mutex.h>
-#include <tbb/compat/condition_variable>
 
 namespace tbb {
-size_t tbb_hasher(const crossbow::string& str)
+inline size_t tbb_hasher(const crossbow::string& str)
 {
     std::hash<crossbow::string> h;
     return h(str);

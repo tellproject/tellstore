@@ -44,7 +44,7 @@ public:
     ~TransactionImpl()
     {
         if (mCommitted)
-            mStorage->commit(*this);
+            mStorage->commit(mDescriptor);
         mCommitted = false;
     }
 
