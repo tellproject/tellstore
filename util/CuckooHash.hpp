@@ -114,10 +114,12 @@ public:
     * did exist before in the hash table
     */
     bool insert(uint64_t key, void* value, bool replace = false);
+    void* get(uint64_t key) const;
 
     bool remove(uint64_t key);
 
     EntryT& at(unsigned h, size_t idx, size_t& pageIdx);
+    const EntryT& at(unsigned h, size_t idx, size_t& pageIdx) const;
 
     size_t capacity() const;
     size_t size() const;
