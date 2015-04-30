@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <type_traits>
 #include <crossbow/string.hpp>
 #include <vector>
@@ -36,10 +37,19 @@ enum class PredicateType : uint8_t {
     GREATER,
     GREATER_EQUAL,
     LIKE,
+    NOT_LIKE,
     IS_NULL,
     IS_NOT_NULL
 };
 
+template<class NumberType>
+int cmp(NumberType left, NumberType right) {
+    static_assert(std::is_floating_point<NumberType>::value ||
+            std::is_integral<NumberType>::value, "cmp is only supported for number types");
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+}
 
 class FieldBase {
 protected:
@@ -105,9 +115,124 @@ public:
         }
     }
 
-    size_t sizeOf(const char* data);
+    size_t sizeOf(const char* data) const
+    {
+        if (isFixedSized()) return staticSize();
+        switch (mType) {
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return *reinterpret_cast<const uint32_t*>(data);
+        default:
+            LOG_ERROR("Unknown type");
+            std::terminate();
+        }
+    }
 
-    bool cmp(PredicateType type, const char* left, const char* right) const;
+    /**
+     * We only support prefix and postfix like - for everything else
+     * we expect the client to do the post filtering
+     */
+    bool strLike(uint32_t szLeft, const char* left, uint32_t szRight, const char* right) const
+    {
+        if (right[0] == '%') {
+            // Postfix compare
+            return szLeft < szRight - 1 ? false : memcmp(left + szLeft - szRight, right + 1, szRight - 1) == 0;
+        }
+        if (right[szRight - 1] == '%') {
+            // Prefix compare
+            return szLeft < szRight - 1 ? false : memcmp(left, right, szRight - 1) == 0;
+        } else {
+            // strequal
+            return szLeft == szRight ? memcmp(left, right, szLeft) == 0 : false;
+        }
+        return false;
+    }
+
+    bool cmp(PredicateType type, const char* left, const char* right) const
+    {
+        int cmpRes;
+        uint32_t szLeft, szRight;
+        bool isText = false;
+        bool isPositiveLike = true;
+        switch (mType) {
+        case FieldType::SMALLINT:
+            cmpRes = tell::store::cmp(*reinterpret_cast<const int16_t*>(left),
+                    *reinterpret_cast<const int16_t*>(right));
+            goto NUMBER_COMPARE;
+        case FieldType::INT:
+            cmpRes = tell::store::cmp(*reinterpret_cast<const int32_t*>(left),
+                    *reinterpret_cast<const int32_t*>(right));
+            goto NUMBER_COMPARE;
+        case FieldType::BIGINT:
+            cmpRes = tell::store::cmp(*reinterpret_cast<const int64_t*>(left),
+                    *reinterpret_cast<const int64_t*>(right));
+            goto NUMBER_COMPARE;
+        case FieldType::FLOAT:
+            cmpRes = tell::store::cmp(*reinterpret_cast<const float*>(left),
+                    *reinterpret_cast<const float*>(right));
+            goto NUMBER_COMPARE;
+        case FieldType::DOUBLE:
+            cmpRes = tell::store::cmp(*reinterpret_cast<const double*>(left),
+                    *reinterpret_cast<const double*>(right));
+            goto NUMBER_COMPARE;
+        case FieldType::TEXT:
+            isText = true;
+        case FieldType::BLOB:
+            szLeft = *reinterpret_cast<const uint32_t*>(left);
+            szRight = *reinterpret_cast<const uint32_t*>(right);
+            switch (type) {
+            case PredicateType::EQUAL:
+                return szLeft == szRight && memcmp(left + 4, right + 4, std::min(szLeft, szRight)) == 0;
+            case PredicateType::NOT_EQUAL:
+                return szLeft != szRight || memcmp(left + 4, right + 4, std::min(szLeft, szRight)) != 0;
+            case PredicateType::LESS:
+                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                return cmpRes < 0 || (cmpRes == 0 && szLeft < szRight);
+            case PredicateType::LESS_EQUAL:
+                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                return cmpRes < 0 || (cmpRes == 0 && szLeft <= szRight);
+            case PredicateType::GREATER:
+                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                return cmpRes > 0 || (cmpRes == 0 && szLeft > szRight);
+            case PredicateType::GREATER_EQUAL:
+                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                return cmpRes > 0 || (cmpRes == 0 && szLeft >= szRight);
+            case PredicateType::NOT_LIKE:
+                isPositiveLike = false;
+            case PredicateType::LIKE:
+                if (!isText) {
+                    LOG_ERROR("Can not do LIKE on Blob");
+                    std::terminate();
+                }
+                return strLike(szLeft, left + 4, szRight, right + 4) == isPositiveLike;
+            default:
+                LOG_ERROR("Can not do this kind of comparison on numeric types");
+                std::terminate();
+            }
+        default:
+            LOG_ERROR("Unknown type");
+            std::terminate();
+        }
+        return false;
+NUMBER_COMPARE:
+        switch (type) {
+        case PredicateType::EQUAL:
+            return cmpRes == 0;
+        case PredicateType::NOT_EQUAL:
+            return cmpRes != 0;
+        case PredicateType::LESS:
+            return cmpRes < 0;
+        case PredicateType::LESS_EQUAL:
+            return cmpRes <= 0;
+        case PredicateType::GREATER:
+            return cmpRes > 0;
+        case PredicateType::GREATER_EQUAL:
+            return cmpRes >= 0;
+        default:
+            LOG_ERROR("Can not do this kind of comparison on numeric types");
+            std::terminate();
+        }
+    }
 };
 
 class Field : public FieldBase {
