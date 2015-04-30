@@ -12,6 +12,10 @@
 
 namespace tell {
 namespace store {
+
+class CuckooTable;
+class Modifier;
+
 namespace deltamain {
 
 class Page {
@@ -47,8 +51,8 @@ public:
                 [oldPage, &pageManager]() { pageManager.free(oldPage); });
     }
 
-    char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done);
-    static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage);
+    char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);
+    static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable);
 };
 
 } // namespace deltamain
