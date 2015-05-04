@@ -47,29 +47,37 @@ void ClientConnection::onReceive(const crossbow::infinio::InfinibandBuffer& buff
         return;
     }
 
-    proto::RpcResponse response;
-    proto::RpcRequest request;
-    if (!request.ParseFromArray(buffer.data(), length)) {
+    proto::RpcResponseBatch responseBatch;
+    proto::RpcRequestBatch requestBatch;
+    if (!requestBatch.ParseFromArray(buffer.data(), length)) {
         LOG_ERROR("Error parsing protobuf message");
         // TODO Handle this situation somehow
         return;
     }
-    handleRequest(request, response);
 
-    auto sbuffer = mSocket.acquireBuffer(response.ByteSize());
-    if (sbuffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
-        LOG_ERROR("System ran out of buffers");
-        // TODO Handle this situation somehow
-        return;
+    auto maxSize = mSocket.bufferLength();
+    auto responseField = responseBatch.mutable_response();
+    for (auto& request : requestBatch.request()) {
+        auto response = responseField->Add();
+        handleRequest(request, *response);
+
+        // Response batch became too big we have to split it
+        if (responseBatch.ByteSize() > maxSize) {
+            auto lastResponse = responseField->ReleaseLast();
+            LOG_ASSERT(response == lastResponse, "Removed response does not point to added response");
+
+            if (responseField->empty()) {
+                // TODO Response too large
+            }
+
+            sendResponseBatch(responseBatch);
+            responseBatch.Clear();
+            responseField->AddAllocated(response);
+        }
     }
-    response.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(sbuffer.data()));
-
-    boost::system::error_code ec2;
-    mSocket.send(sbuffer, ec2);
-    if (ec2)  {
-        mSocket.releaseBuffer(sbuffer.id());
-        LOG_ERROR("Error sending message");
-        // TODO Handle this situation somehow
+    // Send remaining response batch
+    if (!responseField->empty()) {
+        sendResponseBatch(responseBatch);
     }
 }
 
@@ -185,6 +193,24 @@ void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::Rp
     default: {
         response.set_error(proto::RpcResponse::UNKNOWN_REQUEST);
     } break;
+    }
+}
+
+void ClientConnection::sendResponseBatch(const proto::RpcResponseBatch& responseBatch) {
+    auto sbuffer = mSocket.acquireBuffer(responseBatch.ByteSize());
+    if (sbuffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
+        LOG_ERROR("System ran out of buffers");
+        // TODO Handle this situation somehow
+        return;
+    }
+    responseBatch.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(sbuffer.data()));
+
+    boost::system::error_code ec;
+    mSocket.send(sbuffer, ec);
+    if (ec)  {
+        mSocket.releaseBuffer(sbuffer.id());
+        LOG_ERROR("Error sending message");
+        // TODO Handle this situation somehow
     }
 }
 

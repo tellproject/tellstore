@@ -1,5 +1,9 @@
 package tell.store.proto;
 
+message RpcRequestBatch {
+    repeated RpcRequest request = 1;
+}
+
 message RpcRequest {
     required uint64 version = 1;
     optional bytes desc = 2; // Descriptor is reserved by protobuf
@@ -13,6 +17,10 @@ message RpcRequest {
         RemoveRequest remove = 15;
         CommitRequest commit = 16;
     }
+}
+
+message RpcResponseBatch {
+    repeated RpcResponse response = 1;
 }
 
 message RpcResponse {

@@ -21,6 +21,7 @@ namespace store {
 namespace proto {
 class RpcRequest;
 class RpcResponse;
+class RpcResponseBatch;
 } // namespace proto
 
 class ConnectionManager;
@@ -60,6 +61,8 @@ private:
     void closeConnection();
 
     void handleRequest(const proto::RpcRequest& request, proto::RpcResponse& response);
+
+    void sendResponseBatch(const proto::RpcResponseBatch& responseBatch);
 
     /**
      * @brief Get the transaction associated with the request
