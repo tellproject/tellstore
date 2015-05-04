@@ -684,7 +684,7 @@ public:
             return result;
         }
 
-        bool operator==(OrderedLogIteratorImpl<EntryType>& rhs) {
+        bool operator==(const OrderedLogIteratorImpl<EntryType>& rhs) const {
             if (Base::compare(rhs)) {
                 return true;
             }
@@ -692,11 +692,14 @@ public:
             // The iterators could point to old invalid positions (i.e. to the offset of an old head page)
             // We might have to update the cached offsets and advance to the next page if the iterators point to a
             // invalid positon (i.e. pos == offset)
-            maybeUpdateCachedOffset();
-            maybeAdvancePage();
+            // This does not change the externally visible state so a const_cast is okay
+            auto& l = const_cast<OrderedLogIteratorImpl<EntryType>&>(*this);
+            l.maybeUpdateCachedOffset();
+            l.maybeAdvancePage();
 
-            rhs.maybeUpdateCachedOffset();
-            rhs.maybeAdvancePage();
+            auto& r = const_cast<OrderedLogIteratorImpl<EntryType>&>(rhs);
+            r.maybeUpdateCachedOffset();
+            r.maybeAdvancePage();
 
             // Note: One might think there is a race condition between lhs.maybeAdvanceToNextPage() and
             // rhs.maybeAdvanceToNextPage() - i.e. rhs advanced to the next page while lhs did not because when
