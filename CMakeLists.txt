@@ -28,8 +28,13 @@ endif()
 
 # Find dependencies
 find_package(Boost REQUIRED)
-find_package(Crossbow REQUIRED)
+find_package(Crossbow COMPONENTS InfinIO REQUIRED)
 find_package(TBB REQUIRED)
+find_package(Protobuf REQUIRED)
+
+set(PROTO_FILES
+    server/RpcMessages.proto
+)
 
 set(SOURCE_FILES
     implementation.hpp
@@ -43,6 +48,11 @@ set(SOURCE_FILES
     logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
+    server/ClientConnection.hpp
+    server/ClientConnection.cpp
+    server/ConnectionManager.hpp
+    server/ConnectionManager.cpp
+    server/ServerConfig.hpp
     util/OpenAddressingHash.hpp
     util/OpenAddressingHash.cpp
     util/LogOperations.hpp
@@ -74,8 +84,11 @@ set(SOURCE_FILES
 # Create configuration file
 configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 
+# Generate protobufs
+protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTO_FILES})
+
 # Add TellStore library
-add_library(TellStore SHARED ${SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+add_library(TellStore SHARED ${SOURCE_FILES} ${PROTO_SOURCES} ${PROTO_HEADERS} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(TellStore PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -84,10 +97,15 @@ target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC crossbow_infinio)
 
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
+
+# Link against Protobuf
+target_include_directories(TellStore PUBLIC ${PROTOBUF_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC ${PROTOBUF_LIBRARIES})
 
 ###################
 # GTEST

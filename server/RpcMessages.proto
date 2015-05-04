@@ -1,0 +1,101 @@
+package tell.store.proto;
+
+message RpcRequest {
+    required uint64 version = 1;
+    optional bytes desc = 2; // Descriptor is reserved by protobuf
+
+    oneof Request {
+        CreateTableRequest createTable = 10;
+        GetTableIdRequest getTableId = 11;
+        GetRequest get = 12;
+        UpdateRequest update = 13;
+        InsertRequest insert = 14;
+        RemoveRequest remove = 15;
+        CommitRequest commit = 16;
+    }
+}
+
+message RpcResponse {
+    enum Error {
+        UNKNOWN_REQUEST = 0;
+        INVALID_DESCRIPTOR = 1;
+    }
+
+    required uint64 version = 1;
+    optional Error error = 2;
+
+    oneof Response {
+        CreateTableResponse createTable = 10;
+        GetTableIdResponse getTableId = 11;
+        GetResponse get = 12;
+        UpdateResponse update = 13;
+        InsertResponse insert = 14;
+        RemoveResponse remove = 15;
+        CommitResponse commit = 16;
+    }
+}
+
+message CreateTableRequest {
+    required string name = 1;
+    required bytes schema = 2;
+}
+
+message CreateTableResponse {
+    optional uint64 tableId = 1;
+}
+
+message GetTableIdRequest {
+    required string name = 1;
+}
+
+message GetTableIdResponse {
+    optional uint64 tableId = 1;
+}
+
+message GetRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+}
+
+message GetResponse {
+    optional bytes data = 1;
+    required bool isNewest = 2;
+}
+
+message UpdateRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+    required bytes data = 3;
+}
+
+message UpdateResponse {
+    required bool succeeded = 1;
+}
+
+message InsertRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+    required bytes data = 3;
+    required bool succeeded = 4;
+}
+
+message InsertResponse {
+    optional bool succeeded = 1;
+}
+
+message RemoveRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+}
+
+message RemoveResponse {
+    required bool succeeded = 1;
+}
+
+message CommitRequest {
+    required bool commit = 1;
+}
+
+message CommitResponse {
+    required bool succeeded = 1;
+}
