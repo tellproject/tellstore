@@ -496,11 +496,11 @@ public:
             return result;
         }
 
-        bool operator==(UnorderedLogIteratorImpl<EntryType>& rhs) const {
+        bool operator==(const UnorderedLogIteratorImpl<EntryType>& rhs) const {
             return Base::compare(rhs);
         }
 
-        bool operator!=(UnorderedLogIteratorImpl<EntryType>& rhs) const {
+        bool operator!=(const UnorderedLogIteratorImpl<EntryType>& rhs) const {
             return !operator==(rhs);
         }
     };
@@ -710,7 +710,7 @@ public:
             return Base::compare(rhs);
         }
 
-        bool operator!=(OrderedLogIteratorImpl<EntryType>& rhs) const {
+        bool operator!=(const OrderedLogIteratorImpl<EntryType>& rhs) const {
             return !operator==(rhs);
         }
 
