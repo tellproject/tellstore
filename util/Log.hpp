@@ -710,7 +710,7 @@ public:
             return Base::compare(rhs);
         }
 
-        bool operator!=(OrderedLogIteratorImpl<EntryType>& rhs) {
+        bool operator!=(OrderedLogIteratorImpl<EntryType>& rhs) const {
             return !operator==(rhs);
         }
 
