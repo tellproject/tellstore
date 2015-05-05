@@ -9,6 +9,134 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+
+Table::Iterator::Iterator(
+        const std::shared_ptr<allocator::allocator>& alloc,
+        const PageList* pages,
+        size_t pageIdx,
+        const LogIterator& logIter,
+        const LogIterator& logEnd,
+        PageManager* pageManager,
+        const Record* record)
+    : mAllocator(alloc)
+    , pages(pages)
+    , pageIdx(pageIdx)
+    , logIter(logIter)
+    , logEnd(logEnd)
+    , pageManager(pageManager)
+    , record(record)
+    , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
+    , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
+{
+    setCurrentEntry();
+}
+
+Table::Iterator::Iterator(const Iterator& other)
+    : mAllocator(other.mAllocator)
+    , pages(other.pages)
+    , pageIdx(other.pageIdx)
+    , logIter(other.logIter)
+    , logEnd(other.logEnd)
+    , pageManager(other.pageManager)
+    , record(other.record)
+    , pageIter(other.pageIter)
+    , pageEnd(other.pageEnd)
+{
+    setCurrentEntry();
+}
+
+auto Table::Iterator::operator=(const Iterator& o) -> Iterator&
+{
+    mAllocator = o.mAllocator;
+    pages = o.pages;
+    pageIdx = o.pageIdx;
+    logIter = o.logIter;
+    logEnd = o.logEnd;
+    pageManager = o.pageManager;
+    record = o.record;
+    pageIter = o.pageIter;
+    pageEnd = o.pageEnd;
+    setCurrentEntry();
+    return *this;
+}
+
+bool Table::Iterator::operator==(const Iterator& o) const
+{
+    return record == o.record &&
+        pages == o.pages &&
+        pageIdx == o.pageIdx &&
+        logIter == o.logIter &&
+        logEnd == o.logEnd &&
+        pageIter == o.pageIter &&
+        pageEnd == o.pageEnd &&
+        currVersionIter.hasNext() == currVersionIter.hasNext();
+}
+
+auto Table::Iterator::operator++() -> Iterator&
+{
+    if (currVersionIter.hasNext()) {
+        ++currVersionIter;
+        return *this;
+    }
+    if (logIter != logEnd) ++logIter;
+    else if (pageIter != pageEnd) { 
+        ++pageIter;
+    } else {
+        if (++pageIdx == pages->size()) return *this;
+        Page p(*pageManager, (*pages)[pageIdx]);
+        pageIter = p.begin();
+        pageEnd = p.end();
+    }
+    setCurrentEntry();
+    return *this;
+}
+
+auto Table::Iterator::operator++(int) -> Iterator
+{
+    auto res = *this;
+    ++res;
+    return res;
+}
+
+const IteratorEntry& Table::Iterator::operator*() const {
+    return *currVersionIter;
+}
+
+const IteratorEntry* Table::Iterator::operator->() const
+{
+    return &(this->operator*());
+}
+
+void Table::Iterator::setCurrentEntry()
+{
+    while (logIter != logEnd) {
+        if (logIter->sealed()) {
+            CDMRecord rec(logIter->data());
+            if (rec.isValidDataRecord()) {
+                currVersionIter = rec.getVersionIterator();
+                return;
+            }
+        }
+        ++logIter;
+    }
+    while (true) {
+        while (pageIter != pageEnd) {
+            CDMRecord rec(*pageIter);
+            if (rec.isValidDataRecord()) {
+                currVersionIter = rec.getVersionIterator();
+                return;
+            }
+            ++pageIter;
+        }
+        ++pageIdx;
+        if (pageIdx == pages->size()) return;
+        Page p(*pageManager, (*pages)[pageIdx]);
+        pageIter = p.begin();
+        pageEnd = p.end();
+    }
+}
+
+
 Table::Table(PageManager& pageManager, const Schema& schema)
     : mPageManager(pageManager)
     , mSchema(schema)
@@ -204,6 +332,9 @@ auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, I
     size_t beginIdx = 0;
     auto mod = numPages % numThreads;
     for (decltype(numPages) i = 0; i < numPages; ++i) {
+        result[i].first = Iterator(alloc, pages, beginIdx, endIns, endIns, &mPageManager, &mRecord);
+        beginIdx += numPages / numThreads + (i < mod ? 1 : 0);
+        result[i].second = Iterator(alloc, pages, beginIdx, endIns, endIns, &mPageManager, &mRecord);
         auto& item = result[i];
         item.first.mAllocator = alloc;
         item.first.pages = pages;
@@ -211,13 +342,14 @@ auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, I
         item.first.logIter = insIter;
         item.second.mAllocator = alloc;
         item.second.pages = pages;
-        beginIdx += numPages / numThreads + (i < mod ? 1 : 0);
         item.second.pageIdx = beginIdx;
         if (i == numPages - 1) {
             // add log iterators here
+            item.first.logIter = insIter;
             item.second.logIter = endIns;
         } else {
-            item.second.logIter = insIter;
+            item.first.logIter = endIns;
+            item.second.logIter = endIns;
         }
     }
     return std::vector<std::pair<Iterator, Iterator>>();

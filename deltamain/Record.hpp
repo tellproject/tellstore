@@ -5,6 +5,7 @@
 #include <atomic>
 
 #include <util/helper.hpp>
+#include <util/IteratorEntry.hpp>
 
 #include "InsertMap.hpp"
 
@@ -147,6 +148,15 @@ public:
      * is not a tombstone or a reverted operation.
      */
     bool isValidDataRecord() const;
+public: // Interface for iterating over all versions
+    class VersionIterator {
+    public: // access
+        bool hasNext() const;
+        VersionIterator& operator++();
+        const IteratorEntry& operator*() const;
+        const IteratorEntry* operator->() const;
+    };
+    VersionIterator getVersionIterator() const;
 };
 
 template<class T>

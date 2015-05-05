@@ -1,5 +1,6 @@
 #pragma once
 
+#include "IteratorEntry.hpp"
 #include "ScanQuery.hpp"
 #include "Record.hpp"
 #include <config.h>
@@ -15,14 +16,6 @@
 
 namespace tell {
 namespace store {
-
-struct IteratorEntry {
-    uint64_t validFrom;
-    uint64_t validTo;
-    const char* data;
-    const Record& record;
-    IteratorEntry(const Record& record) : record(record) {}
-};
 
 template<class Table>
 struct ScanRequest {
@@ -56,7 +49,7 @@ struct ScanThread {
         if (qbuffer == nullptr) return false;
         auto iter = *beginIter;
         auto end = *endIter;
-        const Record& record = iter->record;
+        const Record& record = *iter->record;
         ScanQuery query;
         std::vector<bool> queryBitMap;
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);

@@ -15,6 +15,8 @@
 #include <atomic>
 #include <crossbow/string.hpp>
 
+#include "Page.hpp"
+
 namespace tell {
 namespace store {
 namespace deltamain {
@@ -31,16 +33,41 @@ class Table {
 public:
     class Iterator {
         friend class Table;
-        const PageList* pages;
+        using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
+    private: // assigned members
         std::shared_ptr<allocator::allocator> mAllocator;
+        const PageList* pages;
         size_t pageIdx;
-        Log<OrderedLogImpl>::ConstLogIterator logIter;
+        LogIterator logIter;
+        LogIterator logEnd;
+        PageManager* pageManager;
+        const Record* record;
+    private: // calculated members
+        Page::Iterator pageIter;
+        Page::Iterator pageEnd;
+        IteratorEntry currEntry;
+        CDMRecord::VersionIterator currVersionIter;
+    private: // construction
+        Iterator(const std::shared_ptr<allocator::allocator>& alloc,
+                 const PageList* pages,
+                 size_t pageIdx,
+                 const LogIterator& logIter,
+                 const LogIterator& logEnd,
+                 PageManager* pageManager,
+                 const Record* record);
+        void setCurrentEntry();
     public:
+        Iterator() {}
+        Iterator(const Iterator& other);
+        Iterator& operator= (const Iterator& other);
+        Iterator operator++(int);
         Iterator& operator++();
         const IteratorEntry& operator*() const;
         const IteratorEntry* operator->() const;
         bool operator==(const Iterator&) const;
-        bool operator!=(const Iterator&) const;
+        bool operator!=(const Iterator& other) const {
+            return !(*this == other);
+        }
     };
     Table(PageManager& pageManager, const Schema& schema);
     bool get(uint64_t key,
