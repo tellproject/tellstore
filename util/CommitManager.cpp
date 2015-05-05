@@ -32,6 +32,7 @@ SnapshotDescriptor DummyManager::startTx() {
 #ifndef NDEBUG
     ++mRunningTransactions;
 #endif
+    auto version = ++mLastVersion;
     const size_t bufferLen = (mLastVersion - mBase)/8 + 1;
     if (bufferLen > mVersionsLength) {
         unsigned char* newVersions = new unsigned char[mVersionsLength * 2];
@@ -45,7 +46,11 @@ SnapshotDescriptor DummyManager::startTx() {
     memcpy(resBuffer.get(), &mBase, sizeof(mBase));
     memcpy(resBuffer.get() + 8, &mLowestActiveVersion, sizeof(mLowestActiveVersion));
     memcpy(resBuffer.get() + 16, mVersions, bufferLen);
-    auto version = ++mLastVersion;
+
+    // Add own version to the read set
+    unsigned char byteIdx = (unsigned char)(1 << ((version - mBase - 1) % 8));
+    resBuffer[16 + (version - mBase - 1)/8] |= byteIdx;
+
     if (mActiveBaseVersionsCount <= mBase - mLowestActiveVersion) {
         auto n = new uint32_t[mActiveBaseVersionsCount*2];
         memset(n, 0, mActiveBaseVersionsCount * 2 * sizeof(uint32_t));
