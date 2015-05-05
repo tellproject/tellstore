@@ -38,6 +38,17 @@ public:
     bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest) const;
 
     /**
+     * @brief Reads the newest tuple from the table
+     *
+     * @param key Key of the tuple to retrieve
+     * @param size Reference to the tuple's size
+     * @param data Reference to the tuple's data pointer
+     * @param version Reference to the tuple's version
+     * @return Whether the tuple was found
+     */
+    bool getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) const;
+
+    /**
      * @brief Inserts a tuple into the table
      *
      * @param key Key of the tuple to insert

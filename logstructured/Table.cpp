@@ -21,6 +21,14 @@ constexpr size_t gRecordHeaderSize = sizeof(LSMRecord) + sizeof(ChainedVersionRe
         return false;\
     }
 
+/**
+ * @brief Returns the record size contained in the LSM Record
+ */
+size_t recordSize(const LSMRecord* record) {
+    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(record));
+    return (entry->size() - gRecordHeaderSize);
+}
+
 } // anonymous namespace
 
 Table::Table(PageManager& pageManager, HashTable& hashMap, const Schema& schema, uint64_t tableId)
@@ -70,12 +78,47 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
             return false;
         }
 
-        // Set the data pointer
+        // Set the data pointer and size field
         data = versionRecord->data();
+        size = recordSize(lsmRecord);
 
-        // Set the record size
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(lsmRecord));
-        size = (entry->size() - gRecordHeaderSize);
+        return true;
+    }
+}
+
+bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) const {
+    checkKey(key);
+
+    auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
+    if (!versionRecord) {
+        version = 0x0u;
+        return false;
+    }
+
+    while (true) {
+        auto lsmRecord = LSMRecord::recordFromData(reinterpret_cast<const char*>(versionRecord));
+        LOG_ASSERT(lsmRecord->key() == key, "Hash table points to LSMRecord with wrong key");
+
+        // Check if the element was not invalidated in the meantime
+        version = versionRecord->validFrom();
+        if (version == ChainedVersionRecord::INVALID_VERSION) {
+            // Check if we have a previous element
+            versionRecord = versionRecord->getPrevious();
+            if (versionRecord) {
+                continue;
+            }
+            version = 0x0u;
+            return false;
+        }
+
+        // Check if the entry was deleted in this version
+        if (versionRecord->wasDeleted()) {
+            return false;
+        }
+
+        // Set the data pointer and size field
+        data = versionRecord->data();
+        size = recordSize(lsmRecord);
 
         return true;
     }

@@ -46,6 +46,11 @@ private:
  */
 class ChainedVersionRecord {
 public:
+    /**
+     * @brief Version marking an invalid tuple
+     */
+    static constexpr uint64_t INVALID_VERSION = std::numeric_limits<uint64_t>::max();
+
     ChainedVersionRecord(uint64_t validFrom, ChainedVersionRecord* previous, bool deleted)
             : mValidFrom(validFrom),
               mPrevious(reinterpret_cast<uintptr_t>(previous) | (deleted ? 0x1u : 0x0u)) {
@@ -60,11 +65,11 @@ public:
     }
 
     void invalidate() {
-        mValidFrom.store(std::numeric_limits<uint64_t>::max());
+        mValidFrom.store(INVALID_VERSION);
     }
 
     bool isInvalid() const {
-        return (mValidFrom.load() == std::numeric_limits<uint64_t>::max());
+        return (mValidFrom.load() == INVALID_VERSION);
     }
 
     bool expire(uint64_t version) {
