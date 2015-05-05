@@ -45,6 +45,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
 
     auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!versionRecord) {
+        isNewest = true;
         return false;
     }
 
@@ -62,6 +63,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
             }
 
             // Element not found (not in read set)
+            isNewest = false;
             return false;
         }
 
