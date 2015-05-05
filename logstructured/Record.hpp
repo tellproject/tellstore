@@ -63,7 +63,7 @@ public:
         mValidFrom.store(std::numeric_limits<uint64_t>::max());
     }
 
-    bool isInvalide() const {
+    bool isInvalid() const {
         return (mValidFrom.load() == std::numeric_limits<uint64_t>::max());
     }
 
