@@ -28,6 +28,23 @@ protected:
               mField("Test Field") {
     }
 
+    /**
+     * @brief Assert that the table contains the given element
+     *
+     * @param key Key of the tuple to check
+     * @param tx Snapshot descriptor of the current transaction
+     * @param expected Expected value of the tuple
+     * @param expectedNewest Expected the newest element
+     */
+    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected, bool expectedNewest) {
+        std::size_t size = 0;
+        const char* ptr = nullptr;
+        bool isNewest = false;
+        EXPECT_TRUE(mTable.get(key, size, ptr, tx, isNewest));
+        EXPECT_EQ(expected, std::string(ptr, size));
+        EXPECT_EQ(expectedNewest, isNewest);
+    }
+
     PageManager mPageManager;
     Table::HashTable mHashMap;
     Schema mSchema;
@@ -49,12 +66,7 @@ TEST_F(TableTest, insertGet) {
     mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    bool isNewest = false;
-    EXPECT_TRUE(mTable.get(1, size, ptr, mTx, isNewest));
-    EXPECT_EQ(mField, std::string(ptr, size));
-    EXPECT_TRUE(isNewest);
+    assertElement(1, mTx, mField, true);
 }
 
 /**
@@ -75,12 +87,7 @@ TEST_F(TableTest, insertGetMultiple) {
     }
 
     for (auto& e : elements) {
-        std::size_t size = 0;
-        const char* ptr = nullptr;
-        bool isNewest = false;
-        EXPECT_TRUE(mTable.get(e.first, size, ptr, mTx, isNewest));
-        EXPECT_EQ(e.second, std::string(ptr, size));
-        EXPECT_TRUE(isNewest);
+        assertElement(e.first, mTx, e.second, true);
     }
 }
 
@@ -96,13 +103,7 @@ TEST_F(TableTest, insertUpdateGet) {
     EXPECT_TRUE(succeeded);
 
     EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), mTx));
-
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    bool isNewest = false;
-    EXPECT_TRUE(mTable.get(1, size, ptr, mTx, isNewest));
-    EXPECT_EQ(fieldNew, std::string(ptr, size));
-    EXPECT_TRUE(isNewest);
+    assertElement(1, mTx, fieldNew, true);
 }
 
 /**
@@ -140,12 +141,7 @@ TEST_F(TableTest, insertRemoveInsertGet) {
     mTable.insert(1, field2.size(), field2.c_str(), mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    bool isNewest = false;
-    EXPECT_TRUE(mTable.get(1, size, ptr, mTx, isNewest));
-    EXPECT_EQ(field2, std::string(ptr, size));
-    EXPECT_TRUE(isNewest);
+    assertElement(1, mTx, field2, true);
 }
 
 /**
@@ -186,13 +182,44 @@ TEST_F(TableTest, insertRemoveGetNewest) {
     mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    EXPECT_TRUE(mTable.remove(1, mTx));
+    mCommitManager.commitTx(mTx);
+
+    auto tx2 = mCommitManager.startTx();
+
+    EXPECT_TRUE(mTable.remove(1, tx2));
 
     std::size_t size = 0;
     const char* ptr = nullptr;
     uint64_t version = 0;
     EXPECT_FALSE(mTable.getNewest(1, size, ptr, version));
-    EXPECT_EQ(1, version);
+    EXPECT_EQ(tx2.version(), version);
+}
+
+/**
+ * @class Table
+ * @test Check if updating an element and reverting it restores the previous element
+ */
+TEST_F(TableTest, insertUpdateRevert) {
+    std::string fieldNew = "Test Field Update";
+
+    // Insert first element
+    bool succeeded = false;
+    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    EXPECT_TRUE(succeeded);
+
+    // Commit insert transaction
+    mCommitManager.commitTx(mTx);
+
+    // Begin update-revert transaction
+    auto tx2 = mCommitManager.startTx();
+
+    // Update element
+    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), tx2));
+    assertElement(1, tx2, fieldNew, true);
+
+    // Revert element
+    EXPECT_TRUE(mTable.revert(1, tx2));
+    assertElement(1, tx2, mField, true);
 }
 
 }

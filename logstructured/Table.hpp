@@ -91,6 +91,17 @@ public:
     bool remove(uint64_t key, const SnapshotDescriptor& snapshot);
 
     /**
+     * @brief Reverts the existing element with the given version to the element with the previous version
+     *
+     * At this time only the element with the most recent version can be reverted.
+     *
+     * @param key Key of the tuple to revert
+     * @param snapshot Descriptor containing the version to revert
+     * @return Whether the element was successfully reverted to the older version
+     */
+    bool revert(uint64_t key, const SnapshotDescriptor& snapshot);
+
+    /**
      * @brief Starts a garbage collection run
      *
      * @param minVersion Minimum version of the tuples to keep
@@ -114,6 +125,14 @@ private:
      */
     bool writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* prev, size_t size, const char* data,
             bool deleted);
+
+    /**
+     * @brief Marks the tuple as invalid in the log
+     *
+     * Invalid elements have no other elements or the hash map pointing to it and can be safely thrown away by the
+     * garbage collector.
+     */
+    void invalidateTuple(ChainedVersionRecord* versionRecord);
 
     PageManager& mPageManager;
     HashTable& mHashMap;

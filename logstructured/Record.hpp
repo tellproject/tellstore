@@ -1,5 +1,7 @@
 #pragma once
 
+#include <util/Logging.hpp>
+
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -72,9 +74,26 @@ public:
         return (mValidFrom.load() == INVALID_VERSION);
     }
 
-    bool expire(uint64_t version) {
-        uint64_t exp = 0x0u;
-        return mValidTo.compare_exchange_strong(exp, version);
+    /**
+     * @brief Set the tuple to expire with the given version
+     *
+     * Overrides the valid-to version even if it is already set.
+     *
+     * @param version Version until the tuple is valid
+     */
+    void expire(uint64_t version) {
+        LOG_ASSERT(mValidFrom.load() <= version, "Tuple set to expire before its valid-from version");
+        mValidTo.store(version);
+    }
+
+    /**
+     * @brief Reactivates the tuple that was set to expire with the given version
+     *
+     * @param version Version the tuple was previously set to expire
+     * @return Whether the tuple was reactivated
+     */
+    bool reactivate(uint64_t version) {
+        return mValidTo.compare_exchange_strong(version, 0x0u);
     }
 
     ChainedVersionRecord* getPrevious() {
