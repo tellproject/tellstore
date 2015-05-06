@@ -1,16 +1,19 @@
 #pragma once
 
+#include <config.h>
+#include <implementation.hpp>
+#include <util/CommitManager.hpp>
 #include <util/Log.hpp>
-#include <util/Record.hpp>
 #include <util/NonCopyable.hpp>
+#include <util/OpenAddressingHash.hpp>
+#include <util/Record.hpp>
+#include <util/TableManager.hpp>
+#include <util/TransactionImpl.hpp>
 
 #include <cstdint>
 
 namespace tell {
 namespace store {
-
-class OpenAddressingTable;
-class PageManager;
 
 namespace logstructured {
 
@@ -142,6 +145,96 @@ private:
     Log<UnorderedLogImpl> mLog;
 };
 
+/**
+ * @brief Garbage collector to reclaim unused pages in the Log-Structured Memory approach
+ */
+class GarbageCollector {
+public:
+    void run(const std::vector<Table*>& tables, uint64_t minVersion);
+};
+
 } // namespace logstructured
+
+/**
+ * @brief A Storage implementation using a Log-Structured Memory approach as its data store
+ */
+template<>
+class StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : NonCopyable, NonMovable {
+public:
+    using Table = logstructured::Table;
+    using GC = logstructured::GarbageCollector;
+    using StorageType = StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>;
+    using Transaction = TransactionImpl<StorageType>;
+
+    StoreImpl(const StorageConfig& config)
+            : StoreImpl(config, config.totalMemory) {
+    }
+
+    StoreImpl(const StorageConfig& config, size_t totalMem);
+
+    Transaction startTx() {
+        return Transaction(*this, mCommitManager.startTx());
+    }
+
+    bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
+        return mTableManager.createTable(name, schema, idx, mHashMap);
+    }
+
+    bool getTableId(const crossbow::string& name, uint64_t& id) {
+        return mTableManager.getTableId(name, id);
+    }
+
+    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
+            bool& isNewest) {
+        return mTableManager.get(tableId, key, size, data, snapshot, isNewest);
+    }
+
+    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot) {
+        return mTableManager.update(tableId, key, size, data, snapshot);
+    }
+
+    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
+            bool* succeeded = nullptr) {
+        mTableManager.insert(tableId, key, size, data, snapshot, succeeded);
+    }
+
+    void insert(uint64_t tableId, uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
+            bool* succeeded = nullptr) {
+        mTableManager.insert(tableId, key, tuple, snapshot, succeeded);
+    }
+
+    bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {
+        return mTableManager.remove(tableId, key, snapshot);
+    }
+
+    /**
+     * We use this method mostly for test purposes. But
+     * it might be handy in the future as well. If possible,
+     * this should be implemented in an efficient way.
+     */
+    void forceGC() {
+        mTableManager.forceGC();
+    }
+
+    void commit(SnapshotDescriptor& snapshot) {
+        mCommitManager.commitTx(snapshot);
+    }
+
+    void abort(SnapshotDescriptor& snapshot) {
+        // TODO: Roll-back. I am not sure whether this would generally
+        // work. Probably not (since we might also need to roll back the
+        // index which has to be done in the processing layer).
+        mCommitManager.abortTx(snapshot);
+    }
+
+private:
+    PageManager mPageManager;
+    GC mGc;
+    CommitManager mCommitManager;
+    TableManager<Table, GC> mTableManager;
+
+    Table::HashTable mHashMap;
+};
+
 } // namespace store
 } // namespace tell

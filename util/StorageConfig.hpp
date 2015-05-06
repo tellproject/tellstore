@@ -8,6 +8,7 @@ namespace store {
 struct StorageConfig {
     uint16_t gcIntervall = 60;
     size_t totalMemory = TOTAL_MEMORY;
+    size_t hashMapCapacity = HASHMAP_CAPACITY;
 };
 } // namespace store
 } // namespace tell

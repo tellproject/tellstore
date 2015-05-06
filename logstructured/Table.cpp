@@ -320,6 +320,17 @@ void Table::invalidateTuple(ChainedVersionRecord* versionRecord) {
     // TODO Inform replication that the tuple is invalid (might need to write a Tombstone)
 }
 
+void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
+    // TODO Implement
+}
+
 } // namespace logstructured
+
+StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config, size_t totalMem)
+        : mPageManager(totalMem),
+          mTableManager(mPageManager, config, mGc, mCommitManager),
+          mHashMap(config.hashMapCapacity) {
+}
+
 } // namespace store
 } // namespace tell

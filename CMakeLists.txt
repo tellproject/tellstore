@@ -10,6 +10,7 @@ option(ENABLE_HEAVYWEIGHT_TESTS "Build ressource intensive or long running unit 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
+set(HASHMAP_CAPACITY "0x800000" CACHE STRING "Number of elements to allocate for the hashmap")
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 # Set compile options
