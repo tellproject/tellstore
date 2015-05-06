@@ -35,6 +35,11 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest) const;
 
+    bool getNewest(uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version) const;
+
     void insert(uint64_t key,
                 const GenericTuple& tuple,
                 const SnapshotDescriptor& snapshot,
@@ -111,6 +116,15 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
              bool& isNewest)
     {
         return tableManager.get(tableId, key, size, data, snapshot, isNewest);
+    }
+
+    bool getNewest(uint64_t tableId,
+                   uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version)
+    {
+        return tableManager.getNewest(tableId, key, size, data, version);
     }
 
     bool update(uint64_t tableId,

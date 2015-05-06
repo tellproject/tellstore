@@ -138,6 +138,16 @@ public:
         return mTables[tableId]->get(key, size, data, snapshot, isNewest);
     }
 
+    bool getNewest(uint64_t tableId,
+                   uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version)
+    {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->getNewest(key, size, data, version);
+    }
+
     bool update(uint64_t tableId,
                 uint64_t key,
                 size_t size,

@@ -55,6 +55,14 @@ bool Table::get(uint64_t key,
     return false;
 }
 
+bool Table::getNewest(uint64_t key,
+                      size_t& size,
+                      const char*& data,
+                      uint64_t& version) const {
+    // TODO Implement
+    return false;
+}
+
 void Table::insert(uint64_t key,
                    size_t size,
                    const char* const data,
