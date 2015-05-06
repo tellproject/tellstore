@@ -178,6 +178,14 @@ public:
         return mTables[tableId]->remove(key, snapshot);
     }
 
+    bool revert(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->revert(key, snapshot);
+    }
+
     void forceGC() {
         // Notifies the GC
         mStopCondition.notify_all();

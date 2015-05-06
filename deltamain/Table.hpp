@@ -53,6 +53,9 @@ public:
     bool remove(uint64_t key,
                 const SnapshotDescriptor& snapshot);
 
+    bool revert(uint64_t key,
+                const SnapshotDescriptor& snapshot);
+
     void runGC(uint64_t minVersion);
 private:
     template<class Fun>
@@ -143,6 +146,13 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 const SnapshotDescriptor& snapshot)
     {
         return tableManager.remove(tableId, key, snapshot);
+    }
+
+    bool revert(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        return tableManager.revert(tableId, key, snapshot);
     }
 
     /**

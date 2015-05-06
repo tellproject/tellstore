@@ -160,6 +160,11 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
     return genericUpdate(fun, key, snapshot);
 }
 
+bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+    // TODO Implement
+    return false;
+}
+
 template<class Fun>
 bool Table::genericUpdate(const Fun& appendFun,
                           uint64_t key,

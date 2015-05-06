@@ -207,6 +207,10 @@ public:
         return mTableManager.remove(tableId, key, snapshot);
     }
 
+    bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {
+        return mTableManager.revert(tableId, key, snapshot);
+    }
+
     /**
      * We use this method mostly for test purposes. But
      * it might be handy in the future as well. If possible,
