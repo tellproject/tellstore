@@ -7,7 +7,7 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-Table::Table(PageManager& pageManager, const Schema& schema)
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)

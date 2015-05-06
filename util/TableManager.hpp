@@ -101,16 +101,19 @@ public:
     }
 
 public:
+    template <typename... Args>
     bool createTable(const crossbow::string& name,
                      const Schema& schema,
-                     uint64_t& idx) {
+                     uint64_t& idx,
+                     Args&&... args) {
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
         if (!res.second) {
             return false;
         }
-        mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema);
+        mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema, idx,
+                std::forward<Args>(args)...);
         return true;
     }
 

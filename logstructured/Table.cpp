@@ -31,7 +31,7 @@ size_t recordSize(const LSMRecord* record) {
 
 } // anonymous namespace
 
-Table::Table(PageManager& pageManager, HashTable& hashMap, const Schema& schema, uint64_t tableId)
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
     : mPageManager(pageManager),
       mHashMap(hashMap),
       mSchema(schema),

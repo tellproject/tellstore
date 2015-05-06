@@ -23,7 +23,7 @@ class Table : NonCopyable, NonMovable {
 public:
     using HashTable = OpenAddressingTable;
 
-    Table(PageManager& pageManager, HashTable& hashMap, const Schema& schema, uint64_t tableId);
+    Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap);
 
     /**
      * @brief Reads a tuple from the table

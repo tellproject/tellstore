@@ -23,7 +23,7 @@ protected:
     TableTest()
             : mPageManager(TELL_PAGE_SIZE * 4),
               mHashMap(1024),
-              mTable(mPageManager, mHashMap, mSchema, 1),
+              mTable(mPageManager, mSchema, 1, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
     }

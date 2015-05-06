@@ -28,7 +28,7 @@ class Table {
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<PageList*> mPages;
 public:
-    Table(PageManager& pageManager, const Schema& schema);
+    Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
     bool get(uint64_t key,
              size_t& size,
              const char*& data,
