@@ -1,17 +1,17 @@
 #pragma once
 #include <cstdint>
+#include <config.h>
 
 namespace tell {
 namespace store {
 
 class Record;
 
-struct IteratorEntry {
-    uint64_t validFrom;
-    uint64_t validTo;
-    const char* data;
-    const Record* record;
-};
+template<Implementation impl>
+class IteratorEntry_t;
+
+using IteratorEntry = IteratorEntry_t<usedImplementation>;
+
 
 } // namespace store
 } // namespace tell

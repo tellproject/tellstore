@@ -49,7 +49,7 @@ struct ScanThread {
         if (qbuffer == nullptr) return false;
         auto iter = *beginIter;
         auto end = *endIter;
-        const Record& record = *iter->record;
+        const Record& record = *iter->record();
         ScanQuery query;
         std::vector<bool> queryBitMap;
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
@@ -58,7 +58,7 @@ struct ScanThread {
             const auto& entry = *iter;
             for (uint64_t i = 0; i < numQueries; ++i) {
                 query.query = qbuffer;
-                qbuffer = query.check(entry.data, queryBitMap, record);
+                qbuffer = query.check(entry.data(), queryBitMap, record);
                 queryBitMap.clear();
             }
         }
@@ -172,4 +172,3 @@ private:
 
 } // namespace store
 } // namespace tell
-

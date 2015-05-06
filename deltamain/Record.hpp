@@ -11,8 +11,19 @@
 
 namespace tell {
 namespace store {
+
+template<>
+class IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> {
+public:
+    uint64_t validFrom() const;
+    uint64_t validTo() const;
+    const char* data() const;
+    const Record* record() const;
+};
+
 struct SnapshotDescriptor;
 namespace deltamain {
+
 enum class RecordType : uint8_t {
     LOG_INSERT,
     LOG_UPDATE,
@@ -56,7 +67,7 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  *      not an update log entry. If the previous version
  *      was an insert log entry, the only way to reach the
  *      update is via the insert entry, if it was a multi
- *      version record, we can only reach it via the 
+ *      version record, we can only reach it via the
  *      record entry itself. This is an important design
  *      decision: this way me make clear that we do not
  *      introduce cycles.
@@ -153,8 +164,8 @@ public: // Interface for iterating over all versions
     public: // access
         bool hasNext() const;
         VersionIterator& operator++();
-        const IteratorEntry& operator*() const;
-        const IteratorEntry* operator->() const;
+        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& operator*() const;
+        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* operator->() const;
     };
     VersionIterator getVersionIterator() const;
 };
@@ -214,4 +225,3 @@ using DMRecord = DMRecordImpl<char*>;
 } // namespace deltamain
 } // namespace store
 } // namespace tell
-
