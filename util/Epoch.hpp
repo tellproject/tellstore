@@ -18,6 +18,8 @@ extern void destroy();
 
 extern void* malloc(std::size_t size);
 
+extern void* malloc(std::size_t size, std::size_t align);
+
 extern void free(void* ptr);
 
 extern void free_now(void* ptr);
@@ -31,6 +33,8 @@ public:
     ~allocator();
 
     static void* malloc(std::size_t size);
+
+    static void* malloc(std::size_t size, std::size_t align);
 
     static void free(void* ptr, std::function<void()> destruct = []() {
     });
