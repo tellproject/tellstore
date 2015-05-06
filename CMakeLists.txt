@@ -30,6 +30,7 @@ endif()
 find_package(Boost REQUIRED)
 find_package(Crossbow REQUIRED)
 find_package(TBB REQUIRED)
+find_package(Jemalloc REQUIRED)
 
 set(SOURCE_FILES
     implementation.hpp
@@ -88,6 +89,10 @@ target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
+
+# Link against Jemalloc
+target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
 
 ###################
 # GTEST

@@ -1,7 +1,8 @@
 #include "Epoch.hpp"
 
 #include <array>
-#include <cstdlib>
+
+#include <jemalloc/jemalloc.h>
 
 namespace {
 struct lists {
@@ -144,7 +145,11 @@ allocator::~allocator() {
 }
 
 void* allocator::malloc(std::size_t size) {
-    uint8_t* res = reinterpret_cast<uint8_t*>(std::malloc(size + sizeof(lists::node)));
+    uint8_t* res = reinterpret_cast<uint8_t*>(::malloc(size + sizeof(lists::node)));
+    if (!res) {
+        return nullptr;
+    }
+
     new(res) lists::node();
     return res + sizeof(lists::node);
 }
