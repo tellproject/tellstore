@@ -161,6 +161,8 @@ public:
     bool isValidDataRecord() const;
 public: // Interface for iterating over all versions
     class VersionIterator {
+        const char* current;
+        int idx;
     public: // access
         bool hasNext() const;
         VersionIterator& operator++();
