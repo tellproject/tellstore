@@ -34,7 +34,7 @@ size_t recordSize(const LSMRecord* record) {
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
     : mPageManager(pageManager),
       mHashMap(hashMap),
-      mSchema(schema),
+      mRecord(schema),
       mTableId(tableId),
       mLog(mPageManager) {
 }
@@ -141,7 +141,10 @@ bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& v
 
 void Table::insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
-    // TODO Implement
+    size_t size;
+    std::unique_ptr<char[]> rec(mRecord.create(tuple, size));
+    insert(key, size, rec.get(), snapshot, succeeded);
+    // TODO This can be implemented faster by directly serializing the tuple to the log
 }
 
 void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,

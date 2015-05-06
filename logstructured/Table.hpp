@@ -139,7 +139,7 @@ private:
 
     PageManager& mPageManager;
     HashTable& mHashMap;
-    Schema mSchema;
+    Record mRecord;
     uint64_t mTableId;
 
     Log<UnorderedLogImpl> mLog;
