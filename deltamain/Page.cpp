@@ -24,6 +24,10 @@ const char* Page::Iterator::operator*() const {
     return current;
 }
 
+bool Page::Iterator::operator== (const Iterator& other) const {
+    return current == other.current;
+}
+
 auto Page::begin() const -> Iterator {
     return Iterator(mData + 8);
 }

@@ -69,12 +69,12 @@ bool Table::Iterator::operator==(const Iterator& o) const
         logEnd == o.logEnd &&
         pageIter == o.pageIter &&
         pageEnd == o.pageEnd &&
-        currVersionIter.hasNext() == currVersionIter.hasNext();
+        currVersionIter.isValid() == currVersionIter.isValid();
 }
 
 auto Table::Iterator::operator++() -> Iterator&
 {
-    if (currVersionIter.hasNext()) {
+    if (currVersionIter.isValid() && (++currVersionIter).isValid()) {
         ++currVersionIter;
         return *this;
     }
@@ -113,7 +113,7 @@ void Table::Iterator::setCurrentEntry()
         if (logIter->sealed()) {
             CDMRecord rec(logIter->data());
             if (rec.isValidDataRecord()) {
-                currVersionIter = rec.getVersionIterator();
+                currVersionIter = rec.getVersionIterator(record);
                 return;
             }
         }
@@ -123,7 +123,7 @@ void Table::Iterator::setCurrentEntry()
         while (pageIter != pageEnd) {
             CDMRecord rec(*pageIter);
             if (rec.isValidDataRecord()) {
-                currVersionIter = rec.getVersionIterator();
+                currVersionIter = rec.getVersionIterator(record);
                 return;
             }
             ++pageIter;

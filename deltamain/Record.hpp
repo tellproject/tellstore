@@ -15,10 +15,22 @@ namespace store {
 template<>
 class IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> {
 public:
-    uint64_t validFrom() const;
-    uint64_t validTo() const;
-    const char* data() const;
-    const Record* record() const;
+    uint64_t mValidFrom = 0;
+    uint64_t mValidTo = 0;
+    const char* mData = nullptr;
+    const Record* mRecord = nullptr;
+    uint64_t validFrom() const {
+        return mValidFrom;
+    }
+    uint64_t validTo() const {
+        return mValidTo;
+    }
+    const char* data() const {
+        return mData;
+    }
+    const Record* record() const {
+        return mRecord;
+    }
 };
 
 struct SnapshotDescriptor;
@@ -161,15 +173,21 @@ public:
     bool isValidDataRecord() const;
 public: // Interface for iterating over all versions
     class VersionIterator {
-        const char* current;
-        int idx;
+        friend class DMRecordImplBase<T>;
+        IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> currEntry;
+        const Record* record;
+        const char* current = nullptr;
+        int idx = 0;
+        VersionIterator(const Record* record, const char* current);
+        void initRes();
     public: // access
-        bool hasNext() const;
+        VersionIterator() {}
+        bool isValid() const { return current != nullptr; }
         VersionIterator& operator++();
         const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& operator*() const;
         const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* operator->() const;
     };
-    VersionIterator getVersionIterator() const;
+    VersionIterator getVersionIterator(const Record* record) const;
 };
 
 template<class T>
