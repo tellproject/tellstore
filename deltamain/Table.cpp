@@ -11,7 +11,7 @@ namespace deltamain {
 
 
 Table::Iterator::Iterator(
-        const std::shared_ptr<allocator::allocator>& alloc,
+        const std::shared_ptr<allocator>& alloc,
         const PageList* pages,
         size_t pageIdx,
         const LogIterator& logIter,
@@ -194,7 +194,6 @@ void Table::insert(uint64_t key,
     // sure to check the part of the log that was visible
     // at this point in time
     auto iter = mInsertLog.begin();
-    auto iterEnd = mInsertLog.end();
     auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         // the key exists... but it could be, that it got deleted
@@ -218,6 +217,7 @@ void Table::insert(uint64_t key,
     auto entry = mInsertLog.append(logEntrySize);
     // We do this in another scope, after this scope is closed, the log
     // is read only (when seal is called)
+    auto iterEnd = mInsertLog.end();
     DMRecord insertRecord(entry->data());
     insertRecord.setType(DMRecord::Type::LOG_INSERT);
     insertRecord.writeKey(key);
@@ -322,7 +322,7 @@ bool Table::genericUpdate(const Fun& appendFun,
 
 auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, Iterator>>
 {
-    auto alloc = std::make_shared<allocator::allocator>();
+    auto alloc = std::make_shared<allocator>();
     auto insIter = mInsertLog.begin();
     auto endIns = mInsertLog.end();
     auto& hashTable = *mHashTable.load();

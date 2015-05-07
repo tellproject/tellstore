@@ -35,7 +35,7 @@ public:
         friend class Table;
         using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     private: // assigned members
-        std::shared_ptr<allocator::allocator> mAllocator;
+        std::shared_ptr<allocator> mAllocator;
         const PageList* pages;
         size_t pageIdx;
         LogIterator logIter;
@@ -48,7 +48,7 @@ public:
         IteratorEntry currEntry;
         CDMRecord::VersionIterator currVersionIter;
     private: // construction
-        Iterator(const std::shared_ptr<allocator::allocator>& alloc,
+        Iterator(const std::shared_ptr<allocator>& alloc,
                  const PageList* pages,
                  size_t pageIdx,
                  const LogIterator& logIter,

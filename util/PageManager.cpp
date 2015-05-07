@@ -33,6 +33,7 @@ void* PageManager::alloc() {
 }
 
 void PageManager::free(void* page) {
+    assert(page >= mData && page < reinterpret_cast<char*>(mData) + mSize);
     memset(page, 0, TELL_PAGE_SIZE);
     freeEmpty(page);
 }
