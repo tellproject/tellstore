@@ -10,11 +10,12 @@
 #include <util/TableManager.hpp>
 #include <util/TransactionImpl.hpp>
 
+#include "../deltamain/Record.hpp"
+
 #include <cstdint>
 
 namespace tell {
 namespace store {
-
 namespace logstructured {
 
 class ChainedVersionRecord;
@@ -24,6 +25,29 @@ class ChainedVersionRecord;
  */
 class Table : NonCopyable, NonMovable {
 public:
+    class Iterator {
+    public:
+        Iterator& operator++();
+
+        Iterator operator++(int) {
+            Iterator result(*this);
+            operator++();
+            return result;
+        }
+
+        const IteratorEntry& operator*() const {
+            return *operator->();
+        }
+
+        const IteratorEntry* operator->() const;
+
+        bool operator==(const Iterator& rhs) const;
+
+        bool operator!=(const Iterator& rhs) const {
+            return !operator==(rhs);
+        }
+    };
+
     using HashTable = OpenAddressingTable;
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap);
@@ -105,6 +129,14 @@ public:
     bool revert(uint64_t key, const SnapshotDescriptor& snapshot);
 
     /**
+     * @brief Start a full scan of this table
+     *
+     * @param numThreads Number of threads to use for the scan
+     * @return Pairs of begin and end iterator for each thread
+     */
+    std::vector<std::pair<Iterator, Iterator>> startScan(int numThreads) const;
+
+    /**
      * @brief Starts a garbage collection run
      *
      * @param minVersion Minimum version of the tuples to keep
@@ -170,10 +202,7 @@ public:
             : StoreImpl(config, config.totalMemory) {
     }
 
-    StoreImpl(const StorageConfig& config, size_t totalMem)
-        : mPageManager(totalMem),
-          mTableManager(mPageManager, config, mGc, mCommitManager),
-          mHashMap(config.hashMapCapacity) {}
+    StoreImpl(const StorageConfig& config, size_t totalMem);
 
     Transaction startTx() {
         return Transaction(*this, mCommitManager.startTx());

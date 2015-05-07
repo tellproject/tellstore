@@ -31,6 +31,17 @@ size_t recordSize(const LSMRecord* record) {
 
 } // anonymous namespace
 
+Table::Iterator& Table::Iterator::operator++() {
+}
+
+const IteratorEntry* Table::Iterator::operator->() const {
+    return nullptr;
+}
+
+bool Table::Iterator::operator==(const Table::Iterator& rhs) const {
+    return false;
+}
+
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
     : mPageManager(pageManager),
       mHashMap(hashMap),
@@ -254,6 +265,10 @@ bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
 
         return true;
     }
+}
+
+std::vector<std::pair<Table::Iterator, Table::Iterator>> Table::startScan(int numThreads) const {
+    return {};
 }
 
 void Table::runGC(uint64_t minVersion) {
