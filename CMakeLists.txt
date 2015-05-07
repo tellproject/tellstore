@@ -95,6 +95,7 @@ target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
 # Link against Jemalloc
 target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
+target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
 
 ###################
 # GTEST
