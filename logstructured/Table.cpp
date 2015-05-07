@@ -21,12 +21,20 @@ constexpr size_t gRecordHeaderSize = sizeof(LSMRecord) + sizeof(ChainedVersionRe
         return false;\
     }
 
+/**
+ * @brief Returns the record size contained in the LSM Record
+ */
+size_t recordSize(const LSMRecord* record) {
+    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(record));
+    return (entry->size() - gRecordHeaderSize);
+}
+
 } // anonymous namespace
 
-Table::Table(PageManager& pageManager, HashTable& hashMap, const Schema& schema, uint64_t tableId)
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
     : mPageManager(pageManager),
       mHashMap(hashMap),
-      mSchema(schema),
+      mRecord(schema),
       mTableId(tableId),
       mLog(mPageManager) {
 }
@@ -37,6 +45,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
 
     auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!versionRecord) {
+        isNewest = true;
         return false;
     }
 
@@ -44,8 +53,21 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
         auto lsmRecord = LSMRecord::recordFromData(reinterpret_cast<const char*>(versionRecord));
         LOG_ASSERT(lsmRecord->key() == key, "Hash table points to LSMRecord with wrong key");
 
-        // Check if the element is not in the read set
         auto from = versionRecord->validFrom();
+
+        // Check if the element was already invalidated - Retry from the beginning
+        // This situation only occurs when a concurrent revert happened on the current element, the hash map will point
+        // to a valid element again
+        if (from == ChainedVersionRecord::INVALID_VERSION) {
+            versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
+            if (!versionRecord) {
+                isNewest = true;
+                return false;
+            }
+            continue;
+        }
+
+        // Check if the element is not in the read set
         if (!snapshot.inReadSet(from)) {
             // Check if we have a previous element
             versionRecord = versionRecord->getPrevious();
@@ -54,6 +76,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
             }
 
             // Element not found (not in read set)
+            isNewest = false;
             return false;
         }
 
@@ -70,12 +93,47 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
             return false;
         }
 
-        // Set the data pointer
+        // Set the data pointer and size field
         data = versionRecord->data();
+        size = recordSize(lsmRecord);
 
-        // Set the record size
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(lsmRecord));
-        size = (entry->size() - gRecordHeaderSize);
+        return true;
+    }
+}
+
+bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) const {
+    checkKey(key);
+
+    auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
+    if (!versionRecord) {
+        version = 0x0u;
+        return false;
+    }
+
+    while (true) {
+        auto lsmRecord = LSMRecord::recordFromData(reinterpret_cast<const char*>(versionRecord));
+        LOG_ASSERT(lsmRecord->key() == key, "Hash table points to LSMRecord with wrong key");
+
+        // Check if the element was not invalidated in the meantime
+        version = versionRecord->validFrom();
+        if (version == ChainedVersionRecord::INVALID_VERSION) {
+            // Check if we have a previous element
+            versionRecord = versionRecord->getPrevious();
+            if (versionRecord) {
+                continue;
+            }
+            version = 0x0u;
+            return false;
+        }
+
+        // Check if the entry was deleted in this version
+        if (versionRecord->wasDeleted()) {
+            return false;
+        }
+
+        // Set the data pointer and size field
+        data = versionRecord->data();
+        size = recordSize(lsmRecord);
 
         return true;
     }
@@ -83,7 +141,10 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
 
 void Table::insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
-    // TODO Implement
+    size_t size;
+    std::unique_ptr<char[]> rec(mRecord.create(tuple, size));
+    insert(key, size, rec.get(), snapshot, succeeded);
+    // TODO This can be implemented faster by directly serializing the tuple to the log
 }
 
 void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
@@ -142,12 +203,87 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
     return writeEntry(key, snapshot.version(), prev, 0, nullptr, true);
 }
 
+bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+    checkKey(key);
+
+    auto versionRecord = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
+    if (!versionRecord) {
+        return true;
+    }
+
+    while (true) {
+        auto lsmRecord = LSMRecord::recordFromData(reinterpret_cast<const char*>(versionRecord));
+        LOG_ASSERT(lsmRecord->key() == key, "Hash table points to LSMRecord with wrong key");
+
+        auto from = versionRecord->validFrom();
+
+        // Check if the element was already invalidated - Retry from the beginning
+        if (from == ChainedVersionRecord::INVALID_VERSION) {
+            versionRecord = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
+            if (!versionRecord) {
+                return true;
+            }
+            continue;
+        }
+
+        // The element in the hash map is of a different version
+        if (from != snapshot.version()) {
+            // Return true if the element already is older (we do not have to revert anything), false when the element
+            // is newer (this should in theory never happen)
+            return (from < snapshot.version());
+        }
+
+        // If the element has no previous element we can delete it from the hash map
+        auto prev = versionRecord->getPrevious();
+        auto res = (prev ? mHashMap.update(mTableId, key, versionRecord, prev)
+                         : mHashMap.erase(mTableId, key, versionRecord));
+
+        // Check if updating the element into the hash table failed
+        if (!res) {
+            return false;
+        }
+
+        // Invalidate the element we just overrode
+        invalidateTuple(versionRecord);
+
+        if (prev) {
+            // Reactivate the old element - We do not care if this fails as this only happens if another element with
+            // same key was inserted and thus already updated the valid-to version
+            prev->reactivate(snapshot.version());
+        }
+
+        return true;
+    }
+}
+
 void Table::runGC(uint64_t minVersion) {
     // TODO Implement
 }
 
 bool Table::writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* prev, size_t size, const char* data,
         bool deleted) {
+    // Check if the previous element was already set to expire in this version
+    // This means that a concurrent revert with the same version is still running
+    if (prev && prev->validTo() == version) {
+        return false;
+    }
+
+    // Check if we are overriding an element with the same version
+    // In this case we can set the new element's previous pointer to prev's previous pointer as the prev element will
+    // never be read by any version
+    auto sameVersion = (prev && prev->validFrom() == version);
+    auto recordPrev = (sameVersion ? prev->getPrevious() : prev);
+
+    // Check if we delete an element with the same version and the element has no ancestors
+    // In this case we can simply remove the element from the hash map as the element will never be read by any version
+    if (sameVersion && deleted && !recordPrev) {
+        auto res = mHashMap.erase(mTableId, key, prev);
+        if (res) {
+            invalidateTuple(prev);
+        }
+        return res;
+    }
+
     // Append the entry in the log
     auto entry = mLog.append(size + gRecordHeaderSize);
     if (!entry) {
@@ -157,7 +293,7 @@ bool Table::writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* pre
 
     // Write entry to log
     auto lsmRecord = new (entry->data()) LSMRecord(key);
-    auto versionRecord = new (lsmRecord->data()) ChainedVersionRecord(version, prev, deleted);
+    auto versionRecord = new (lsmRecord->data()) ChainedVersionRecord(version, recordPrev, deleted);
     memcpy(versionRecord->data(), data, size);
     entry->seal();
 
@@ -167,18 +303,37 @@ bool Table::writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* pre
 
     // Check if updating the element into the hash table failed
     if (!res) {
-        versionRecord->invalidate();
+        invalidateTuple(versionRecord);
         return false;
     }
 
-    // Let the previous element expire in this version
-    if (prev) {
+    if (sameVersion) {
+        // Invalidate the element we just overrode
+        invalidateTuple(prev);
+    } else if (prev) {
+        // Let the previous element expire in this version
         prev->expire(version);
     }
 
     return true;
 }
 
+void Table::invalidateTuple(ChainedVersionRecord* versionRecord) {
+    versionRecord->invalidate();
+    // TODO Inform replication that the tuple is invalid (might need to write a Tombstone)
+}
+
+void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
+    // TODO Implement
+}
+
 } // namespace logstructured
+
+StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config, size_t totalMem)
+        : mPageManager(totalMem),
+          mTableManager(mPageManager, config, mGc, mCommitManager),
+          mHashMap(config.hashMapCapacity) {
+}
+
 } // namespace store
 } // namespace tell

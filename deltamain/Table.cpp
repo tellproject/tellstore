@@ -137,7 +137,7 @@ void Table::Iterator::setCurrentEntry()
 }
 
 
-Table::Table(PageManager& pageManager, const Schema& schema)
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)
@@ -182,6 +182,14 @@ bool Table::get(uint64_t key,
         }
     }
     // in this case the tuple does not exist
+    return false;
+}
+
+bool Table::getNewest(uint64_t key,
+                      size_t& size,
+                      const char*& data,
+                      uint64_t& version) const {
+    // TODO Implement
     return false;
 }
 
@@ -288,6 +296,11 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
         return entry->data();
     };
     return genericUpdate(fun, key, snapshot);
+}
+
+bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+    // TODO Implement
+    return false;
 }
 
 template<class Fun>

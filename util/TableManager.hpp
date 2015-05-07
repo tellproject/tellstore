@@ -105,16 +105,21 @@ public:
     }
 
 public:
+    template <typename... Args>
     bool createTable(const crossbow::string& name,
                      const Schema& schema,
-                     uint64_t& idx) {
+                     uint64_t& idx,
+                     Args&&... args) {
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
         if (!res.second) {
             return false;
         }
-        mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema);
+
+        auto ptr = tell::store::malloc(sizeof(Table), alignof(Table));
+        LOG_ASSERT(ptr, "Unable to allocate table");
+        mTables[idx] = new(ptr) Table(mPageManager, schema, idx, std::forward<Args>(args)...);
         return true;
     }
 
@@ -135,6 +140,16 @@ public:
     {
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->get(key, size, data, snapshot, isNewest);
+    }
+
+    bool getNewest(uint64_t tableId,
+                   uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version)
+    {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->getNewest(key, size, data, version);
     }
 
     bool update(uint64_t tableId,
@@ -175,6 +190,14 @@ public:
     {
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->remove(key, snapshot);
+    }
+
+    bool revert(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->revert(key, snapshot);
     }
 
     void forceGC() {

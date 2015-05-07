@@ -1,9 +1,10 @@
 #pragma once
 
 #include "implementation.hpp"
-#include <util/TransactionImpl.hpp>
-#include "deltamain/Table.hpp"
+#include <deltamain/Table.hpp>
+#include <logstructured/Table.hpp>
 #include <util/SnapshotDescriptor.hpp>
+#include <util/TransactionImpl.hpp>
 
 namespace tell {
 namespace store {

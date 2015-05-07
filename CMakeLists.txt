@@ -11,6 +11,7 @@ set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
+set(HASHMAP_CAPACITY "0x800000" CACHE STRING "Number of elements to allocate for the hashmap")
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 # Set compile options
@@ -31,6 +32,7 @@ endif()
 find_package(Boost REQUIRED)
 find_package(Crossbow REQUIRED)
 find_package(TBB REQUIRED)
+find_package(Jemalloc REQUIRED)
 
 set(SOURCE_FILES
     implementation.hpp
@@ -89,6 +91,10 @@ target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
+
+# Link against Jemalloc
+target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
 
 ###################
 # GTEST

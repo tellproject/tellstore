@@ -69,12 +69,17 @@ public:
             return !(*this == other);
         }
     };
-    Table(PageManager& pageManager, const Schema& schema);
+    Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
     bool get(uint64_t key,
              size_t& size,
              const char*& data,
              const SnapshotDescriptor& snapshot,
              bool& isNewest) const;
+
+    bool getNewest(uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version) const;
 
     void insert(uint64_t key,
                 const GenericTuple& tuple,
@@ -92,6 +97,9 @@ public:
                 const SnapshotDescriptor& snapshot);
 
     bool remove(uint64_t key,
+                const SnapshotDescriptor& snapshot);
+
+    bool revert(uint64_t key,
                 const SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
@@ -152,6 +160,15 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return tableManager.get(tableId, key, size, data, snapshot, isNewest);
     }
 
+    bool getNewest(uint64_t tableId,
+                   uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version)
+    {
+        return tableManager.getNewest(tableId, key, size, data, version);
+    }
+
     bool update(uint64_t tableId,
                 uint64_t key,
                 size_t size,
@@ -185,6 +202,13 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 const SnapshotDescriptor& snapshot)
     {
         return tableManager.remove(tableId, key, snapshot);
+    }
+
+    bool revert(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        return tableManager.revert(tableId, key, snapshot);
     }
 
     /**
