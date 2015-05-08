@@ -33,7 +33,7 @@ protected:
         mPageManager->free(mPage);
     }
 
-    allocator alloc;
+    allocator mAlloc;
     PageManager* mPageManager;
 
     LogPage* mPage;
@@ -134,7 +134,7 @@ protected:
         allocator::free_in_order(p, [p](){ p->~PageManager(); });
     }
 
-    allocator alloc;
+    allocator mAlloc;
     PageManager* mPageManager;
 
     Log<Impl> mLog;
@@ -617,11 +617,17 @@ protected:
     static constexpr int pageCount = 100; // Number of pages to reserve in the page manager - 100
 
     LogTestThreaded()
-            : mPageManager(TELL_PAGE_SIZE * pageCount),
-              mLog(mPageManager) {
+            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 100)),
+              mLog(*mPageManager) {
     }
 
-    PageManager mPageManager;
+    virtual ~LogTestThreaded() {
+        auto p = mPageManager;
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+    }
+
+    allocator mAlloc;
+    PageManager* mPageManager;
 
     Log<Impl> mLog;
 };

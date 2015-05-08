@@ -3,6 +3,7 @@
 #include <logstructured/Table.hpp>
 
 #include <util/CommitManager.hpp>
+#include <util/Epoch.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/Record.hpp>
@@ -21,11 +22,16 @@ namespace {
 class TableTest : public ::testing::Test {
 protected:
     TableTest()
-            : mPageManager(TELL_PAGE_SIZE * 4),
+            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 4)),
               mHashMap(1024),
-              mTable(mPageManager, mSchema, 1, mHashMap),
+              mTable(*mPageManager, mSchema, 1, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
+    }
+
+    virtual ~TableTest() {
+        auto p = mPageManager;
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
     }
 
     /**
@@ -45,7 +51,8 @@ protected:
         EXPECT_EQ(expectedNewest, isNewest);
     }
 
-    PageManager mPageManager;
+    allocator mAlloc;
+    PageManager* mPageManager;
     Table::HashTable mHashMap;
     Schema mSchema;
 
