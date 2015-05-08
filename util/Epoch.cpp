@@ -182,6 +182,10 @@ void allocator::free(void* ptr, std::function<void()> destruct) {
     active_list.load()->append(reinterpret_cast<uint8_t*>(ptr), t, destruct);
 }
 
+void allocator::free_in_order(void* ptr, std::function<void()> destruct) {
+    active_list.load()->append(reinterpret_cast<uint8_t*>(ptr), 0, destruct);
+}
+
 void allocator::free_now(void* ptr) {
     uint8_t* res = reinterpret_cast<uint8_t*>(ptr);
     res -= sizeof(lists::node);

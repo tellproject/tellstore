@@ -36,8 +36,8 @@ public:
 
     static void* malloc(std::size_t size, std::size_t align);
 
-    static void free(void* ptr, std::function<void()> destruct = []() {
-    });
+    static void free(void* ptr, std::function<void()> destruct = []() { });
+    static void free_in_order(void* ptr, std::function<void()> destruct = []() { });
 
     static void free_now(void* ptr);
 };

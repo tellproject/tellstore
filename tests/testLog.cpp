@@ -22,7 +22,7 @@ protected:
 
     virtual ~LogPageTest() {
         auto p = mPageManager;
-        allocator::free(p, [p](){ p->~PageManager(); });
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
     }
 
     virtual void SetUp() {
@@ -33,6 +33,7 @@ protected:
         mPageManager->free(mPage);
     }
 
+    allocator alloc;
     PageManager* mPageManager;
 
     LogPage* mPage;
@@ -130,9 +131,10 @@ protected:
 
     virtual ~BaseLogTest() {
         auto p = mPageManager;
-        allocator::free(p, [p](){ p->~PageManager(); });
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
     }
 
+    allocator alloc;
     PageManager* mPageManager;
 
     Log<Impl> mLog;
