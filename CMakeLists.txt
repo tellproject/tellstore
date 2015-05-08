@@ -17,7 +17,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 # Set compile options
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 if ( USE_ASAN )
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls -fsanitize=address")
 endif()
 if ( ENABLE_HEAVYWEIGHT_TESTS )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_HEAVYWEIGHT_TESTS")
@@ -78,7 +78,7 @@ set(SOURCE_FILES
 configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 
 # Add TellStore library
-add_library(TellStore SHARED ${SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+add_library(TellStore STATIC ${SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(TellStore PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
