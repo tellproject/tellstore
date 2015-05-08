@@ -1,6 +1,7 @@
 #include "Epoch.hpp"
 
 #include <array>
+#include <cstdlib>
 
 #include <jemalloc/jemalloc.h>
 
@@ -109,6 +110,7 @@ void init() {
     active_list.store(new lists());
     old_list.store(new lists());
     oldest_list.store(new lists());
+    atexit(&destroy);
 }
 
 void destroy() {
