@@ -98,11 +98,11 @@ auto Table::Iterator::operator++(int) -> Iterator
     return res;
 }
 
-const IteratorEntry& Table::Iterator::operator*() const {
+const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& Table::Iterator::operator*() const {
     return *currVersionIter;
 }
 
-const IteratorEntry* Table::Iterator::operator->() const
+const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* Table::Iterator::operator->() const
 {
     return &(this->operator*());
 }

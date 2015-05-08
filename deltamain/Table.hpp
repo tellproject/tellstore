@@ -46,7 +46,7 @@ public:
     private: // calculated members
         Page::Iterator pageIter;
         Page::Iterator pageEnd;
-        IteratorEntry currEntry;
+        IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> currEntry;
         CDMRecord::VersionIterator currVersionIter;
     private: // construction
         Iterator(const std::shared_ptr<allocator>& alloc,
