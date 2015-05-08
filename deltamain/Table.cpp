@@ -338,7 +338,6 @@ auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, I
     auto alloc = std::make_shared<allocator>();
     auto insIter = mInsertLog.begin();
     auto endIns = mInsertLog.end();
-    auto& hashTable = *mHashTable.load();
     const auto* pages = mPages.load();
     auto numPages = pages->size();
     std::vector<std::pair<Iterator, Iterator>> result(numThreads);
@@ -435,11 +434,15 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : pageManager(config.totalMemory), tableManager(pageManager, config, gc, commitManager) {
+    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free(p, [p](){p->~PageManager();}); })
+    , tableManager(*pageManager, config, gc, commitManager)
+{
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : pageManager(totalMem), tableManager(pageManager, config, gc, commitManager) {
+    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free(p, [p](){p->~PageManager();}); })
+    , tableManager(*pageManager, config, gc, commitManager)
+{
 }
 
 } // namespace store

@@ -13,6 +13,7 @@
 #include <vector>
 #include <limits>
 #include <atomic>
+#include <functional>
 #include <crossbow/string.hpp>
 
 #include "Page.hpp"
@@ -124,7 +125,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using GC = deltamain::GarbageCollector;
     using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
     using Transaction = TransactionImpl<StorageType>;
-    PageManager pageManager;
+    std::unique_ptr<PageManager, std::function<void(PageManager*)>> pageManager;
     GC gc;
     CommitManager commitManager;
     TableManager<Table, GC> tableManager;
@@ -132,7 +133,6 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     StoreImpl(const StorageConfig& config);
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
-
 
     Transaction startTx()
     {

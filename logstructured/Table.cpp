@@ -32,6 +32,7 @@ size_t recordSize(const LSMRecord* record) {
 } // anonymous namespace
 
 Table::Iterator& Table::Iterator::operator++() {
+    return *this;
 }
 
 const IteratorEntry* Table::Iterator::operator->() const {
@@ -345,8 +346,8 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 } // namespace logstructured
 
 StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config, size_t totalMem)
-        : mPageManager(totalMem),
-          mTableManager(mPageManager, config, mGc, mCommitManager),
+        : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free(p, [p](){p->~PageManager();}); }),
+          mTableManager(*mPageManager, config, mGc, mCommitManager),
           mHashMap(config.hashMapCapacity) {
 }
 

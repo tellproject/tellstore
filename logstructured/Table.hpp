@@ -191,7 +191,7 @@ public:
  * @brief A Storage implementation using a Log-Structured Memory approach as its data store
  */
 template<>
-class StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : NonCopyable, NonMovable {
+struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : NonCopyable, NonMovable {
 public:
     using Table = logstructured::Table;
     using GC = logstructured::GarbageCollector;
@@ -268,7 +268,7 @@ public:
     }
 
 private:
-    PageManager mPageManager;
+    std::unique_ptr<PageManager, std::function<void(PageManager*)>> mPageManager;
     GC mGc;
     CommitManager mCommitManager;
     TableManager<Table, GC> mTableManager;

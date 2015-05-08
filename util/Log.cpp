@@ -141,6 +141,7 @@ void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
     }
 
     auto next = begin->next().exchange(end);
+    if (next == end) return;
     freePage(next, end);
 }
 

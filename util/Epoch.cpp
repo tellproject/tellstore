@@ -12,8 +12,9 @@ struct lists {
         std::function<void()> destruct;
 
         node(void* p)
-            : ptr(p),
-              next(reinterpret_cast<node*>(0x1)) {
+            : next(reinterpret_cast<node*>(0x1))
+            , ptr(p)
+        {
         }
 
         ~node() {
@@ -40,14 +41,16 @@ struct lists {
         }
 
         ~list() {
-            node* head = head_.load();
-            while (reinterpret_cast<uint64_t>(head) != 0x0) {
-                node* next = head->next.load();
-                auto ptr = head->ptr;
-                head->~node();
-                ::je_free(ptr);
-                head = next;
-            }
+            destruct(head_.load());
+        }
+
+        // TODO change direction of list
+        void destruct(node* node) {
+            if (node == nullptr) return;
+            destruct(node->next);
+            auto ptr = node->ptr;
+            node->~node();
+            ::je_free(ptr);
         }
 
         std::atomic<node*> head_;

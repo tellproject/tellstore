@@ -110,6 +110,7 @@ public:
                      const Schema& schema,
                      uint64_t& idx,
                      Args&&... args) {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
@@ -138,6 +139,7 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->get(key, size, data, snapshot, isNewest);
     }
@@ -148,6 +150,7 @@ public:
                    const char*& data,
                    uint64_t& version)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->getNewest(key, size, data, version);
     }
@@ -158,6 +161,7 @@ public:
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->update(key, size, data, snapshot);
     }
@@ -170,6 +174,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, size, data, snapshot, succeeded);
     }
@@ -180,6 +185,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, tuple, snapshot, succeeded);
     }
@@ -188,6 +194,7 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->remove(key, snapshot);
     }
@@ -196,6 +203,7 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->revert(key, snapshot);
     }
