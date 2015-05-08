@@ -62,8 +62,8 @@ public:
         Iterator& operator= (const Iterator& other);
         Iterator operator++(int);
         Iterator& operator++();
-        const IteratorEntry& operator*() const;
-        const IteratorEntry* operator->() const;
+        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& operator*() const;
+        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* operator->() const;
         bool operator==(const Iterator&) const;
         bool operator!=(const Iterator& other) const {
             return !(*this == other);
