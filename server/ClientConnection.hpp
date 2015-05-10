@@ -3,6 +3,7 @@
 #include "ServerConfig.hpp"
 
 #include <tellstore.hpp>
+#include <util/SnapshotDescriptor.hpp>
 
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
@@ -22,6 +23,7 @@ namespace proto {
 class RpcRequest;
 class RpcResponse;
 class RpcResponseBatch;
+class SnapshotDescriptor;
 } // namespace proto
 
 class ConnectionManager;
@@ -63,21 +65,28 @@ private:
     void sendResponseBatch(const proto::RpcResponseBatch& responseBatch);
 
     /**
-     * @brief Get the transaction associated with the request
+     * @brief Get the snapshot associated with the request and pass it to the function
      *
-     * Retrieves the transaction from the cache if it is present. If the client sent a snapshot descriptor with the
-     * request a new transaction is created and added to the cache. The transaction has to be either in the cache or
-     * sent with the request (not both and not none of them at the same time).
+     * The snapshot can come from different sources: If the client requested a cached snapshot the snapshot is
+     * retrieved from the local cache or added to the cache in case the data was supplied in the snapshot message. The
+     * snapshot has to be either in the cache or sent with the request (not both and not none of them at the same
+     * time). If the client requested an uncached snapshot then the snapshot is parsed from the message without
+     * considering the cache.
      *
-     * @param request Client request to get the associated transaction
-     * @return A pointer to the transaction or null in case the transaction is invalid
+     * In case of an error (no snapshot descriptor or conflicting data found) the error response will be set and the
+     * function will not be invoked.
+     *
+     * @param snapshot Snapshot message the client sent
+     * @param response The response that will be sent back to the client
+     * @param f Function with the signature (const SnapshotDescriptor&, proto::RpcResponse&)
      */
-    Storage::Transaction* getTransaction(const proto::RpcRequest& request);
+    template <typename Fun>
+    void handleSnapshot(const proto::SnapshotDescriptor& snapshot, proto::RpcResponse& response, Fun f);
 
     /**
-     * @brief Removes the transaction from the cache
+     * @brief Removes the snapshot from the cache
      */
-    void removeTransaction(uint64_t version);
+    void removeSnapshot(uint64_t version);
 
     ConnectionManager& mManager;
     Storage& mStorage;
@@ -85,11 +94,11 @@ private:
     /// Client socket
     crossbow::infinio::InfinibandSocket mSocket;
 
-    /// Mutex for the transaction cache
-    tbb::queuing_rw_mutex mTransactionsMutex;
+    /// Mutex for the snapshot cache
+    tbb::queuing_rw_mutex mSnapshotsMutex;
 
-    /// Transaction Cache mapping the version number to the transaction
-    tbb::concurrent_unordered_map<uint64_t, Storage::Transaction> mTransactions;
+    /// Snapshot cache mapping the version number to the snapshot descriptor
+    tbb::concurrent_unordered_map<uint64_t, SnapshotDescriptor> mSnapshots;
 
 };
 

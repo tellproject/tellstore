@@ -6,10 +6,25 @@
 
 #include <util/Epoch.hpp>
 #include <util/Logging.hpp>
-#include <util/SnapshotDescriptor.hpp>
 
 namespace tell {
 namespace store {
+
+namespace {
+
+/**
+ * @brief Extracts the snapshot descriptor from the message
+ *
+ * The data field has to be set in the message.
+ */
+SnapshotDescriptor snapshotFromMessage(const proto::SnapshotDescriptor& snapshot) {
+    auto snapshotLength = snapshot.data().length();
+    std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[snapshotLength]);
+    memcpy(dataBuffer.get(), snapshot.data().data(), snapshotLength);
+    return SnapshotDescriptor(dataBuffer.release(), snapshotLength, snapshot.version());
+}
+
+} // anonymous namespace
 
 ClientConnection::~ClientConnection() {
     boost::system::error_code ec;
@@ -58,6 +73,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
     auto responseField = responseBatch.mutable_response();
     for (auto& request : requestBatch.request()) {
         auto response = responseField->Add();
+        response->set_messageid(request.messageid());
         handleRequest(request, *response);
 
         // Response batch became too big we have to split it
@@ -92,24 +108,13 @@ void ClientConnection::onDisconnect() {
 }
 
 void ClientConnection::onDisconnected() {
-    // Abort all open transactions
-    // No more handlers are active so we do not need to synchronize
-    for (auto& transaction : mTransactions) {
-        transaction.second.abort();
-    }
+    // Clear snapshot cache - No more handlers are active so we do not need to synchronize
+    mSnapshots.clear();
 
     mManager.removeConnection(this);
 }
 
 void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::RpcResponse& response) {
-    response.set_version(request.version());
-
-    auto transaction = getTransaction(request);
-    if (!transaction) {
-        response.set_error(proto::RpcResponse::INVALID_DESCRIPTOR);
-        return;
-    }
-
     switch (request.Request_case()) {
     case proto::RpcRequest::kCreateTable: {
         auto& createTableRequest = request.createtable();
@@ -134,57 +139,66 @@ void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::Rp
 
     case proto::RpcRequest::kGet: {
         auto& getRequest = request.get();
-        auto getResponse = response.mutable_get();
-
-        size_t size = 0;
-        const char* data = nullptr;
-        bool isNewest = false;
-        if (mStorage.get(getRequest.tableid(), getRequest.key(), size, data, transaction->descriptor(), isNewest)) {
-            getResponse->set_data(data, size);
-        }
-        getResponse->set_isnewest(isNewest);
+        handleSnapshot(getRequest.snapshot(), response,
+                [this, &getRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
+            auto getResponse = response.mutable_get();
+            size_t size = 0;
+            const char* data = nullptr;
+            bool isNewest = false;
+            if (mStorage.get(getRequest.tableid(), getRequest.key(), size, data, snapshot, isNewest)) {
+                getResponse->set_data(data, size);
+            }
+            getResponse->set_isnewest(isNewest);
+        });
     } break;
 
     case proto::RpcRequest::kUpdate: {
         auto& updateRequest = request.update();
-        auto updateResponse = response.mutable_update();
-
-        auto& data = updateRequest.data();
-        auto succeeded = mStorage.update(updateRequest.tableid(), updateRequest.key(), data.length(), data.data(),
-                transaction->descriptor());
-        updateResponse->set_succeeded(succeeded);
+        handleSnapshot(updateRequest.snapshot(), response,
+                [this, &updateRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
+            auto updateResponse = response.mutable_update();
+            auto& data = updateRequest.data();
+            auto succeeded = mStorage.update(updateRequest.tableid(), updateRequest.key(), data.length(), data.data(),
+                    snapshot);
+            updateResponse->set_succeeded(succeeded);
+        });
     } break;
 
     case proto::RpcRequest::kInsert: {
         auto& insertRequest = request.insert();
-        auto insertResponse = response.mutable_insert();
-
-        bool succeeded = false;
-        auto& data = insertRequest.data();
-        mStorage.insert(insertRequest.tableid(), insertRequest.key(), data.length(), data.data(),
-                transaction->descriptor(), (insertRequest.succeeded() ? &succeeded : nullptr));
-        if (insertRequest.succeeded()) {
-            insertResponse->set_succeeded(succeeded);
-        }
+        handleSnapshot(insertRequest.snapshot(), response,
+                [this, &insertRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
+            auto insertResponse = response.mutable_insert();
+            bool succeeded = false;
+            auto& data = insertRequest.data();
+            mStorage.insert(insertRequest.tableid(), insertRequest.key(), data.length(), data.data(), snapshot,
+                    (insertRequest.succeeded() ? &succeeded : nullptr));
+            if (insertRequest.succeeded()) {
+                insertResponse->set_succeeded(succeeded);
+            }
+        });
     } break;
 
     case proto::RpcRequest::kRemove: {
         auto& removeRequest = request.remove();
-        auto removeResponse = response.mutable_remove();
-
-        auto succeeded = mStorage.remove(removeRequest.tableid(), removeRequest.key(), transaction->descriptor());
-        removeResponse->set_succeeded(succeeded);
+        handleSnapshot(removeRequest.snapshot(), response,
+                [this, &removeRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
+            auto removeResponse = response.mutable_remove();
+            auto succeeded = mStorage.remove(removeRequest.tableid(), removeRequest.key(), snapshot);
+            removeResponse->set_succeeded(succeeded);
+        });
     } break;
 
     case proto::RpcRequest::kCommit: {
         auto& commitRequest = request.commit();
         auto commitResponse = response.mutable_commit();
 
-        if (commitRequest.commit()) {
-            transaction->commit();
-        } else {
-            transaction->abort();
+        auto& snapshot = commitRequest.snapshot();
+        if (snapshot.cached()) {
+            removeSnapshot(snapshot.version());
         }
+
+        // TODO Implement commit logic
         commitResponse->set_succeeded(true);
     } break;
 
@@ -212,42 +226,42 @@ void ClientConnection::sendResponseBatch(const proto::RpcResponseBatch& response
     }
 }
 
-Storage::Transaction* ClientConnection::getTransaction(const proto::RpcRequest& request) {
-    Storage::Transaction* transaction;
-    {
-        tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
-        auto i = mTransactions.find(request.version());
-        transaction = (i != mTransactions.end() ? &i->second : nullptr);
-    }
+template <typename Fun>
+void ClientConnection::handleSnapshot(const proto::SnapshotDescriptor& snapshot, proto::RpcResponse& response, Fun f) {
+    if (snapshot.cached()) {
+        tbb::queuing_rw_mutex::scoped_lock lock(mSnapshotsMutex, false);
+        auto i = mSnapshots.find(snapshot.version());
 
-    // Check if the transaction was either in the cache or a descriptor was sent (not both and not none of them)
-    if (!!transaction ^ request.has_desc()) {
-        return nullptr;
-    }
+        // Either we already have the snapshot in our cache or the client send it to us
+        auto found = (i != mSnapshots.end());
+        if (found ^ snapshot.has_data()) {
+            response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+            return;
+        }
 
-    // We have the transaction cached
-    if (transaction) {
-        return transaction;
-    }
+        if (!found) {
+            // We have to add the snapshot to the cache
+            auto res = mSnapshots.insert(std::make_pair(snapshot.version(), snapshotFromMessage(snapshot)));
+            if (!res.second) { // Element was inserted by another thread
+                response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+                return;
+            }
+            i = res.first;
+        }
 
-    // We have to add the transaction to the cache
-    auto descriptorLength = request.desc().length();
-    std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[descriptorLength]);
-    memcpy(dataBuffer.get(), request.desc().data(), descriptorLength);
-    SnapshotDescriptor descriptor(dataBuffer.release(), descriptorLength, request.version());
-
-    tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
-    auto res = mTransactions.insert(std::make_pair(request.version(), Storage::Transaction(mStorage,
-            std::move(descriptor))));
-    if (!res.second) {
-        return nullptr;
+        f(i->second, response);
+    } else {
+        if (!snapshot.has_data()) {
+            response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+            return;
+        }
+        f(snapshotFromMessage(snapshot), response);
     }
-    return &res.first->second;
 }
 
-void ClientConnection::removeTransaction(uint64_t version) {
-    tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, true);
-    mTransactions.unsafe_erase(version);
+void ClientConnection::removeSnapshot(uint64_t version) {
+    tbb::queuing_rw_mutex::scoped_lock lock(mSnapshotsMutex, true);
+    mSnapshots.unsafe_erase(version);
 }
 
 } // namespace store

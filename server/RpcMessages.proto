@@ -1,12 +1,17 @@
 package tell.store.proto;
 
+message SnapshotDescriptor {
+    required uint64 version = 1;
+    optional bytes data = 2;
+    required bool cached = 3;
+}
+
 message RpcRequestBatch {
     repeated RpcRequest request = 1;
 }
 
 message RpcRequest {
-    required uint64 version = 1;
-    optional bytes desc = 2; // Descriptor is reserved by protobuf
+    required uint64 messageId = 1;
 
     oneof Request {
         CreateTableRequest createTable = 10;
@@ -26,10 +31,10 @@ message RpcResponseBatch {
 message RpcResponse {
     enum Error {
         UNKNOWN_REQUEST = 0;
-        INVALID_DESCRIPTOR = 1;
+        INVALID_SNAPSHOT = 1;
     }
 
-    required uint64 version = 1;
+    required uint64 messageId = 1;
     optional Error error = 2;
 
     oneof Response {
@@ -63,6 +68,7 @@ message GetTableIdResponse {
 message GetRequest {
     required uint64 tableId = 1;
     required uint64 key = 2;
+    required SnapshotDescriptor snapshot = 3;
 }
 
 message GetResponse {
@@ -74,6 +80,7 @@ message UpdateRequest {
     required uint64 tableId = 1;
     required uint64 key = 2;
     required bytes data = 3;
+    required SnapshotDescriptor snapshot = 4;
 }
 
 message UpdateResponse {
@@ -84,7 +91,8 @@ message InsertRequest {
     required uint64 tableId = 1;
     required uint64 key = 2;
     required bytes data = 3;
-    required bool succeeded = 4;
+    required SnapshotDescriptor snapshot = 4;
+    required bool succeeded = 5;
 }
 
 message InsertResponse {
@@ -94,6 +102,7 @@ message InsertResponse {
 message RemoveRequest {
     required uint64 tableId = 1;
     required uint64 key = 2;
+    required SnapshotDescriptor snapshot = 3;
 }
 
 message RemoveResponse {
@@ -101,7 +110,7 @@ message RemoveResponse {
 }
 
 message CommitRequest {
-    required bool commit = 1;
+    required SnapshotDescriptor snapshot = 1;
 }
 
 message CommitResponse {
