@@ -120,12 +120,12 @@ using Logger = crossbow::singleton<LoggerT>;
 
 extern Logger logger;
 
-#define LOG_TRACE(...) logger->trace(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
-#define LOG_DEBUG(...) logger->debug(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
-#define LOG_INFO(...) logger->info(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
-#define LOG_WARN(...) logger->warn(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
-#define LOG_ERROR(...) logger->error(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
-#define LOG_FATAL(...) logger->fatal(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_TRACE(...) tell::store::logger->trace(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_DEBUG(...) tell::store::logger->debug(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_INFO(...) tell::store::logger->info(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_WARN(...) tell::store::logger->warn(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_ERROR(...) tell::store::logger->error(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+#define LOG_FATAL(...) tell::store::logger->fatal(__FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 #ifdef NDEBUG
 #   define LOG_ASSERT(...)
 #else
