@@ -48,11 +48,9 @@ public:
 private:
     virtual void onConnected(const boost::system::error_code& ec) final override;
 
-    virtual void onReceive(const crossbow::infinio::InfinibandBuffer& buffer, size_t length,
-            const boost::system::error_code& ec) final override;
+    virtual void onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) final override;
 
-    virtual void onSend(const crossbow::infinio::InfinibandBuffer& buffer, size_t length,
-            const boost::system::error_code& ec) final override;
+    virtual void onSend(uint32_t userId, const boost::system::error_code& ec) final override;
 
     virtual void onDisconnect() final override;
 

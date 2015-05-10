@@ -39,8 +39,7 @@ void ClientConnection::onConnected(const boost::system::error_code& ec) {
     }
 }
 
-void ClientConnection::onReceive(const crossbow::infinio::InfinibandBuffer& buffer, size_t length,
-        const boost::system::error_code& ec) {
+void ClientConnection::onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error receiving message");
         // TODO Handle this situation somehow
@@ -49,7 +48,7 @@ void ClientConnection::onReceive(const crossbow::infinio::InfinibandBuffer& buff
 
     proto::RpcResponseBatch responseBatch;
     proto::RpcRequestBatch requestBatch;
-    if (!requestBatch.ParseFromArray(buffer.data(), length)) {
+    if (!requestBatch.ParseFromArray(buffer, length)) {
         LOG_ERROR("Error parsing protobuf message");
         // TODO Handle this situation somehow
         return;
@@ -81,8 +80,7 @@ void ClientConnection::onReceive(const crossbow::infinio::InfinibandBuffer& buff
     }
 }
 
-void ClientConnection::onSend(const crossbow::infinio::InfinibandBuffer& buffer, size_t length,
-        const boost::system::error_code& ec) {
+void ClientConnection::onSend(uint32_t userId, const boost::system::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error sending message");
         // TODO Handle this situation somehow
@@ -197,7 +195,7 @@ void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::Rp
 }
 
 void ClientConnection::sendResponseBatch(const proto::RpcResponseBatch& responseBatch) {
-    auto sbuffer = mSocket.acquireBuffer(responseBatch.ByteSize());
+    auto sbuffer = mSocket.acquireSendBuffer(responseBatch.ByteSize());
     if (sbuffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
         LOG_ERROR("System ran out of buffers");
         // TODO Handle this situation somehow
@@ -206,9 +204,9 @@ void ClientConnection::sendResponseBatch(const proto::RpcResponseBatch& response
     responseBatch.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(sbuffer.data()));
 
     boost::system::error_code ec;
-    mSocket.send(sbuffer, ec);
+    mSocket.send(sbuffer, 0, ec);
     if (ec)  {
-        mSocket.releaseBuffer(sbuffer.id());
+        mSocket.releaseSendBuffer(sbuffer);
         LOG_ERROR("Error sending message");
         // TODO Handle this situation somehow
     }

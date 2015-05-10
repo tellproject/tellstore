@@ -23,7 +23,7 @@ namespace store {
 
 class ClientConnection;
 
-class ConnectionManager : private crossbow::infinio::InfinibandAcceptorHandler {
+class ConnectionManager : private crossbow::infinio::InfinibandSocketHandler {
 public:
     ConnectionManager(Storage& storage, crossbow::infinio::EventDispatcher& dispatcher, const ServerConfig& config)
             : mConfig(config),
