@@ -10,12 +10,14 @@ option(ENABLE_HEAVYWEIGHT_TESTS "Build ressource intensive or long running unit 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
+set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
+set(HASHMAP_CAPACITY "0x800000" CACHE STRING "Number of elements to allocate for the hashmap")
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 # Set compile options
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 if ( USE_ASAN )
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls -fsanitize=address")
 endif()
 if ( ENABLE_HEAVYWEIGHT_TESTS )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_HEAVYWEIGHT_TESTS")
@@ -30,6 +32,7 @@ endif()
 find_package(Boost REQUIRED)
 find_package(Crossbow COMPONENTS InfinIO REQUIRED)
 find_package(TBB REQUIRED)
+find_package(Jemalloc REQUIRED)
 find_package(Protobuf REQUIRED)
 
 set(PROTO_FILES
@@ -78,6 +81,9 @@ set(SOURCE_FILES
     util/StorageConfig.hpp
     util/SnapshotDescriptor.hpp
     util/Request.hpp
+    util/Scan.hpp
+    util/ScanQuery.hpp
+    util/IteratorEntry.hpp
     util/chunk_allocator.hpp
     util/functional.hpp)
 
@@ -88,7 +94,7 @@ configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTO_FILES})
 
 # Add TellStore library
-add_library(TellStore SHARED ${SOURCE_FILES} ${PROTO_SOURCES} ${PROTO_HEADERS} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+add_library(TellStore STATIC ${SOURCE_FILES} ${PROTO_SOURCES} ${PROTO_HEADERS} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(TellStore PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -102,6 +108,11 @@ target_link_libraries(TellStore PUBLIC crossbow_infinio)
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
+
+# Link against Jemalloc
+target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
+target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
 
 # Link against Protobuf
 target_include_directories(TellStore PUBLIC ${PROTOBUF_INCLUDE_DIRS})

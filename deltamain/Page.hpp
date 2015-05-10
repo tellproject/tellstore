@@ -6,6 +6,7 @@
 #include <config.h>
 #include <util/PageManager.hpp>
 #include <util/Epoch.hpp>
+#include <util/Scan.hpp>
 
 #include "Record.hpp"
 #include "InsertMap.hpp"
@@ -30,6 +31,24 @@ class Page {
     char* mData;
     uint64_t mStartOffset;
 public:
+    class Iterator {
+        friend class Page;
+    private:
+        const char* current;
+        Iterator(const char* current) : current(current) {}
+    public:
+        Iterator() {}
+        Iterator(const Iterator&) = default;
+        Iterator& operator=(const Iterator&) = default;
+    public:
+        Iterator& operator++();
+        Iterator operator++(int);
+        bool operator==(const Iterator& other) const;
+        bool operator!=(const Iterator& other) const {
+            return !(*this == other);
+        }
+        const char* operator*() const;
+    };
     Page(PageManager& pageManager, char* data)
         : mPageManager(pageManager)
         , mData(data)
@@ -53,9 +72,11 @@ public:
 
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);
     static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable);
+
+    Iterator begin() const;
+    Iterator end() const;
 };
 
 } // namespace deltamain
 } // namespace store
 } // namespace tell
-

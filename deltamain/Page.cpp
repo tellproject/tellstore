@@ -6,6 +6,36 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+auto Page::Iterator::operator++() -> Iterator&
+{
+    CDMRecord rec(current);
+    current += rec.size();
+    return *this;
+}
+
+auto Page::Iterator::operator++(int) -> Iterator
+{
+    auto res = *this;
+    ++(*this);
+    return res;
+}
+
+const char* Page::Iterator::operator*() const {
+    return current;
+}
+
+bool Page::Iterator::operator== (const Iterator& other) const {
+    return current == other.current;
+}
+
+auto Page::begin() const -> Iterator {
+    return Iterator(mData + 8);
+}
+
+auto Page::end() const -> Iterator {
+    return Iterator(mData + usedMemory());
+}
+
 char* Page::gc(
         uint64_t lowestActiveVersion,
         InsertMap& insertMap,

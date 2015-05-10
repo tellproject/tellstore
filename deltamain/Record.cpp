@@ -927,6 +927,147 @@ uint64_t MVRecordBase<T>::copyAndCompact(
 
 } // namespace {}
 
+template<class T>
+DMRecordImplBase<T>::VersionIterator::VersionIterator(const Record* record, const char* current)
+    : record(record)
+    , current(current)
+{
+    currEntry.mRecord = record;
+    // go to the first valid entry
+    while (current) {
+        CDMRecord rec(current);
+        if (rec.type() == RecordType::MULTI_VERSION_RECORD) {
+            MVRecord<const char*> mvRec(current);
+            auto numV = mvRec.getNumberOfVersions();
+            auto offs = mvRec.offsets();
+            for (decltype(numV) i = 0; i < numV; ++i) {
+                if (offs[i] > 0) {
+                    idx = i;
+                    goto END;
+                }
+            }
+            // this MVRecord only contains invalid data, but this should
+            // never happen
+            LOG_ERROR("You must never get an iterator on an invalid (reverted) record");
+            std::terminate();
+        } else if (rec.type() == RecordType::LOG_INSERT) {
+            return;
+        } else {
+            LOG_ERROR("A Version iterator must always start either at in insert or on a MVRecord");
+            std::terminate();
+        }
+    }
+END:
+    initRes();
+}
+
+template<class T>
+auto DMRecordImplBase<T>::VersionIterator::operator++() -> VersionIterator&
+{
+    while (current != nullptr) {
+        CDMRecord rec(current);
+        if (rec.type() == RecordType::MULTI_VERSION_RECORD) {
+            MVRecord<const char*> mvRec(current);
+            auto numV = mvRec.getNumberOfVersions();
+            auto offs = mvRec.offsets();
+            ++idx;
+            while (numV > idx && offs[idx] < 0);
+            if (numV == idx) {
+                // we reachted the end of the MVRecord
+                current = mvRec.getNewest();
+            } else {
+                // we are done
+                goto END;
+            }
+        } else if (rec.type() == RecordType::LOG_INSERT) {
+            LogInsert<const char*> ins(current);
+            if (!ins.isValidDataRecord()) {
+                current = nullptr;
+            } else {
+                goto END;
+            }
+        } else if (rec.type() == RecordType::LOG_DELETE) {
+            current = nullptr;
+        } else if (rec.type() == RecordType::LOG_UPDATE) {
+            LogUpdate<const char*> upd(current);
+            if (upd.isValidDataRecord()) {
+                goto END;
+            } else {
+                current = upd.getPrevious();
+            }
+        }
+    }
+END:
+    initRes();
+    return *this;
+}
+
+template<class T>
+void DMRecordImplBase<T>::VersionIterator::initRes()
+{
+    if (current == nullptr) return;
+    CDMRecord rec(current);
+    if (rec.type() == RecordType::MULTI_VERSION_RECORD) {
+        MVRecord<const char*> mvRec(current);
+        auto nV = mvRec.getNumberOfVersions();
+        auto versions = mvRec.versions();
+        auto offs = mvRec.offsets();
+        currEntry.mData = current + offs[idx];
+        currEntry.mValidFrom = versions[idx];
+        if (idx == nV - 1) {
+            // we need to check the next pointer in order to be able
+            // to get the validTo property
+            auto n = mvRec.getNewest();
+            while (n != nullptr) {
+                LogOp<const char*> rc(n);
+                if (rc.isValidDataRecord()) break;
+                n = rc.getPrevious();
+            }
+            if (n == nullptr) {
+                currEntry.mValidTo = std::numeric_limits<uint64_t>::max();
+            } else {
+                LogOp<const char*> r(n);
+                currEntry.mValidTo = r.version();
+            }
+        } else {
+            currEntry.mValidTo = versions[idx + 1];
+        }
+    } else if (rec.type() == RecordType::LOG_INSERT) {
+        LogInsert<const char*> insRec(current);
+        currEntry.mData = insRec.dataPtr();
+        currEntry.mValidFrom = insRec.version();
+        auto n = insRec.getNewest();
+        while (n != nullptr) {
+            LogOp<const char*> rc(n);
+            if (rc.isValidDataRecord()) break;
+            n = rc.getPrevious();
+        }
+        if (n == nullptr) {
+            currEntry.mValidTo = std::numeric_limits<uint64_t>::max();
+        } else {
+            LogOp<const char*> r(n);
+            currEntry.mValidTo = r.version();
+        }
+    } else if (rec.type() == RecordType::LOG_UPDATE) {
+        LogUpdate<const char*> up(current);
+        currEntry.mData = up.dataPtr();
+        currEntry.mValidTo = currEntry.mValidFrom;
+        currEntry.mValidFrom = up.version();
+    }
+}
+
+template<class T>
+const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry& DMRecordImplBase<T>::VersionIterator::operator* () const
+{
+    return currEntry;
+}
+
+template<class T>
+const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry* DMRecordImplBase<T>::VersionIterator::operator-> () const
+{
+    return &currEntry;
+}
+
 #define DISPATCH_METHOD(T, methodName,  ...) switch(this->type()) {\
 case Type::LOG_INSERT:\
     {\
@@ -952,6 +1093,12 @@ case Type::MULTI_VERSION_RECORD:\
 
 #define DISPATCH_METHODT(methodName,  ...) DISPATCH_METHOD(T, methodName, __VA_ARGS__)
 #define DISPATCH_METHOD_NCONST(methodName, ...) DISPATCH_METHOD(char*, methodName, __VA_ARGS__)
+
+template<class T>
+auto DMRecordImplBase<T>::getVersionIterator(const Record* record) const -> VersionIterator
+{
+    return VersionIterator(record, this->mData);
+}
 
 template<class T>
 const char* DMRecordImplBase<T>::data(const SnapshotDescriptor& snapshot,

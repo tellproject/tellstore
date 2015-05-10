@@ -3,11 +3,141 @@
 #include "Page.hpp"
 #include "InsertMap.hpp"
 
+#include <memory>
+
 namespace tell {
 namespace store {
 namespace deltamain {
 
-Table::Table(PageManager& pageManager, const Schema& schema)
+
+Table::Iterator::Iterator(
+        const std::shared_ptr<allocator>& alloc,
+        const PageList* pages,
+        size_t pageIdx,
+        const LogIterator& logIter,
+        const LogIterator& logEnd,
+        PageManager* pageManager,
+        const Record* record)
+    : mAllocator(alloc)
+    , pages(pages)
+    , pageIdx(pageIdx)
+    , logIter(logIter)
+    , logEnd(logEnd)
+    , pageManager(pageManager)
+    , record(record)
+    , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
+    , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
+{
+    setCurrentEntry();
+}
+
+Table::Iterator::Iterator(const Iterator& other)
+    : mAllocator(other.mAllocator)
+    , pages(other.pages)
+    , pageIdx(other.pageIdx)
+    , logIter(other.logIter)
+    , logEnd(other.logEnd)
+    , pageManager(other.pageManager)
+    , record(other.record)
+    , pageIter(other.pageIter)
+    , pageEnd(other.pageEnd)
+{
+    setCurrentEntry();
+}
+
+auto Table::Iterator::operator=(const Iterator& o) -> Iterator&
+{
+    mAllocator = o.mAllocator;
+    pages = o.pages;
+    pageIdx = o.pageIdx;
+    logIter = o.logIter;
+    logEnd = o.logEnd;
+    pageManager = o.pageManager;
+    record = o.record;
+    pageIter = o.pageIter;
+    pageEnd = o.pageEnd;
+    setCurrentEntry();
+    return *this;
+}
+
+bool Table::Iterator::operator==(const Iterator& o) const
+{
+    return record == o.record &&
+        pages == o.pages &&
+        pageIdx == o.pageIdx &&
+        logIter == o.logIter &&
+        logEnd == o.logEnd &&
+        pageIter == o.pageIter &&
+        pageEnd == o.pageEnd &&
+        currVersionIter.isValid() == currVersionIter.isValid();
+}
+
+auto Table::Iterator::operator++() -> Iterator&
+{
+    if (currVersionIter.isValid() && (++currVersionIter).isValid()) {
+        ++currVersionIter;
+        return *this;
+    }
+    if (logIter != logEnd) ++logIter;
+    else if (pageIter != pageEnd) { 
+        ++pageIter;
+    } else {
+        if (++pageIdx == pages->size()) return *this;
+        Page p(*pageManager, (*pages)[pageIdx]);
+        pageIter = p.begin();
+        pageEnd = p.end();
+    }
+    setCurrentEntry();
+    return *this;
+}
+
+auto Table::Iterator::operator++(int) -> Iterator
+{
+    auto res = *this;
+    ++res;
+    return res;
+}
+
+const Table::Iterator::IteratorEntry& Table::Iterator::operator*() const {
+    return *currVersionIter;
+}
+
+const Table::Iterator::IteratorEntry* Table::Iterator::operator->() const
+{
+    return &(this->operator*());
+}
+
+void Table::Iterator::setCurrentEntry()
+{
+    while (logIter != logEnd) {
+        if (logIter->sealed()) {
+            CDMRecord rec(logIter->data());
+            if (rec.isValidDataRecord()) {
+                currVersionIter = rec.getVersionIterator(record);
+                return;
+            }
+        }
+        ++logIter;
+    }
+    while (true) {
+        while (pageIter != pageEnd) {
+            CDMRecord rec(*pageIter);
+            if (rec.isValidDataRecord()) {
+                currVersionIter = rec.getVersionIterator(record);
+                return;
+            }
+            ++pageIter;
+        }
+        ++pageIdx;
+        if (pageIdx == pages->size()) return;
+        Page p(*pageManager, (*pages)[pageIdx]);
+        pageIter = p.begin();
+        pageEnd = p.end();
+    }
+}
+
+
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)
@@ -55,6 +185,14 @@ bool Table::get(uint64_t key,
     return false;
 }
 
+bool Table::getNewest(uint64_t key,
+                      size_t& size,
+                      const char*& data,
+                      uint64_t& version) const {
+    // TODO Implement
+    return false;
+}
+
 void Table::insert(uint64_t key,
                    size_t size,
                    const char* const data,
@@ -64,7 +202,6 @@ void Table::insert(uint64_t key,
     // sure to check the part of the log that was visible
     // at this point in time
     auto iter = mInsertLog.begin();
-    auto iterEnd = mInsertLog.end();
     auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         // the key exists... but it could be, that it got deleted
@@ -88,6 +225,7 @@ void Table::insert(uint64_t key,
     auto entry = mInsertLog.append(logEntrySize);
     // We do this in another scope, after this scope is closed, the log
     // is read only (when seal is called)
+    auto iterEnd = mInsertLog.end();
     DMRecord insertRecord(entry->data());
     insertRecord.setType(DMRecord::Type::LOG_INSERT);
     insertRecord.writeKey(key);
@@ -160,6 +298,11 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
     return genericUpdate(fun, key, snapshot);
 }
 
+bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+    // TODO Implement
+    return false;
+}
+
 template<class Fun>
 bool Table::genericUpdate(const Fun& appendFun,
                           uint64_t key,
@@ -188,6 +331,40 @@ bool Table::genericUpdate(const Fun& appendFun,
     DMRecord rec(reinterpret_cast<char*>(ptr));
     bool isValid;
     return rec.update(nextPtr, isValid, snapshot);
+}
+
+auto Table::startScan(int numThreads) const -> std::vector<std::pair<Iterator, Iterator>>
+{
+    auto alloc = std::make_shared<allocator>();
+    auto insIter = mInsertLog.begin();
+    auto endIns = mInsertLog.end();
+    const auto* pages = mPages.load();
+    auto numPages = pages->size();
+    std::vector<std::pair<Iterator, Iterator>> result(numThreads);
+    size_t beginIdx = 0;
+    auto mod = numPages % numThreads;
+    for (decltype(numPages) i = 0; i < numPages; ++i) {
+        result[i].first = Iterator(alloc, pages, beginIdx, endIns, endIns, &mPageManager, &mRecord);
+        beginIdx += numPages / numThreads + (i < mod ? 1 : 0);
+        result[i].second = Iterator(alloc, pages, beginIdx, endIns, endIns, &mPageManager, &mRecord);
+        auto& item = result[i];
+        item.first.mAllocator = alloc;
+        item.first.pages = pages;
+        item.first.pageIdx = beginIdx;
+        item.first.logIter = insIter;
+        item.second.mAllocator = alloc;
+        item.second.pages = pages;
+        item.second.pageIdx = beginIdx;
+        if (i == numPages - 1) {
+            // add log iterators here
+            item.first.logIter = insIter;
+            item.second.logIter = endIns;
+        } else {
+            item.first.logIter = endIns;
+            item.second.logIter = endIns;
+        }
+    }
+    return std::vector<std::pair<Iterator, Iterator>>();
 }
 
 void Table::runGC(uint64_t minVersion) {
@@ -257,11 +434,15 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : pageManager(config.totalMemory), tableManager(pageManager, config, gc, commitManager) {
+    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    , tableManager(*pageManager, config, gc, commitManager)
+{
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : pageManager(totalMem), tableManager(pageManager, config, gc, commitManager) {
+    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    , tableManager(*pageManager, config, gc, commitManager)
+{
 }
 
 } // namespace store

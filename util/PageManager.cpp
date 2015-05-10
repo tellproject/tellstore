@@ -2,13 +2,15 @@
 #include <sys/mman.h>
 #include <cassert>
 #include <memory.h>
+#include <iostream>
 
 namespace tell {
 namespace store {
 
 PageManager::PageManager(size_t size)
     : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)), mSize(size), mPages(
-    size / TELL_PAGE_SIZE) {
+    size / TELL_PAGE_SIZE)
+{
     assert(size % TELL_PAGE_SIZE == 0);
     auto numPages = size / TELL_PAGE_SIZE;
     memset(mData, 0, mSize);
@@ -29,10 +31,14 @@ void* PageManager::alloc() {
     void* res = nullptr;
     bool success = mPages.pop(res);
     assert(success == (res != nullptr));
+    assert(res >= mData && res < reinterpret_cast<char*>(mData) + mSize);
+    assert((reinterpret_cast<char*>(res) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0);
     return res;
 }
 
 void PageManager::free(void* page) {
+    assert(page >= mData && page < reinterpret_cast<char*>(mData) + mSize);
+    assert((reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0);
     memset(page, 0, TELL_PAGE_SIZE);
     freeEmpty(page);
 }

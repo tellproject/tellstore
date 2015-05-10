@@ -1,5 +1,6 @@
 #include <config.h>
 #include <util/Log.hpp>
+#include <util/Epoch.hpp>
 
 #include <gtest/gtest.h>
 
@@ -15,19 +16,25 @@ namespace {
 class LogPageTest : public ::testing::Test {
 protected:
     LogPageTest()
-            : mPageManager(TELL_PAGE_SIZE * 1),
+            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE)),
               mPage(nullptr) {
     }
 
+    virtual ~LogPageTest() {
+        auto p = mPageManager;
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+    }
+
     virtual void SetUp() {
-        mPage = new(mPageManager.alloc()) LogPage();
+        mPage = new(mPageManager->alloc()) LogPage();
     }
 
     virtual void TearDown() {
-        mPageManager.free(mPage);
+        mPageManager->free(mPage);
     }
 
-    PageManager mPageManager;
+    allocator mAlloc;
+    PageManager* mPageManager;
 
     LogPage* mPage;
 };
@@ -118,13 +125,20 @@ template <class Impl>
 class BaseLogTest : public ::testing::Test {
 protected:
     BaseLogTest()
-            : mPageManager(TELL_PAGE_SIZE * 10),
-              mLog(mPageManager) {
+            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 10)),
+              mLog(*mPageManager) {
     }
 
-    PageManager mPageManager;
+    virtual ~BaseLogTest() {
+        auto p = mPageManager;
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+    }
+
+    allocator mAlloc;
+    PageManager* mPageManager;
 
     Log<Impl> mLog;
+
 };
 
 using BaseLogTestImplementations = ::testing::Types<UnorderedLogImpl, OrderedLogImpl>;
@@ -222,8 +236,8 @@ TEST_F(UnorderedLogTest, append) {
  * @test Check that appending two pages works
  */
 TEST_F(UnorderedLogTest, appendPage) {
-    auto page1 = new(mPageManager.alloc()) LogPage();
-    auto page2 = new(mPageManager.alloc()) LogPage();
+    auto page1 = new(mPageManager->alloc()) LogPage();
+    auto page2 = new(mPageManager->alloc()) LogPage();
     page2->next().store(page1);
     mLog.appendPage(page2, page1);
 
@@ -253,10 +267,10 @@ TEST_F(UnorderedLogTest, appendPage) {
  * @test Check that appending pages multiple times works
  */
 TEST_F(UnorderedLogTest, appendMultiplePage) {
-    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto page1 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page1);
 
-    auto page2 = new(mPageManager.alloc()) LogPage();
+    auto page2 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page2);
 
     auto i = mLog.pageBegin();
@@ -285,7 +299,7 @@ TEST_F(UnorderedLogTest, appendPageWriteToHead) {
     auto entry1 = mLog.append(31);
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
 
-    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto page1 = new(mPageManager->alloc()) LogPage();
     auto entry2 = page1->append(16);
     EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
 
@@ -320,7 +334,7 @@ TEST_F(UnorderedLogTest, appendPageNewHead) {
     auto entry1 = mLog.append(31);
     EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
 
-    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto page1 = new(mPageManager->alloc()) LogPage();
     auto entry2 = page1->append(16);
     EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
 
@@ -603,11 +617,17 @@ protected:
     static constexpr int pageCount = 100; // Number of pages to reserve in the page manager - 100
 
     LogTestThreaded()
-            : mPageManager(TELL_PAGE_SIZE * pageCount),
-              mLog(mPageManager) {
+            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 100)),
+              mLog(*mPageManager) {
     }
 
-    PageManager mPageManager;
+    virtual ~LogTestThreaded() {
+        auto p = mPageManager;
+        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+    }
+
+    allocator mAlloc;
+    PageManager* mPageManager;
 
     Log<Impl> mLog;
 };
@@ -706,13 +726,13 @@ TEST_F(UnorderedLogThreadedTest, append) {
     }
     for (size_t i = headThreadCount; i < headThreadCount + appendThreadCount; ++i) {
         worker[i] = std::thread([valuesCount, values, this] () {
-            auto page = new(this->mPageManager.alloc()) LogPage();
+            auto page = new(this->mPageManager->alloc()) LogPage();
             auto end = values + valuesCount;
             for (auto i = values; i < end; ++i) {
                 auto entry = page->append(sizeof(i));
                 if (entry == nullptr) {
                     this->mLog.appendPage(page);
-                    page = new(this->mPageManager.alloc()) LogPage();
+                    page = new(this->mPageManager->alloc()) LogPage();
                     entry = page->append(sizeof(i));
                 }
                 memcpy(entry->data(), &i, sizeof(i));

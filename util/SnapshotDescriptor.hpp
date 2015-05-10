@@ -60,10 +60,7 @@ public:
             return false;
         }
         unsigned char byteIdx = (unsigned char) (1 << ((version - base - 1) % 8));
-        if (!(mDescriptor[16 + (version - base - 1) / 8] & byteIdx)) {
-            return version == mVersion;
-        }
-        return true;
+        return (mDescriptor[16 + (version - base - 1) / 8] & byteIdx);
     }
 };
 

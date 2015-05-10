@@ -10,7 +10,7 @@ namespace store {
 template<class T>
 class FixedSizeStack {
 private:
-    struct Head {
+    struct alignas(8) Head {
         unsigned readHead = 0u;
         unsigned writeHead = 0u;
 

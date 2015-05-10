@@ -4,6 +4,7 @@
 #include "Epoch.hpp"
 #include "Record.hpp"
 #include "CommitManager.hpp"
+#include "Scan.hpp"
 
 #include <crossbow/concurrent_map.hpp>
 #include <crossbow/string.hpp>
@@ -44,6 +45,7 @@ private:
     GC& mGC;
     PageManager& mPageManager;
     CommitManager& mCommitManager;
+    ScanThreads<Table> mScanThreads;
     std::atomic<bool> mShutDown;
     mutable tbb::queuing_rw_mutex mTablesMutex;
     tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
@@ -82,10 +84,12 @@ public:
         , mGC(gc)
         , mPageManager(pageManager)
         , mCommitManager(commitManager)
+        , mScanThreads(config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
         , mGCThread(std::bind(&TableManager::gcThread, this))
     {
+        mScanThreads.run();
     }
 
     ~TableManager() {
@@ -101,16 +105,22 @@ public:
     }
 
 public:
+    template <typename... Args>
     bool createTable(const crossbow::string& name,
                      const Schema& schema,
-                     uint64_t& idx) {
+                     uint64_t& idx,
+                     Args&&... args) {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
         if (!res.second) {
             return false;
         }
-        mTables[idx] = new(tell::store::malloc(sizeof(Table))) Table(mPageManager, schema);
+
+        auto ptr = tell::store::malloc(sizeof(Table), alignof(Table));
+        LOG_ASSERT(ptr, "Unable to allocate table");
+        mTables[idx] = new(ptr) Table(mPageManager, schema, idx, std::forward<Args>(args)...);
         return true;
     }
 
@@ -129,8 +139,20 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->get(key, size, data, snapshot, isNewest);
+    }
+
+    bool getNewest(uint64_t tableId,
+                   uint64_t key,
+                   size_t& size,
+                   const char*& data,
+                   uint64_t& version)
+    {
+        allocator __;
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->getNewest(key, size, data, version);
     }
 
     bool update(uint64_t tableId,
@@ -139,6 +161,7 @@ public:
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->update(key, size, data, snapshot);
     }
@@ -151,6 +174,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, size, data, snapshot, succeeded);
     }
@@ -161,6 +185,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         mTables[tableId]->insert(key, tuple, snapshot, succeeded);
     }
@@ -169,8 +194,18 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
+        allocator __;
         tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
         return mTables[tableId]->remove(key, snapshot);
+    }
+
+    bool revert(uint64_t tableId,
+                uint64_t key,
+                const SnapshotDescriptor& snapshot)
+    {
+        allocator __;
+        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId]->revert(key, snapshot);
     }
 
     void forceGC() {

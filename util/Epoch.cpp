@@ -3,14 +3,19 @@
 #include <array>
 #include <cstdlib>
 
+#include <jemalloc/jemalloc.h>
+
 namespace {
 struct lists {
     struct node {
         std::atomic<node*> next;
+        void* const ptr;
         std::function<void()> destruct;
 
-        node()
-            : next(reinterpret_cast<node*>(0x1)) {
+        node(void* p)
+            : next(reinterpret_cast<node*>(0x1))
+            , ptr(p)
+        {
         }
 
         ~node() {
@@ -37,13 +42,16 @@ struct lists {
         }
 
         ~list() {
-            node* head = head_.load();
-            while (reinterpret_cast<uint64_t>(head) != 0x0) {
-                node* next = head->next.load();
-                head->~node();
-                ::free(head);
-                head = next;
-            }
+            destruct(head_.load());
+        }
+
+        // TODO change direction of list
+        void destruct(node* node) {
+            if (node == nullptr) return;
+            destruct(node->next);
+            auto ptr = node->ptr;
+            node->~node();
+            ::je_free(ptr);
         }
 
         std::atomic<node*> head_;
@@ -82,6 +90,10 @@ void* malloc(std::size_t size) {
     return allocator::malloc(size);
 }
 
+void* malloc(std::size_t size, std::size_t align) {
+    return allocator::malloc(size, align);
+}
+
 void free(void* ptr) {
     allocator::free(ptr);
 }
@@ -98,6 +110,7 @@ void init() {
     active_list.store(new lists());
     old_list.store(new lists());
     oldest_list.store(new lists());
+    atexit(&destroy);
 }
 
 void destroy() {
@@ -144,9 +157,25 @@ allocator::~allocator() {
 }
 
 void* allocator::malloc(std::size_t size) {
-    uint8_t* res = reinterpret_cast<uint8_t*>(std::malloc(size + sizeof(lists::node)));
-    new(res) lists::node();
+    uint8_t* res = reinterpret_cast<uint8_t*>(::je_malloc(size + sizeof(lists::node)));
+    if (!res) {
+        return nullptr;
+    }
+
+    new(res) lists::node(res);
     return res + sizeof(lists::node);
+}
+
+void* allocator::malloc(std::size_t size, std::size_t align) {
+    size_t nodePadding = ((sizeof(lists::node) % align != 0) ? (align - (sizeof(lists::node) % align)) : 0);
+
+    uint8_t* res = reinterpret_cast<uint8_t*>(::je_aligned_alloc(align, size + sizeof(lists::node) + nodePadding));
+    if (!res) {
+        return nullptr;
+    }
+
+    new(res + nodePadding) lists::node(res);
+    return res + sizeof(lists::node) + nodePadding;
 }
 
 void allocator::free(void* ptr, std::function<void()> destruct) {
@@ -155,10 +184,15 @@ void allocator::free(void* ptr, std::function<void()> destruct) {
     active_list.load()->append(reinterpret_cast<uint8_t*>(ptr), t, destruct);
 }
 
+void allocator::free_in_order(void* ptr, std::function<void()> destruct) {
+    active_list.load()->append(reinterpret_cast<uint8_t*>(ptr), 0, destruct);
+}
+
 void allocator::free_now(void* ptr) {
     uint8_t* res = reinterpret_cast<uint8_t*>(ptr);
     res -= sizeof(lists::node);
-    ::free(res);
+    auto nd = reinterpret_cast<lists::node*>(res);
+    ::je_free(nd->ptr);
 }
 
 } // namespace store
