@@ -152,6 +152,19 @@ void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::Rp
         });
     } break;
 
+    case proto::RpcRequest::kGetNewest: {
+        auto& getNewestRequest = request.getnewest();
+        auto getResponse = response.mutable_get();
+        size_t size = 0;
+        const char* data = nullptr;
+        uint64_t version = 0x0u;
+        if (mStorage.getNewest(getNewestRequest.tableid(), getNewestRequest.key(), size, data, version)) {
+            getResponse->set_data(data, size);
+        }
+        getResponse->set_isnewest(true);
+        getResponse->set_version(version);
+    } break;
+
     case proto::RpcRequest::kUpdate: {
         auto& updateRequest = request.update();
         handleSnapshot(updateRequest.snapshot(), response,

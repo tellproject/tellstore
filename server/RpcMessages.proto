@@ -17,11 +17,12 @@ message RpcRequest {
         CreateTableRequest createTable = 10;
         GetTableIdRequest getTableId = 11;
         GetRequest get = 12;
-        UpdateRequest update = 13;
-        InsertRequest insert = 14;
-        RemoveRequest remove = 15;
-        RevertRequest revert = 16;
-        CommitRequest commit = 17;
+        GetNewestRequest getNewest = 13;
+        UpdateRequest update = 14;
+        InsertRequest insert = 15;
+        RemoveRequest remove = 16;
+        RevertRequest revert = 17;
+        CommitRequest commit = 18;
     }
 }
 
@@ -42,11 +43,11 @@ message RpcResponse {
         CreateTableResponse createTable = 10;
         GetTableIdResponse getTableId = 11;
         GetResponse get = 12;
-        UpdateResponse update = 13;
-        InsertResponse insert = 14;
-        RemoveResponse remove = 15;
-        RevertResponse revert = 16;
-        CommitResponse commit = 17;
+        UpdateResponse update = 14;
+        InsertResponse insert = 15;
+        RemoveResponse remove = 16;
+        RevertResponse revert = 17;
+        CommitResponse commit = 18;
     }
 }
 
@@ -73,9 +74,15 @@ message GetRequest {
     required SnapshotDescriptor snapshot = 3;
 }
 
+message GetNewestRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+}
+
 message GetResponse {
     optional bytes data = 1;
     required bool isNewest = 2;
+    optional uint64 version = 3;
 }
 
 message UpdateRequest {
