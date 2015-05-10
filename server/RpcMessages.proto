@@ -20,7 +20,8 @@ message RpcRequest {
         UpdateRequest update = 13;
         InsertRequest insert = 14;
         RemoveRequest remove = 15;
-        CommitRequest commit = 16;
+        RevertRequest revert = 16;
+        CommitRequest commit = 17;
     }
 }
 
@@ -44,7 +45,8 @@ message RpcResponse {
         UpdateResponse update = 13;
         InsertResponse insert = 14;
         RemoveResponse remove = 15;
-        CommitResponse commit = 16;
+        RevertResponse revert = 16;
+        CommitResponse commit = 17;
     }
 }
 
@@ -106,6 +108,16 @@ message RemoveRequest {
 }
 
 message RemoveResponse {
+    required bool succeeded = 1;
+}
+
+message RevertRequest {
+    required uint64 tableId = 1;
+    required uint64 key = 2;
+    required SnapshotDescriptor snapshot = 3;
+}
+
+message RevertResponse {
     required bool succeeded = 1;
 }
 

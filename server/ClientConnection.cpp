@@ -189,6 +189,16 @@ void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::Rp
         });
     } break;
 
+    case proto::RpcRequest::kRevert: {
+        auto& revertRequest = request.revert();
+        handleSnapshot(revertRequest.snapshot(), response,
+                [this, &revertRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
+            auto revertResponse = response.mutable_revert();
+            auto succeeded = mStorage.revert(revertRequest.tableid(), revertRequest.key(), snapshot);
+            revertResponse->set_succeeded(succeeded);
+        });
+    } break;
+
     case proto::RpcRequest::kCommit: {
         auto& commitRequest = request.commit();
         auto commitResponse = response.mutable_commit();
