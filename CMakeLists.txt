@@ -71,6 +71,9 @@ set(SOURCE_FILES
     util/StorageConfig.hpp
     util/SnapshotDescriptor.hpp
     util/Request.hpp
+    util/Scan.hpp
+    util/ScanQuery.hpp
+    util/IteratorEntry.hpp
     util/chunk_allocator.hpp
     util/functional.hpp)
 

@@ -35,7 +35,7 @@ Table::Iterator& Table::Iterator::operator++() {
     return *this;
 }
 
-const IteratorEntry* Table::Iterator::operator->() const {
+const Table::Iterator::IteratorEntry* Table::Iterator::operator->() const {
     return nullptr;
 }
 

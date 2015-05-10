@@ -1057,13 +1057,13 @@ void DMRecordImplBase<T>::VersionIterator::initRes()
 }
 
 template<class T>
-const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& DMRecordImplBase<T>::VersionIterator::operator* () const
+const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry& DMRecordImplBase<T>::VersionIterator::operator* () const
 {
     return currEntry;
 }
 
 template<class T>
-const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* DMRecordImplBase<T>::VersionIterator::operator-> () const
+const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry* DMRecordImplBase<T>::VersionIterator::operator-> () const
 {
     return &currEntry;
 }

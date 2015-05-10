@@ -8,6 +8,7 @@
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
 #include <util/Record.hpp>
+#include <util/IteratorEntry.hpp>
 
 #include <memory>
 #include <vector>
@@ -33,6 +34,9 @@ class Table {
     std::atomic<PageList*> mPages;
 public:
     class Iterator {
+    public:
+        using IteratorEntry = BaseIteratorEntry;
+    private:
         friend class Table;
         using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     private: // assigned members
@@ -46,7 +50,7 @@ public:
     private: // calculated members
         Page::Iterator pageIter;
         Page::Iterator pageEnd;
-        IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> currEntry;
+        IteratorEntry currEntry;
         CDMRecord::VersionIterator currVersionIter;
     private: // construction
         Iterator(const std::shared_ptr<allocator>& alloc,
@@ -63,8 +67,8 @@ public:
         Iterator& operator= (const Iterator& other);
         Iterator operator++(int);
         Iterator& operator++();
-        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& operator*() const;
-        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* operator->() const;
+        const IteratorEntry& operator*() const;
+        const IteratorEntry* operator->() const;
         bool operator==(const Iterator&) const;
         bool operator!=(const Iterator& other) const {
             return !(*this == other);

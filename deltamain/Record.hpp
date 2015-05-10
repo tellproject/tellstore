@@ -4,34 +4,13 @@
 #include <map>
 #include <atomic>
 
-#include <util/helper.hpp>
 #include <util/IteratorEntry.hpp>
+#include <util/helper.hpp>
 
 #include "InsertMap.hpp"
 
 namespace tell {
 namespace store {
-
-template<>
-class IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> {
-public:
-    uint64_t mValidFrom = 0;
-    uint64_t mValidTo = 0;
-    const char* mData = nullptr;
-    const Record* mRecord = nullptr;
-    uint64_t validFrom() const {
-        return mValidFrom;
-    }
-    uint64_t validTo() const {
-        return mValidTo;
-    }
-    const char* data() const {
-        return mData;
-    }
-    const Record* record() const {
-        return mRecord;
-    }
-};
 
 struct SnapshotDescriptor;
 namespace deltamain {
@@ -173,8 +152,11 @@ public:
     bool isValidDataRecord() const;
 public: // Interface for iterating over all versions
     class VersionIterator {
+    public:
+        using IteratorEntry = BaseIteratorEntry;
+    private:
         friend class DMRecordImplBase<T>;
-        IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE> currEntry;
+        IteratorEntry currEntry;
         const Record* record;
         const char* current = nullptr;
         int idx = 0;
@@ -184,8 +166,8 @@ public: // Interface for iterating over all versions
         VersionIterator() {}
         bool isValid() const { return current != nullptr; }
         VersionIterator& operator++();
-        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>& operator*() const;
-        const IteratorEntry_t<Implementation::DELTA_MAIN_REWRITE>* operator->() const;
+        const IteratorEntry& operator*() const;
+        const IteratorEntry* operator->() const;
     };
     VersionIterator getVersionIterator(const Record* record) const;
 };

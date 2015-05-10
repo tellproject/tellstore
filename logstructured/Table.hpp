@@ -3,14 +3,13 @@
 #include <config.h>
 #include <implementation.hpp>
 #include <util/CommitManager.hpp>
+#include <util/IteratorEntry.hpp>
 #include <util/Log.hpp>
 #include <util/NonCopyable.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/Record.hpp>
 #include <util/TableManager.hpp>
 #include <util/TransactionImpl.hpp>
-
-#include "../deltamain/Record.hpp"
 
 #include <cstdint>
 
@@ -27,6 +26,8 @@ class Table : NonCopyable, NonMovable {
 public:
     class Iterator {
     public:
+        using IteratorEntry = BaseIteratorEntry;
+
         Iterator& operator++();
 
         Iterator operator++(int) {

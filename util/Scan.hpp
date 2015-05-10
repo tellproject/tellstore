@@ -1,6 +1,5 @@
 #pragma once
 
-#include "IteratorEntry.hpp"
 #include "ScanQuery.hpp"
 #include "Record.hpp"
 #include <config.h>

@@ -1,17 +1,35 @@
 #pragma once
+
 #include <cstdint>
-#include <config.h>
 
 namespace tell {
 namespace store {
 
 class Record;
 
-template<Implementation impl>
-class IteratorEntry_t;
+class BaseIteratorEntry {
+public:
+    uint64_t mValidFrom = 0;
+    uint64_t mValidTo = 0;
+    const char* mData = nullptr;
+    const Record* mRecord = nullptr;
 
-using IteratorEntry = IteratorEntry_t<usedImplementation>;
+    uint64_t validFrom() const {
+        return mValidFrom;
+    }
 
+    uint64_t validTo() const {
+        return mValidTo;
+    }
+
+    const char* data() const {
+        return mData;
+    }
+
+    const Record* record() const {
+        return mRecord;
+    }
+};
 
 } // namespace store
 } // namespace tell
