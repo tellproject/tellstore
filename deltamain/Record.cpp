@@ -600,8 +600,13 @@ public:
             return true;
         }
         if (offs[nV] == offs[nV - 1]) {
-            // The last version got deleted - it could be that
-            // there is an insert record
+            // The last version got deleted
+            // If the newest version is smaller than the
+            // lowest active version, we can delete the whole
+            // entry.
+            if (nV < lowestActiveVersion) return true;
+            // otherwise we need to keep it, but it could be
+            // that there was an insert
             CDMRecord rec(mData);
             return insertMap.count(rec.key());
         }
