@@ -790,7 +790,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         impl::VersionMap versions;
         int32_t newestValidVersionIdx = -1;
         for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] > 0 && lowestActiveVersion >= v[i]) {
+            if (offs[i] > 0 && lowestActiveVersion <= v[i]) {
                 if (i > newestValidVersionIdx)
                     newestValidVersionIdx = i;
                 versions.insert(std::make_pair(v[i],
@@ -831,7 +831,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
             current = iter->second.front();
             iter->second.pop_front();
         }
-        bool newestIsDelete = versions.rbegin()->second.size == 0;
+        bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
         while (current) {
             CDMRecord rec(current);
             bool allVersionsInvalid;
