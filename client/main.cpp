@@ -16,9 +16,9 @@ int main(int argc, const char** argv) {
     bool help = false;
 
     auto opts = crossbow::program_options::create_options(argv[0],
-            crossbow::program_options::value<'h'>("help", help),
-            crossbow::program_options::value<'s'>("server", clientConfig.server),
-            crossbow::program_options::value<'p'>("port", clientConfig.port));
+            crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'s'>("server", &clientConfig.server),
+            crossbow::program_options::value<'p'>("port", &clientConfig.port));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);

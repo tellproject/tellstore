@@ -19,10 +19,10 @@ int main(int argc, const char** argv) {
     bool help = false;
 
     auto opts = crossbow::program_options::create_options(argv[0],
-            crossbow::program_options::value<'h'>("help", help),
-            crossbow::program_options::value<'p'>("port", serverConfig.port),
-            crossbow::program_options::value<'m'>("memory", storageConfig.totalMemory),
-            crossbow::program_options::value<'c'>("capacity", storageConfig.hashMapCapacity));
+            crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'p'>("port", &serverConfig.port),
+            crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
+            crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);
