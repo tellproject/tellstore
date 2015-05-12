@@ -113,8 +113,13 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
 
 size_t Schema::schemaSize() const {
     size_t res = 8;
+    // TODO Fix the alignment
     for (auto& field: mFixedSizeFields) {
-        res += 4;
+        res += 5;
+        res += field.name().size();
+    }
+    for (auto& field: mVarSizeFields) {
+        res += 5;
         res += field.name().size();
     }
     return res;

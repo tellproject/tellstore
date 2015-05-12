@@ -32,8 +32,9 @@ message RpcResponseBatch {
 
 message RpcResponse {
     enum Error {
-        UNKNOWN_REQUEST = 0;
-        INVALID_SNAPSHOT = 1;
+        UNKNOWN_REQUEST = 1;
+        UNKNOWN_RESPONSE = 2;
+        INVALID_SNAPSHOT = 3;
     }
 
     required uint64 messageId = 1;

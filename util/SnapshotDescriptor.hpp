@@ -38,6 +38,14 @@ public:
         return *this;
     }
 
+    const unsigned char* descriptor() const {
+        return mDescriptor;
+    }
+
+    size_t length() const {
+        return mLength;
+    }
+
     uint64_t version() const {
         return mVersion;
     }

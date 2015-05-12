@@ -30,7 +30,7 @@ endif()
 
 # Find dependencies
 find_package(Boost REQUIRED)
-find_package(Crossbow COMPONENTS InfinIO REQUIRED)
+find_package(Crossbow COMPONENTS InfinIO Thread REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 find_package(Protobuf REQUIRED)
@@ -106,6 +106,17 @@ target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
 
 
 ###################
+# Protocol buffer definition
+###################
+set(PROTO_FILES
+    util/RpcMessages.proto
+)
+
+# Generate protobufs
+protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTO_FILES})
+
+
+###################
 # TellStore server
 ###################
 set(SERVER_SRCS
@@ -115,13 +126,6 @@ set(SERVER_SRCS
     server/ConnectionManager.cpp
     server/ServerConfig.hpp
 )
-
-set(PROTO_FILES
-    server/RpcMessages.proto
-)
-
-# Generate server protobufs
-protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTO_FILES})
 
 # Add TellStore server executable
 add_executable(tellstored server/main.cpp ${SERVER_SRCS} ${PROTO_SOURCES} ${PROTO_HEADERS})
@@ -136,6 +140,33 @@ target_link_libraries(tellstored PRIVATE crossbow_infinio)
 # Link against Protobuf
 target_include_directories(tellstored PRIVATE ${PROTOBUF_INCLUDE_DIRS})
 target_link_libraries(tellstored PRIVATE ${PROTOBUF_LIBRARIES})
+
+
+###################
+# TellStore client
+###################
+set(CLIENT_SRCS
+    client/ErrorCode.hpp
+    client/Client.hpp
+    client/Client.cpp
+    client/ClientConfig.hpp
+    client/ServerConnection.hpp
+    client/ServerConnection.cpp
+)
+
+# Add TellStore client executable
+add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS} ${PROTO_SOURCES} ${PROTO_HEADERS})
+
+# Link against TellStore library
+target_link_libraries(tellstore-client PRIVATE TellStore)
+
+# Link against Crossbow
+target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(tellstore-client PRIVATE crossbow_infinio crossbow_thread)
+
+# Link against Protobuf
+target_include_directories(tellstore-client PRIVATE ${PROTOBUF_INCLUDE_DIRS})
+target_link_libraries(tellstore-client PRIVATE ${PROTOBUF_LIBRARIES})
 
 
 ###################
