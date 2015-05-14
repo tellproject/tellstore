@@ -38,11 +38,8 @@ int main(int argc, const char** argv) {
 
     // Initialize network stack
     crossbow::infinio::EventDispatcher dispatcher;
-    std::thread clientThread([&dispatcher, &clientConfig] () {
-        tell::store::Client client(dispatcher, clientConfig);
-        client.init();
-    });
-    clientThread.detach();
+    tell::store::Client client(dispatcher, clientConfig);
+    client.init();
 
     // Start event dispatcher threads
     auto execDispatcher = [&dispatcher] () {

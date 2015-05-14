@@ -29,9 +29,9 @@ if (CMAKE_COMPILER_IS_GNUCXX)
 endif()
 
 # Find dependencies
-find_package(Boost REQUIRED)
+find_package(Boost COMPONENTS context system REQUIRED)
 if(NOT Crossbow_INCLUDE_DIRS)
-    find_package(Crossbow COMPONENTS InfinIO Thread REQUIRED)
+    find_package(Crossbow COMPONENTS InfinIO REQUIRED)
 endif()
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
@@ -154,6 +154,8 @@ set(CLIENT_SRCS
     client/ClientConfig.hpp
     client/ServerConnection.hpp
     client/ServerConnection.cpp
+    client/TransactionManager.hpp
+    client/TransactionManager.cpp
 )
 
 # Add TellStore client executable
@@ -162,9 +164,13 @@ add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS} ${PROTO_SOURCES} 
 # Link against TellStore library
 target_link_libraries(tellstore-client PRIVATE TellStore)
 
+# Link against Boost
+target_include_directories(tellstore-client PUBLIC ${Boost_INCLUDE_DIRS})
+target_link_libraries(tellstore-client PUBLIC ${Boost_LIBRARIES})
+
 # Link against Crossbow
 target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE crossbow_infinio crossbow_thread)
+target_link_libraries(tellstore-client PRIVATE crossbow_infinio)
 
 # Link against Protobuf
 target_include_directories(tellstore-client PRIVATE ${PROTOBUF_INCLUDE_DIRS})

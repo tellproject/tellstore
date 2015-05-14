@@ -3,7 +3,7 @@
 #include "RpcMessages.pb.h"
 
 #include "ErrorCode.hpp"
-#include "ClientConfig.hpp"
+#include "TransactionManager.hpp"
 
 #include <util/Epoch.hpp>
 #include <util/Logging.hpp>
@@ -13,16 +13,8 @@
 #include <crossbow/infinio/Endpoint.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 
-#include <mutex>
-
 namespace tell {
 namespace store {
-
-namespace {
-
-google::protobuf::Message* gDummyMessage;
-
-} // anonymous namespace
 
 ServerConnection::~ServerConnection() {
     boost::system::error_code ec;
@@ -32,8 +24,8 @@ ServerConnection::~ServerConnection() {
     }
 }
 
-void ServerConnection::init(const ClientConfig& config, boost::system::error_code& ec) {
-    LOG_INFO("Connecting to TellStore server");
+void ServerConnection::connect(const crossbow::string& host, uint16_t port, boost::system::error_code& ec) {
+    LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
     // Open socket
     mSocket.open(ec);
@@ -43,12 +35,7 @@ void ServerConnection::init(const ClientConfig& config, boost::system::error_cod
     mSocket.setHandler(this);
 
     // Connect to remote server
-    ExecutionContextGuard context(*this, 0x0u, 0x0u, gDummyMessage, ec);
-    mSocket.connect(crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), config.server, config.port), ec);
-    if (ec) {
-        return;
-    }
-    context.waitForCompletion();
+    mSocket.connect(crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), host, port), ec);
 }
 
 void ServerConnection::shutdown() {
@@ -60,35 +47,26 @@ void ServerConnection::shutdown() {
     }
 }
 
-bool ServerConnection::createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
+void ServerConnection::createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,
         boost::system::error_code& ec) {
     std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(++mMessageId);
+    request->set_messageid(transactionId);
 
     auto createTableRequest = request->mutable_createtable();
     createTableRequest->set_name(name.c_str());
 
-    char schemaData[schema.schemaSize()];
+    auto schemaSize = schema.schemaSize();
+    char schemaData[schemaSize];
     schema.serialize(schemaData);
-    createTableRequest->set_schema(schemaData);
+    createTableRequest->set_schema(schemaData, schemaSize);
 
-    auto response = sendRequest<proto::CreateTableResponse>(std::move(request),
-            proto::RpcResponse::kCreateTableFieldNumber, ec);
-    if (ec) {
-        return false;
-    }
-
-    if (response->has_tableid()) {
-        tableId = response->tableid();
-    }
-
-    return response->has_tableid();
+    sendRequest(std::move(request), ec);
 }
 
-bool ServerConnection::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-        const SnapshotDescriptor& snapshot, bool& isNewest, boost::system::error_code& ec) {
+void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+        boost::system::error_code& ec) {
     std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(++mMessageId);
+    request->set_messageid(transactionId);
 
     auto getRequest = request->mutable_get();
     getRequest->set_tableid(tableId);
@@ -100,27 +78,13 @@ bool ServerConnection::get(uint64_t tableId, uint64_t key, size_t& size, const c
     snapshotRequest->set_data(snapshot.descriptor(), snapshot.length());
     snapshotRequest->set_cached(false);
 
-    auto response = sendRequest<proto::GetResponse>(std::move(request), proto::RpcResponse::kGetFieldNumber, ec);
-    if (ec) {
-        return false;
-    }
-
-    isNewest = response->isnewest();
-    if (response->has_data()) {
-        size = response->data().length();
-        // TODO Prevent this copy
-        auto dataBuffer = new char[size];
-        memcpy(dataBuffer, response->data().data(), size);
-        data = dataBuffer;
-    }
-
-    return response->has_data();
+    sendRequest(std::move(request), ec);
 }
 
-void ServerConnection::insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec, bool* succeeded) {
+void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
+        const SnapshotDescriptor& snapshot, bool succeeded, boost::system::error_code& ec) {
     std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(++mMessageId);
+    request->set_messageid(transactionId);
 
     auto insertRequest = request->mutable_insert();
     insertRequest->set_tableid(tableId);
@@ -133,29 +97,13 @@ void ServerConnection::insert(uint64_t tableId, uint64_t key, size_t size, const
     snapshotRequest->set_data(snapshot.descriptor(), snapshot.length());
     snapshotRequest->set_cached(false);
 
-    if (succeeded) {
-        insertRequest->set_succeeded(true);
-    }
+    insertRequest->set_succeeded(succeeded);
 
-    auto response = sendRequest<proto::InsertResponse>(std::move(request), proto::RpcResponse::kInsertFieldNumber, ec);
-    if (ec) {
-        return;
-    }
-
-    if (succeeded) {
-        *succeeded = response->succeeded();
-    }
+    sendRequest(std::move(request), ec);
 }
 
 void ServerConnection::onConnected(const boost::system::error_code& ec) {
-    tbb::queuing_rw_mutex::scoped_lock lock(mContextsMutex, false);
-    auto i = mContexts.find(0x0u);
-    LOG_ASSERT(i != mContexts.end(), "Context for connection event not found");
-    auto& context = i->second;
-
-    *(context.ec) = ec;
-
-    context.cond->notify_one();
+    mManager.onConnected(ec);
 }
 
 void ServerConnection::onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) {
@@ -196,47 +144,28 @@ void ServerConnection::onDisconnected() {
 }
 
 void ServerConnection::handleResponse(proto::RpcResponse& response) {
-    tbb::queuing_rw_mutex::scoped_lock lock(mContextsMutex, false);
-    auto i = mContexts.find(response.messageid());
-    LOG_ASSERT(i != mContexts.end(), "Context for message ID %1% not found", response.messageid());
-    auto& context = i->second;
-
     if (response.has_error()) {
-        *(context.ec) = boost::system::error_code(response.error(), error::get_server_category());
-
-        context.cond->notify_one();
+        mManager.handleResponse(response.messageid(), ServerConnection::Response(response.error()));
         return;
     }
 
 #define HANDLE_RESPONSE_CASE(_case, _name) \
     case _case: {\
-        if (context.type != _case##FieldNumber) {\
-            *(context.ec) = boost::system::error_code(proto::RpcResponse::UNKNOWN_RESPONSE,\
-                    error::get_server_category());\
-            break;\
-        }\
-        *(context.message) = response.release_ ## _name();\
+        mManager.handleResponse(response.messageid(),\
+                ServerConnection::Response(_case##FieldNumber, response.release_ ## _name()));\
     } break
-
 
     switch (response.Response_case()) {
     HANDLE_RESPONSE_CASE(proto::RpcResponse::kCreateTable, createtable);
     HANDLE_RESPONSE_CASE(proto::RpcResponse::kGet, get);
     HANDLE_RESPONSE_CASE(proto::RpcResponse::kInsert, insert);
-
     default: {
-        *(context.ec) = boost::system::error_code(proto::RpcResponse::UNKNOWN_RESPONSE, error::get_server_category());
+        mManager.handleResponse(response.messageid(), ServerConnection::Response(proto::RpcResponse::UNKNOWN_RESPONSE));
     } break;
     }
-
-    context.cond->notify_one();
 }
 
-template<class Response>
-std::unique_ptr<Response> ServerConnection::sendRequest(std::unique_ptr<proto::RpcRequest> request, int field,
-        boost::system::error_code& ec) {
-    auto id = request->messageid();
-
+void ServerConnection::sendRequest(std::unique_ptr<proto::RpcRequest> request, boost::system::error_code& ec) {
     // TODO Implement actual request batching
     proto::RpcRequestBatch requestBatch;
     auto requestField = requestBatch.mutable_request();
@@ -245,45 +174,79 @@ std::unique_ptr<Response> ServerConnection::sendRequest(std::unique_ptr<proto::R
     auto buffer = mSocket.acquireSendBuffer(requestBatch.ByteSize());
     if (buffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
         ec = error::invalid_buffer;
-        return nullptr;
+        return;
     }
     requestBatch.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(buffer.data()));
 
-    google::protobuf::Message* response = nullptr;
-    ExecutionContextGuard context(*this, id, field, response, ec);
-    // TODO This is a 64 to 32 bit conversion
-    mSocket.send(buffer, id, ec);
+    mSocket.send(buffer, 0x0u, ec);
     if (ec) {
         mSocket.releaseSendBuffer(buffer);
+        return;
+    }
+}
+
+void ServerConnection::Response::reset() {
+    mMessage.reset();
+    mType = 0x0u;
+    mError = 0x0u;
+}
+
+bool ServerConnection::Response::createTable(uint64_t& tableId, boost::system::error_code& ec) {
+    auto response = getMessage<proto::CreateTableResponse>(proto::RpcResponse::kCreateTableFieldNumber, ec);
+    if (!response) {
+        return false;
+    }
+
+    if (response->has_tableid()) {
+        tableId = response->tableid();
+    }
+
+    return response->has_tableid();
+}
+
+bool ServerConnection::Response::get(size_t& size, const char*& data, bool& isNewest, boost::system::error_code& ec) {
+    auto response = getMessage<proto::GetResponse>(proto::RpcResponse::kGetFieldNumber, ec);
+    if (!response) {
+        return false;
+    }
+
+    isNewest = response->isnewest();
+    if (response->has_data()) {
+        size = response->data().length();
+        // TODO Prevent this copy
+        auto dataBuffer = new char[size];
+        memcpy(dataBuffer, response->data().data(), size);
+        data = dataBuffer;
+    }
+
+    return response->has_data();
+}
+
+void ServerConnection::Response::insert(bool* succeeded, boost::system::error_code& ec) {
+    auto response = getMessage<proto::InsertResponse>(proto::RpcResponse::kInsertFieldNumber, ec);
+    if (!response) {
+        return;
+    }
+
+    if (succeeded) {
+        LOG_ASSERT(response->has_succeeded(), "Message has no succeeded");
+        *succeeded = response->succeeded();
+    }
+}
+
+template <typename R>
+R* ServerConnection::Response::getMessage(int field, boost::system::error_code& ec) {
+    if (mError) {
+        ec = boost::system::error_code(mError, error::get_server_category());
         return nullptr;
     }
-    context.waitForCompletion();
+    if (mType != field) {
+        ec = boost::system::error_code(proto::RpcResponse::UNKNOWN_RESPONSE, error::get_server_category());
+        return nullptr;
+    }
+    LOG_ASSERT(!mError && mMessage.get(), "Message is null despite indicating no error");
 
-    LOG_ASSERT(!ec && response, "Response is null despite indicating no error");
-
-    return std::unique_ptr<Response>(static_cast<Response*>(response));
-}
-
-ServerConnection::ExecutionContextGuard::ExecutionContextGuard(ServerConnection& con, uint64_t id, int type,
-        google::protobuf::Message*& message, boost::system::error_code& ec)
-        : mConnection(con),
-          mId(id) {
-    tbb::queuing_rw_mutex::scoped_lock lock(mConnection.mContextsMutex, false);
-    auto res = mConnection.mContexts.insert(
-            std::make_pair(mId, ServerConnection::ExecutionContext {type, &message, &ec, &mCond})
-    ).second;
-    LOG_ASSERT(res, "Unable to insert context for message ID %1%", mId);
-}
-
-ServerConnection::ExecutionContextGuard::~ExecutionContextGuard() {
-    tbb::queuing_rw_mutex::scoped_lock lock(mConnection.mContextsMutex, true);
-    auto res = mConnection.mContexts.unsafe_erase(mId);
-    LOG_ASSERT(res == 1, "Unable to remove context for message ID %1%", mId);
-}
-
-void ServerConnection::ExecutionContextGuard::waitForCompletion() {
-    std::unique_lock<crossbow::mutex> lock(mMutex);
-    mCond.wait(lock);
+    return static_cast<R*>(mMessage.get());
 }
 
 } // namespace store

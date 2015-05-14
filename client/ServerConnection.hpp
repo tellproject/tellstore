@@ -3,8 +3,8 @@
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/string.hpp>
-#include <crossbow/thread/condition_variable.hpp>
-#include <crossbow/thread/mutex.hpp>
+
+#include <google/protobuf/message.h>
 
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/queuing_rw_mutex.h>
@@ -15,12 +15,6 @@
 #include <memory>
 #include <string>
 
-namespace google {
-namespace protobuf {
-class Message;
-} // namespace protobuf
-} // namespace google
-
 namespace tell {
 namespace store {
 
@@ -29,60 +23,70 @@ class RpcRequest;
 class RpcResponse;
 } // namespace proto
 
-class ClientConfig;
 class Schema;
 class SnapshotDescriptor;
+class TransactionManager;
 
 class ServerConnection : private crossbow::infinio::InfinibandSocketHandler {
 public:
-    ServerConnection(crossbow::infinio::InfinibandService& service)
+    class Response {
+    public:
+        Response()
+                : mError(0x0u),
+                  mType(0x0u) {
+        }
+
+        Response(uint32_t error)
+                : mError(error),
+                  mType(0x0u) {
+        }
+
+        Response(uint32_t type, google::protobuf::Message* message)
+                : mError(0x0u),
+                  mType(type),
+                  mMessage(message) {
+        }
+
+        void reset();
+
+        bool createTable(uint64_t& tableId, boost::system::error_code& ec);
+
+        bool get(size_t& size, const char*& data, bool& isNewest, boost::system::error_code& ec);
+
+        void insert(bool* succeeded, boost::system::error_code& ec);
+
+    private:
+        template <typename R>
+        R* getMessage(int field, boost::system::error_code& ec);
+
+        uint32_t mError;
+        uint32_t mType;
+        std::unique_ptr<google::protobuf::Message> mMessage;
+    };
+
+    static constexpr uint64_t RESPONSE_ERROR_TYPE = std::numeric_limits<std::uint64_t>::max();
+
+    ServerConnection(crossbow::infinio::InfinibandService& service, TransactionManager& manager)
             : mSocket(service),
-              mMessageId(0x1u) {
+              mManager(manager) {
     }
 
     ~ServerConnection();
 
-    void init(const ClientConfig& config, boost::system::error_code& ec);
+    void connect(const crossbow::string& host, uint16_t port, boost::system::error_code& ec);
 
     void shutdown();
 
-    bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
+    void createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,
             boost::system::error_code& ec);
 
-    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
-            bool& isNewest, boost::system::error_code& ec);
+    void get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+            boost::system::error_code& ec);
 
-    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-            boost::system::error_code& ec, bool* succeeded = nullptr);
+    void insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const SnapshotDescriptor& snapshot, bool succeeded, boost::system::error_code& ec);
 
 private:
-    struct ExecutionContext {
-        int type;
-
-        google::protobuf::Message** message;
-
-        boost::system::error_code* ec;
-
-        crossbow::condition_variable* cond;
-    };
-
-    class ExecutionContextGuard {
-    public:
-        ExecutionContextGuard(ServerConnection& con, uint64_t id, int type, google::protobuf::Message*& message,
-                boost::system::error_code& ec);
-
-        ~ExecutionContextGuard();
-
-        void waitForCompletion();
-
-    private:
-        ServerConnection& mConnection;
-        uint64_t mId;
-
-        crossbow::mutex mMutex;
-        crossbow::condition_variable mCond;
-    };
-
     virtual void onConnected(const boost::system::error_code& ec) final override;
 
     virtual void onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) final override;
@@ -95,17 +99,11 @@ private:
 
     void handleResponse(proto::RpcResponse& response);
 
-    template<class Response>
-    std::unique_ptr<Response> sendRequest(std::unique_ptr<proto::RpcRequest> request, int field,
-            boost::system::error_code& ec);
+    void sendRequest(std::unique_ptr<proto::RpcRequest> request, boost::system::error_code& ec);
 
     crossbow::infinio::InfinibandSocket mSocket;
 
-    std::atomic<uint64_t> mMessageId;
-
-    tbb::queuing_rw_mutex mContextsMutex;
-
-    tbb::concurrent_unordered_map<uint64_t, ExecutionContext> mContexts;
+    TransactionManager& mManager;
 };
 
 } // namespace store

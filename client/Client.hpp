@@ -1,9 +1,7 @@
 #pragma once
 
 #include "ClientConfig.hpp"
-#include "ServerConnection.hpp"
-
-#include <crossbow/infinio/InfinibandService.hpp>
+#include "TransactionManager.hpp"
 
 namespace crossbow {
 namespace infinio {
@@ -18,8 +16,7 @@ class Client {
 public:
     Client(crossbow::infinio::EventDispatcher& dispatcher, const ClientConfig& config)
             : mConfig(config),
-              mService(dispatcher),
-              mConnection(mService) {
+              mManager(dispatcher) {
     }
 
     void init();
@@ -27,11 +24,11 @@ public:
     void shutdown();
 
 private:
+    void executeTransaction(Transaction& transaction);
+
     ClientConfig mConfig;
 
-    crossbow::infinio::InfinibandService mService;
-
-    ServerConnection mConnection;
+    TransactionManager mManager;
 };
 
 } // namespace store
