@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
 # Declare build options
 option(USE_ASAN "Use the address sanitizer" OFF)
@@ -30,7 +30,9 @@ endif()
 
 # Find dependencies
 find_package(Boost REQUIRED)
-find_package(Crossbow COMPONENTS InfinIO Thread REQUIRED)
+if(NOT Crossbow_INCLUDE_DIRS)
+    find_package(Crossbow COMPONENTS InfinIO Thread REQUIRED)
+endif()
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 find_package(Protobuf REQUIRED)
