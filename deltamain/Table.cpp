@@ -238,14 +238,14 @@ void Table::insert(uint64_t key,
         const LogEntry* en = iter.operator->();
         if (en == entry) {
             entry->seal();
-            *succeeded = true;
+            if (succeeded) *succeeded = true;
             return;
         }
         CDMRecord rec(en->data());
         if (rec.isValidDataRecord() && rec.key() == key) {
             insertRecord.revert(snapshot.version());
             entry->seal();
-            *succeeded = false;
+            if (succeeded) *succeeded = false;
             return;
         }
     }
