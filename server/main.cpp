@@ -17,9 +17,11 @@ int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;
     tell::store::ServerConfig serverConfig;
     bool help = false;
+    crossbow::string logLevel("DEBUG");
 
     auto opts = crossbow::program_options::create_options(argv[0],
             crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'p'>("port", &serverConfig.port),
             crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
             crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity));
@@ -36,6 +38,8 @@ int main(int argc, const char** argv) {
         crossbow::program_options::print_help(std::cout, opts);
         return 0;
     }
+
+    tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore server");
     tell::store::init();

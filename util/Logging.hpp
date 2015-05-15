@@ -21,6 +21,8 @@ enum class LogLevel
     FATAL
 };
 
+LogLevel logLevelFromString(const crossbow::string& s);
+
 template<class... Args>
 struct LogFormatter;
 

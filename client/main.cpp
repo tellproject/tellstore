@@ -14,9 +14,11 @@
 int main(int argc, const char** argv) {
     tell::store::ClientConfig clientConfig;
     bool help = false;
+    crossbow::string logLevel("DEBUG");
 
     auto opts = crossbow::program_options::create_options(argv[0],
             crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'s'>("server", &clientConfig.server),
             crossbow::program_options::value<'p'>("port", &clientConfig.port));
 
@@ -32,6 +34,8 @@ int main(int argc, const char** argv) {
         crossbow::program_options::print_help(std::cout, opts);
         return 0;
     }
+
+    tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore client");
     tell::store::init();
