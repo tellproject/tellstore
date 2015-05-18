@@ -28,7 +28,7 @@ public:
     ConnectionManager(Storage& storage, crossbow::infinio::EventDispatcher& dispatcher, const ServerConfig& config)
             : mConfig(config),
               mStorage(storage),
-              mService(dispatcher),
+              mService(dispatcher, mConfig.infinibandLimits),
               mAcceptor(mService) {
     }
 
