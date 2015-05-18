@@ -103,7 +103,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
             uint64_t tableId = 0;
             auto succeeded = mStorage.createTable(tableName, schema, tableId);
-            LOG_ASSERT((tableId == 0) ^ succeeded, "Table ID of 0 does not denote failure");
+            LOG_ASSERT((tableId != 0) || !succeeded, "Table ID of 0 does not denote failure");
 
             size_t messageSize = sizeof(uint64_t);
             boost::system::error_code ec;
@@ -112,7 +112,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
                 LOG_ERROR("Error while handling create table request [error = %1% %2%]", ec, ec.message());
                 break;
             }
-            response.write<uint64_t>(tableId);
+            response.write<uint64_t>(succeeded ? tableId : 0x0u);
         } break;
 
         /**
