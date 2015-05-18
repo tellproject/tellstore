@@ -115,12 +115,14 @@ char* Page::gc(
 void Page::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
 {
     auto fillOffset = *reinterpret_cast<uint64_t*>(fillPage);
-    char dummyRecord[DMRecord::spaceOverhead(RecordType::MULTI_VERSION_RECORD) + 4];
+    char dummyRecord[40];
     dummyRecord[0] = to_underlying(RecordType::MULTI_VERSION_RECORD);
     // there are 0 number of versions
-    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 0;
+    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 1;
     *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr;
-    *reinterpret_cast<uint32_t*>(dummyRecord + 24) = 32;
+    *reinterpret_cast<uint64_t*>(dummyRecord + 24) = 0;
+    *reinterpret_cast<uint32_t*>(dummyRecord + 32) = 40;
+    *reinterpret_cast<uint32_t*>(dummyRecord + 36) = 40;
     DMRecord dummy(dummyRecord);
     while (!insertMap.empty()) {
         bool couldRelocate;

@@ -9,9 +9,9 @@ namespace store {
 DummyManager::DummyManager()
     : mVersions(new unsigned char[INITAL_BUFFER_SIZE]),
       mVersionsLength(INITAL_BUFFER_SIZE),
-      mBase(0u),
-      mLastVersion(0u),
-      mLowestActiveVersion(0u),
+      mBase(1u),
+      mLastVersion(1u),
+      mLowestActiveVersion(1u),
       mActiveBaseVersions(new uint32_t[INITAL_BUFFER_SIZE]),
       mActiveBaseVersionsCount(INITAL_BUFFER_SIZE)
 #ifndef NDEBUG

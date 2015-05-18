@@ -600,8 +600,13 @@ public:
             return true;
         }
         if (offs[nV] == offs[nV - 1]) {
-            // The last version got deleted - it could be that
-            // there is an insert record
+            // The last version got deleted
+            // If the newest version is smaller than the
+            // lowest active version, we can delete the whole
+            // entry.
+            if (nV < lowestActiveVersion) return true;
+            // otherwise we need to keep it, but it could be
+            // that there was an insert
             CDMRecord rec(mData);
             return insertMap.count(rec.key());
         }
@@ -785,7 +790,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         impl::VersionMap versions;
         int32_t newestValidVersionIdx = -1;
         for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] > 0 && lowestActiveVersion >= v[i]) {
+            if (offs[i] > 0 && lowestActiveVersion <= v[i]) {
                 if (i > newestValidVersionIdx)
                     newestValidVersionIdx = i;
                 versions.insert(std::make_pair(v[i],
@@ -826,7 +831,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
             current = iter->second.front();
             iter->second.pop_front();
         }
-        bool newestIsDelete = versions.rbegin()->second.size == 0;
+        bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
         while (current) {
             CDMRecord rec(current);
             bool allVersionsInvalid;

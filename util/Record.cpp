@@ -216,7 +216,7 @@ Record::Record(const Schema& schema)
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
 {
-    size_t result = 4 + (mSchema.allNotNull() ? 0 : (mSchema.schemaSize() + 7)/8);
+    size_t result = mSchema.allNotNull() ? 0 : (mSchema.schemaSize() + 7)/8;
     result += (result % 8) ? 8 - (result % 8) : 0;
     for (auto& f : mFieldMetaData) {
         auto& field = f.first;
@@ -240,6 +240,8 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
             result += field.sizeOf(f.second);
         }
     }
+    // we have to make sure that the size of a tuple is 8 byte aligned
+    result += (result % 8) ? 8 - (result % 8) : 0;
     return result;
 }
 

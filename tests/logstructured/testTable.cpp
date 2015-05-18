@@ -177,7 +177,7 @@ TEST_F(TableTest, insertGetNewest) {
     uint64_t version = 0;
     EXPECT_TRUE(mTable.getNewest(1, size, ptr, version));
     EXPECT_EQ(mField, std::string(ptr, size));
-    EXPECT_EQ(1, version);
+    EXPECT_EQ(2, version);
 }
 
 /**
