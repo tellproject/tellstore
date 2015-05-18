@@ -58,6 +58,19 @@ bool Transaction::createTable(const crossbow::string& name, const Schema& schema
     return mResponse.createTable(tableId, ec);
 }
 
+bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, boost::system::error_code& ec) {
+    auto& con = mManager.mConnection;
+
+    ++mOutstanding;
+    con.getTableId(mId, name, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    return mResponse.getTableId(tableId, ec);
+}
+
 bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
         const SnapshotDescriptor& snapshot, bool& isNewest, boost::system::error_code& ec) {
     auto& con = mManager.mConnection;
@@ -69,7 +82,37 @@ bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*&
     }
     wait();
 
-    return mResponse.get(size, data, isNewest, ec);
+    uint64_t version = 0;
+    return mResponse.get(size, data, version, isNewest, ec);
+}
+
+bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
+        uint64_t& version, boost::system::error_code& ec) {
+    auto& con = mManager.mConnection;
+
+    ++mOutstanding;
+    con.getNewest(mId, tableId, key, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    bool isNewest = false;
+    return mResponse.get(size, data, version, isNewest, ec);
+}
+
+bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char* data,
+        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+    auto& con = mManager.mConnection;
+
+    ++mOutstanding;
+    con.update(mId, tableId, key, size, data, snapshot, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    return mResponse.modification(ec);
 }
 
 void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
@@ -79,11 +122,45 @@ void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char
     ++mOutstanding;
     con.insert(mId, tableId, key, size, data, snapshot, (succeeded == nullptr ? false : true), ec);
     if (ec) {
+        if (succeeded) {
+            *succeeded = false;
+        }
         return;
     }
     wait();
 
-    mResponse.insert(succeeded, ec);
+    auto s = mResponse.modification(ec);
+    if (succeeded) {
+        *succeeded = s;
+    }
+}
+
+bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+        boost::system::error_code& ec) {
+    auto& con = mManager.mConnection;
+
+    ++mOutstanding;
+    con.remove(mId, tableId, key, snapshot, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    return mResponse.modification(ec);
+}
+
+bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+        boost::system::error_code& ec) {
+    auto& con = mManager.mConnection;
+
+    ++mOutstanding;
+    con.revert(mId, tableId, key, snapshot, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    return mResponse.modification(ec);
 }
 
 void Transaction::start() {
@@ -94,7 +171,7 @@ void Transaction::start() {
         }
 
         try {
-            LOG_INFO("Invoking transaction function");
+            LOG_TRACE("Invoking transaction function");
             mContextFun(*this);
             mContextFun = std::function<void(Transaction&)>();
             wait();
@@ -153,6 +230,8 @@ void TransactionManager::init(const ClientConfig& config, boost::system::error_c
 std::unique_ptr<Transaction> TransactionManager::startTransaction() {
     auto id = ++mTransactionId;
 
+    LOG_DEBUG("Starting transaction %1%", id);
+
     std::unique_ptr<Transaction> transaction(Transaction::allocate(*this, id));
 
     tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
@@ -164,7 +243,7 @@ std::unique_ptr<Transaction> TransactionManager::startTransaction() {
 
 void TransactionManager::onConnected(const boost::system::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Failed to connect to server [errcode = %1% %2%]", ec, ec.message());
+        LOG_ERROR("Failed to connect to server [error = %1% %2%]", ec, ec.message());
         return;
     }
     LOG_DEBUG("Connected to server");
@@ -191,6 +270,8 @@ void TransactionManager::handleResponse(uint64_t id, ServerConnection::Response 
 }
 
 void TransactionManager::endTransaction(Transaction* transaction) {
+    LOG_DEBUG("Ending transaction %1%", transaction->id());
+
     tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, true);
     auto res = mTransactions.unsafe_erase(transaction->id());
     LOG_ASSERT(res == 1, "Unable to remove context for transaction ID %1%", transaction->id());

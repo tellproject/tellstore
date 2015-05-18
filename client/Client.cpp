@@ -4,6 +4,8 @@
 #include <util/Record.hpp>
 #include <util/Logging.hpp>
 
+#include <crossbow/infinio/EventDispatcher.hpp>
+
 #include <boost/system/error_code.hpp>
 
 #include <chrono>
@@ -16,16 +18,18 @@ void Client::init() {
     LOG_INFO("Initializing TellStore client");
 
     boost::system::error_code ec;
-    mManager.init(mConfig, ec, [this]() {
+    mManager.init(mConfig, ec, [this] () {
         LOG_DEBUG("Start transaction");
         auto trans = mManager.startTransaction();
-        auto res = trans->execute(std::bind(&Client::executeTransaction, this, std::placeholders::_1));
+        auto res = trans->execute(std::bind(&Client::addTable, this, std::placeholders::_1));
         if (!res) {
             LOG_ERROR("Unable to execute transaction function");
         }
+        tbb::spin_mutex::scoped_lock lock(mTransMutex);
+        mTrans.emplace_back(std::move(trans));
     });
     if (ec) {
-        LOG_ERROR("Failure init %1% %2%", ec, ec.message());
+        LOG_ERROR("Failure init [error = %1% %2%]", ec, ec.message());
     }
 }
 
@@ -35,20 +39,15 @@ void Client::shutdown() {
     // TODO
 }
 
-void Client::executeTransaction(Transaction& transaction) {
+void Client::addTable(Transaction& transaction) {
     boost::system::error_code ec;
 
-    LOG_INFO("Adding table");
-    Schema schema;
-    schema.addField(FieldType::INT, "foo", true);
-    Record record(schema);
-
-    uint64_t tableId;
+    LOG_TRACE("Adding table");
     auto startTime = std::chrono::high_resolution_clock::now();
-    auto res = transaction.createTable("testTable", schema, tableId, ec);
+    auto res = transaction.createTable("testTable", mSchema, mTableId, ec);
     auto endTime = std::chrono::high_resolution_clock::now();
     if (ec) {
-        LOG_ERROR("Error adding table [errcode = %1% %2%]", ec, ec.message());
+        LOG_ERROR("Error adding table [error = %1% %2%]", ec, ec.message());
         return;
     }
     if (!res) {
@@ -58,61 +57,96 @@ void Client::executeTransaction(Transaction& transaction) {
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("Adding table took %1%ns", duration.count());
 
-    CommitManager commitManager;
-    auto snapshot = commitManager.startTx();
+    for (auto i = 0; i < 10; ++i) {
+        mDispatcher.post([this, i] () {
+            auto trans = mManager.startTransaction();
+            auto res = trans->execute(std::bind(&Client::executeTransaction, this, std::placeholders::_1,
+                    i * 10000 + 1, (i + 1) * 10000 + 1));
+            if (!res) {
+                LOG_ERROR("Unable to execute transaction function");
+            }
+            tbb::spin_mutex::scoped_lock lock(mTransMutex);
+            mTrans.emplace_back(std::move(trans));
+        });
+    }
+}
+
+void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uint64_t endKey) {
+    LOG_DEBUG("TID %1%] Starting transaction", transaction.id());
+
+    boost::system::error_code ec;
+
+    Record record(mSchema);
+    auto snapshot = mCommitManager.startTx();
     bool succeeded = false;
 
-    LOG_INFO("Insert tuple");
-    GenericTuple insertTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)});
-    size_t insertSize;
-    std::unique_ptr<char[]> insertData(record.create(insertTuple, insertSize));
-    startTime = std::chrono::high_resolution_clock::now();
-    transaction.insert(tableId, 1, insertSize, insertData.get(), snapshot, ec, &succeeded);
-    endTime = std::chrono::high_resolution_clock::now();
-    if (ec) {
-        LOG_ERROR("Error inserting tuple [errcode = %1% %2%]", ec, ec.message());
-        return;
-    }
-    if (!succeeded) {
-        LOG_ERROR("Insert did not succeed");
-        return;
-    }
-    duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
-    LOG_INFO("Inserting tuple took %1%ns", duration.count());
+    std::chrono::nanoseconds totalInsertDuration(0x0u);
+    std::chrono::nanoseconds totalGetDuration(0x0u);
+    auto startTime = std::chrono::high_resolution_clock::now();
+    for (auto key = startKey; key < endKey; ++key) {
+        LOG_TRACE("Insert tuple");
+        GenericTuple insertTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)});
+        size_t insertSize;
+        std::unique_ptr<char[]> insertData(record.create(insertTuple, insertSize));
+        auto insertStartTime = std::chrono::high_resolution_clock::now();
+        transaction.insert(mTableId, key, insertSize, insertData.get(), snapshot, ec, &succeeded);
+        auto insertEndTime = std::chrono::high_resolution_clock::now();
+        if (ec) {
+            LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
+            return;
+        }
+        if (!succeeded) {
+            LOG_ERROR("Insert did not succeed");
+            return;
+        }
+        auto insertDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(insertEndTime - insertStartTime);
+        totalInsertDuration += insertDuration;
+        LOG_DEBUG("Inserting tuple took %1%ns", insertDuration.count());
 
-    LOG_INFO("Get tuple");
-    size_t getSize;
-    const char* getData;
-    bool isNewest = false;
-    startTime = std::chrono::high_resolution_clock::now();
-    succeeded = transaction.get(tableId, 1, getSize, getData, snapshot, isNewest, ec);
-    endTime = std::chrono::high_resolution_clock::now();
-    if (ec) {
-        LOG_ERROR("Error getting tuple [errcode = %1% %2%]", ec, ec.message());
-        return;
-    }
-    if (!succeeded) {
-        LOG_ERROR("Tuple not found");
-        return;
-    }
-    if (!isNewest) {
-        LOG_ERROR("Tuple not the newest");
-        return;
-    }
-    duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
-    LOG_INFO("Getting tuple took %1%ns", duration.count());
+        LOG_TRACE("Get tuple");
+        size_t getSize;
+        const char* getData;
+        bool isNewest = false;
+        auto getStartTime = std::chrono::high_resolution_clock::now();
+        succeeded = transaction.get(mTableId, key, getSize, getData, snapshot, isNewest, ec);
+        auto getEndTime = std::chrono::high_resolution_clock::now();
+        if (ec) {
+            LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
+            return;
+        }
+        if (!succeeded) {
+            LOG_ERROR("Tuple not found");
+            return;
+        }
+        if (!isNewest) {
+            LOG_ERROR("Tuple not the newest");
+            return;
+        }
+        auto getDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(getEndTime - getStartTime);
+        totalGetDuration += getDuration;
+        LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
 
-    LOG_INFO("Check tuple");
-    Record::id_t fooField;
-    if (!record.idOf("foo", fooField)) {
-        LOG_ERROR("foo field not found");
+        LOG_TRACE("Check tuple");
+        Record::id_t fooField;
+        if (!record.idOf("foo", fooField)) {
+            LOG_ERROR("foo field not found");
+        }
+        bool fooIsNull;
+        auto fooData = record.data(getData, fooField, fooIsNull);
+        if (*reinterpret_cast<const int32_t*>(fooData) != 12) {
+            LOG_ERROR("Tuple value not 12");
+        }
+        LOG_TRACE("Tuple check successful");
     }
-    bool fooIsNull;
-    auto fooData = record.data(getData, fooField, fooIsNull);
-    if (*reinterpret_cast<const int32_t*>(fooData) != 12) {
-        LOG_ERROR("Tuple value not 12");
-    }
-    LOG_INFO("Tuple check successful");
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    LOG_INFO("TID %1%] Transaction completed in %2%ms [total = %3%ms / %4%ms, average = %5%us / %6%us]",
+             transaction.id(),
+             duration.count(),
+             std::chrono::duration_cast<std::chrono::milliseconds>(totalInsertDuration).count(),
+             std::chrono::duration_cast<std::chrono::milliseconds>(totalGetDuration).count(),
+             std::chrono::duration_cast<std::chrono::microseconds>(totalInsertDuration).count() / (endKey - startKey),
+             std::chrono::duration_cast<std::chrono::microseconds>(totalGetDuration).count() / (endKey - startKey));
 }
 
 } // namespace store

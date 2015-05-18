@@ -2,10 +2,11 @@
 
 #include "ConnectionManager.hpp"
 
-#include "RpcMessages.pb.h"
-
 #include <util/Epoch.hpp>
+#include <util/ErrorCode.hpp>
 #include <util/Logging.hpp>
+#include <util/MessageTypes.hpp>
+#include <util/MessageWriter.hpp>
 
 namespace tell {
 namespace store {
@@ -13,15 +14,16 @@ namespace store {
 namespace {
 
 /**
- * @brief Extracts the snapshot descriptor from the message
- *
- * The data field has to be set in the message.
+ * @brief Reads the snapshot descriptor from the message
  */
-SnapshotDescriptor snapshotFromMessage(const proto::SnapshotDescriptor& snapshot) {
-    auto snapshotLength = snapshot.data().length();
-    std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[snapshotLength]);
-    memcpy(dataBuffer.get(), snapshot.data().data(), snapshotLength);
-    return SnapshotDescriptor(dataBuffer.release(), snapshotLength, snapshot.version());
+SnapshotDescriptor readSnapshot(uint64_t version, BufferReader& request) {
+    request.align(sizeof(uint32_t));
+    auto descriptorLength = request.read<uint32_t>();
+    auto descriptorData = request.read(descriptorLength);
+
+    std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[descriptorLength]);
+    memcpy(dataBuffer.get(), descriptorData, descriptorLength);
+    return SnapshotDescriptor(dataBuffer.release(), descriptorLength, version);
 }
 
 } // anonymous namespace
@@ -42,63 +44,360 @@ void ClientConnection::shutdown() {
     boost::system::error_code ec;
     mSocket.disconnect(ec);
     if (ec) {
-        LOG_ERROR("Error disconnecting");
+        LOG_ERROR("Error disconnecting [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow - Can this even happen?
     }
 }
 
 void ClientConnection::onConnected(const boost::system::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Failure while establishing client connection [errcode = %1% %2%]", ec, ec.message());
+        LOG_ERROR("Failure while establishing client connection [error = %1% %2%]", ec, ec.message());
         mManager.removeConnection(this);
     }
 }
 
 void ClientConnection::onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Error receiving message");
+        LOG_ERROR("Error receiving message [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
         return;
     }
 
-    proto::RpcResponseBatch responseBatch;
-    proto::RpcRequestBatch requestBatch;
-    if (!requestBatch.ParseFromArray(buffer, length)) {
-        LOG_ERROR("Error parsing protobuf message");
-        // TODO Handle this situation somehow
-        return;
-    }
+    auto startTime = std::chrono::high_resolution_clock::now();
 
-    auto maxSize = mSocket.bufferLength();
-    auto responseField = responseBatch.mutable_response();
-    for (auto& request : requestBatch.request()) {
-        auto response = responseField->Add();
-        response->set_messageid(request.messageid());
-        handleRequest(request, *response);
-
-        // Response batch became too big we have to split it
-        if (responseBatch.ByteSize() > maxSize) {
-            auto lastResponse = responseField->ReleaseLast();
-            LOG_ASSERT(response == lastResponse, "Removed response does not point to added response");
-
-            if (responseField->empty()) {
-                // TODO Response too large
-            }
-
-            sendResponseBatch(responseBatch);
-            responseBatch.Clear();
-            responseField->AddAllocated(response);
+    BufferReader request(reinterpret_cast<const char*>(buffer), length);
+    MessageWriter writer(mSocket);
+    while (!request.exhausted()) {
+        auto transactionId = request.read<uint64_t>();
+        auto requestType = request.read<uint64_t>();
+        if (requestType > static_cast<uint64_t>(RequestType::LAST)) {
+            requestType = static_cast<uint64_t>(RequestType::UNKOWN);
         }
+
+        LOG_TRACE("TID %1%] Handling request of type %2%", transactionId, requestType);
+
+        switch (static_cast<RequestType>(requestType)) {
+
+        /**
+         * The create table request has the following format:
+         * - 2 bytes: Length of the table name string
+         * - x bytes: The table name string
+         * - y bytes: Variable padding to make message 8 byte aligned
+         * - 4 bytes: Length of the schema field
+         * - x bytes: The table schema
+         *
+         * The response consists of the following format:
+         * - 8 bytes: The table ID of the newly created table or 0 when the table already exists
+         */
+        case RequestType::CREATE_TABLE: {
+            auto tableNameSize = request.read<uint16_t>();
+            auto tableNameData = request.read(tableNameSize);
+            request.align(sizeof(uint64_t));
+            crossbow::string tableName(tableNameData, tableNameSize);
+
+            // TODO Refactor schema serialization
+            auto schemaData = request.data();
+            auto schemaSize = request.read<uint32_t>();
+            request.advance(schemaSize - sizeof(uint32_t));
+            Schema schema(schemaData);
+
+            uint64_t tableId = 0;
+            auto succeeded = mStorage.createTable(tableName, schema, tableId);
+            LOG_ASSERT((tableId == 0) ^ succeeded, "Table ID of 0 does not denote failure");
+
+            size_t messageSize = sizeof(uint64_t);
+            boost::system::error_code ec;
+            auto response = writer.writeResponse(transactionId, ResponseType::CREATE_TABLE, messageSize, ec);
+            if (ec) {
+                LOG_ERROR("Error while handling create table request [error = %1% %2%]", ec, ec.message());
+                break;
+            }
+            response.write<uint64_t>(tableId);
+        } break;
+
+        /**
+         * The get table ID request has the following format:
+         * - 2 bytes: Length of the table name string
+         * - x bytes: The table name string
+         *
+         * The response consists of the following format:
+         * - 8 bytes: The table ID of the table or 0 when the table does not exist
+         */
+        case RequestType::GET_TABLEID: {
+            auto tableNameSize = request.read<uint16_t>();
+            auto tableNameData = request.read(tableNameSize);
+            crossbow::string tableName(tableNameData, tableNameSize);
+
+            uint64_t tableId = 0;
+            auto succeeded = mStorage.getTableId(tableName, tableId);
+            LOG_ASSERT((tableId == 0) ^ succeeded, "Table ID of 0 does not denote failure");
+
+            size_t messageSize = sizeof(uint64_t);
+            boost::system::error_code ec;
+            auto response = writer.writeResponse(transactionId, ResponseType::GET_TABLEID, messageSize, ec);
+            if (ec) {
+                LOG_ERROR("Error while handling get table ID request [error = %1% %2%]", ec, ec.message());
+                break;
+            }
+            response.write<uint64_t>(tableId);
+        } break;
+
+        /**
+         * The get request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         * - x bytes: Snapshot descriptor
+         *
+         * The response consists of the following format:
+         * - 8 bytes: The version of the tuple (0 in this case, ony used for get newest)
+         * - 1 byte:  Whether the tuple is the newest one
+         * - 1 byte:  Whether the tuple was found
+         * If the tuple was found:
+         * - 2 bytes: Padding
+         * - 4 bytes: Length of the tuple's data field
+         * - x bytes: The tuple's data
+         */
+        case RequestType::GET: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+            handleSnapshot(transactionId, request, writer,
+                    [this, &writer, &transactionId, &tableId, &key] (const SnapshotDescriptor& snapshot) {
+                size_t size = 0;
+                const char* data = nullptr;
+                bool isNewest = false;
+                auto success = mStorage.get(tableId, key, size, data, snapshot, isNewest);
+
+                // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
+                size_t messageSize = 2 * sizeof(uint64_t) + size;
+                boost::system::error_code ec;
+                auto response = writer.writeResponse(transactionId, ResponseType::GET, messageSize, ec);
+                if (ec) {
+                    LOG_ERROR("Error while handling get request [error = %1% %2%]", ec, ec.message());
+                    return;
+                }
+                response.write<uint64_t>(0x0u);
+                response.write<uint8_t>(isNewest ? 0x1u : 0x0u);
+                response.write<uint8_t>(success ? 0x1u : 0x0u);
+                if (success) {
+                    response.align(sizeof(uint32_t));
+                    response.write<uint32_t>(size);
+                    response.write(data, size);
+                }
+            });
+        } break;
+
+        /**
+         * The get newest request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         *
+         * The response consists of the following format:
+         * - 8 bytes: The version of the tuple
+         * - 1 byte:  Whether the tuple is the newest one (always true in the case of get newest)
+         * - 1 byte:  Whether the tuple was found
+         * If the tuple was found:
+         * - 2 bytes: Padding
+         * - 4 bytes: Length of the tuple's data field
+         * - x bytes: The tuple's data
+         */
+        case RequestType::GET_NEWEST: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+
+            size_t size = 0;
+            const char* data = nullptr;
+            uint64_t version = 0x0u;
+            auto success = mStorage.getNewest(tableId, key, size, data, version);
+
+            // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
+            size_t messageSize = 2 * sizeof(uint64_t) + size;
+            boost::system::error_code ec;
+            auto response = writer.writeResponse(transactionId, ResponseType::GET, messageSize, ec);
+            if (ec) {
+                LOG_ERROR("Error while handling get newest request [error = %1% %2%]", ec, ec.message());
+                break;
+            }
+            response.write<uint64_t>(version);
+            response.write<uint8_t>(0x1u); // isNewest
+            response.write<uint8_t>(success ? 0x1u : 0x0u);
+            if (success) {
+                response.align(sizeof(uint32_t));
+                response.write<uint32_t>(size);
+                response.write(data, size);
+            }
+        } break;
+
+        /**
+         * The update request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         * - 4 bytes: Padding
+         * - 4 bytes: Length of the tuple's data field
+         * - x bytes: The tuple's data
+         * - y bytes: Variable padding to make message 8 byte aligned
+         * - x bytes: Snapshot descriptor
+         *
+         * The response consists of the following format:
+         * - 1 byte:  Whether the update was successfull
+         */
+        case RequestType::UPDATE: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+
+            request.align(sizeof(uint32_t));
+            auto dataLength = request.read<uint32_t>();
+            auto data = request.read(dataLength);
+
+            request.align(sizeof(uint64_t));
+            handleSnapshot(transactionId, request, writer,
+                    [this, &writer, &transactionId, &tableId, &key, &dataLength, &data]
+                    (const SnapshotDescriptor& snapshot) {
+                auto succeeded = mStorage.update(tableId, key, dataLength, data, snapshot);
+
+                // Message size is 1 byte (succeeded)
+                size_t messageSize = sizeof(uint8_t);
+                boost::system::error_code ec;
+                auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
+                if (ec) {
+                    LOG_ERROR("Error while handling update request [error = %1% %2%]", ec, ec.message());
+                    return;
+                }
+                response.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+            });
+        } break;
+
+        /**
+         * The insert request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         * - 1 byte:  Whether we want to know if the operation was successful or not
+         * - 3 bytes: Padding
+         * - 4 bytes: Length of the tuple's data field
+         * - x bytes: The tuple's data
+         * - y bytes: Variable padding to make message 8 byte aligned
+         * - x bytes: Snapshot descriptor
+         *
+         * The response consists of the following format:
+         * - 1 byte:  Whether the insert was successfull
+         */
+        case RequestType::INSERT: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+            bool wantsSucceeded = request.read<uint8_t>();
+
+            request.align(sizeof(uint32_t));
+            auto dataLength = request.read<uint32_t>();
+            auto data = request.read(dataLength);
+
+            request.align(sizeof(uint64_t));
+            handleSnapshot(transactionId, request, writer,
+                    [this, &writer, &transactionId, &tableId, &key, &wantsSucceeded, &dataLength, &data]
+                    (const SnapshotDescriptor& snapshot) {
+                bool succeeded = false;
+                mStorage.insert(tableId, key, dataLength, data, snapshot, (wantsSucceeded ? &succeeded : nullptr));
+
+                // Message size is 1 byte (succeeded)
+                size_t messageSize = sizeof(uint8_t);
+                boost::system::error_code ec;
+                auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
+                if (ec) {
+                    LOG_ERROR("Error while handling insert request [error = %1% %2%]", ec, ec.message());
+                    return;
+                }
+                response.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+            });
+        } break;
+
+        /**
+         * The remove request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         * - x bytes: Snapshot descriptor
+         *
+         * The response consists of the following format:
+         * - 1 byte:  Whether the remove was successfull
+         */
+        case RequestType::REMOVE: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+
+            handleSnapshot(transactionId, request, writer,
+                    [this, &writer, &transactionId, &tableId, &key] (const SnapshotDescriptor& snapshot) {
+                auto succeeded = mStorage.remove(tableId, key, snapshot);
+
+                // Message size is 1 byte (succeeded)
+                size_t messageSize = sizeof(uint8_t);
+                boost::system::error_code ec;
+                auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
+                if (ec) {
+                    LOG_ERROR("Error while handling remove request [error = %1% %2%]", ec, ec.message());
+                    return;
+                }
+                response.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+            });
+        } break;
+
+        /**
+         * The revert request has the following format:
+         * - 8 bytes: The table ID of the requested tuple
+         * - 8 bytes: The key of the requested tuple
+         * - x bytes: Snapshot descriptor
+         *
+         * The response consists of the following format:
+         * - 1 byte:  Whether the revert was successfull
+         */
+        case RequestType::REVERT: {
+            auto tableId = request.read<uint64_t>();
+            auto key = request.read<uint64_t>();
+
+            handleSnapshot(transactionId, request, writer,
+                    [this, &writer, &transactionId, &tableId, &key] (const SnapshotDescriptor& snapshot) {
+                auto succeeded = mStorage.revert(tableId, key, snapshot);
+
+                // Message size is 1 byte (succeeded)
+                size_t messageSize = sizeof(uint8_t);
+                boost::system::error_code ec;
+                auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
+                if (ec) {
+                    LOG_ERROR("Error while handling revert request [error = %1% %2%]", ec, ec.message());
+                    return;
+                }
+                response.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+            });
+        } break;
+
+        case RequestType::COMMIT: {
+            // TODO Implement commit logic
+        } break;
+
+        default: {
+            boost::system::error_code ec;
+            writer.writeErrorResponse(transactionId, error::unkown_request, ec);
+            if (ec) {
+                LOG_ERROR("Error while handling an unknown request [error = %1% %2%]", ec, ec.message());
+                break;
+            }
+        } break;
+        }
+
+        request.align(sizeof(uint64_t));
     }
+
     // Send remaining response batch
-    if (!responseField->empty()) {
-        sendResponseBatch(responseBatch);
+    boost::system::error_code ec2;
+    writer.flush(ec2);
+    if (ec2) {
+        LOG_ERROR("Error while flushing response batch [error = %1% %2%]", ec2, ec2.message());
     }
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
+    LOG_DEBUG("Handling request took %1%ns", duration.count());
 }
 
 void ClientConnection::onSend(uint32_t userId, const boost::system::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Error sending message");
+        LOG_ERROR("Error sending message [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
     }
 }
@@ -114,171 +413,61 @@ void ClientConnection::onDisconnected() {
     mManager.removeConnection(this);
 }
 
-void ClientConnection::handleRequest(const proto::RpcRequest& request, proto::RpcResponse& response) {
-    switch (request.Request_case()) {
-    case proto::RpcRequest::kCreateTable: {
-        auto& createTableRequest = request.createtable();
-        auto createTableResponse = response.mutable_createtable();
-
-        Schema schema(createTableRequest.schema().data());
-        uint64_t tableId = 0;
-        if (mStorage.createTable(createTableRequest.name(), schema, tableId)) {
-            createTableResponse->set_tableid(tableId);
-        }
-    } break;
-
-    case proto::RpcRequest::kGetTableId: {
-        auto& getTableIdRequest = request.gettableid();
-        auto getTableIdResponse = response.mutable_gettableid();
-
-        uint64_t tableId = 0;
-        if (mStorage.getTableId(getTableIdRequest.name(), tableId)) {
-            getTableIdResponse->set_tableid(tableId);
-        }
-    } break;
-
-    case proto::RpcRequest::kGet: {
-        auto& getRequest = request.get();
-        handleSnapshot(getRequest.snapshot(), response,
-                [this, &getRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
-            auto getResponse = response.mutable_get();
-            size_t size = 0;
-            const char* data = nullptr;
-            bool isNewest = false;
-            if (mStorage.get(getRequest.tableid(), getRequest.key(), size, data, snapshot, isNewest)) {
-                getResponse->set_data(data, size);
-            }
-            getResponse->set_isnewest(isNewest);
-        });
-    } break;
-
-    case proto::RpcRequest::kGetNewest: {
-        auto& getNewestRequest = request.getnewest();
-        auto getResponse = response.mutable_get();
-        size_t size = 0;
-        const char* data = nullptr;
-        uint64_t version = 0x0u;
-        if (mStorage.getNewest(getNewestRequest.tableid(), getNewestRequest.key(), size, data, version)) {
-            getResponse->set_data(data, size);
-        }
-        getResponse->set_isnewest(true);
-        getResponse->set_version(version);
-    } break;
-
-    case proto::RpcRequest::kUpdate: {
-        auto& updateRequest = request.update();
-        handleSnapshot(updateRequest.snapshot(), response,
-                [this, &updateRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
-            auto updateResponse = response.mutable_update();
-            auto& data = updateRequest.data();
-            auto succeeded = mStorage.update(updateRequest.tableid(), updateRequest.key(), data.length(), data.data(),
-                    snapshot);
-            updateResponse->set_succeeded(succeeded);
-        });
-    } break;
-
-    case proto::RpcRequest::kInsert: {
-        auto& insertRequest = request.insert();
-        handleSnapshot(insertRequest.snapshot(), response,
-                [this, &insertRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
-            auto insertResponse = response.mutable_insert();
-            bool succeeded = false;
-            auto& data = insertRequest.data();
-            mStorage.insert(insertRequest.tableid(), insertRequest.key(), data.length(), data.data(), snapshot,
-                    (insertRequest.succeeded() ? &succeeded : nullptr));
-            if (insertRequest.succeeded()) {
-                insertResponse->set_succeeded(succeeded);
-            }
-        });
-    } break;
-
-    case proto::RpcRequest::kRemove: {
-        auto& removeRequest = request.remove();
-        handleSnapshot(removeRequest.snapshot(), response,
-                [this, &removeRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
-            auto removeResponse = response.mutable_remove();
-            auto succeeded = mStorage.remove(removeRequest.tableid(), removeRequest.key(), snapshot);
-            removeResponse->set_succeeded(succeeded);
-        });
-    } break;
-
-    case proto::RpcRequest::kRevert: {
-        auto& revertRequest = request.revert();
-        handleSnapshot(revertRequest.snapshot(), response,
-                [this, &revertRequest] (const SnapshotDescriptor& snapshot, proto::RpcResponse& response) {
-            auto revertResponse = response.mutable_revert();
-            auto succeeded = mStorage.revert(revertRequest.tableid(), revertRequest.key(), snapshot);
-            revertResponse->set_succeeded(succeeded);
-        });
-    } break;
-
-    case proto::RpcRequest::kCommit: {
-        auto& commitRequest = request.commit();
-        auto commitResponse = response.mutable_commit();
-
-        auto& snapshot = commitRequest.snapshot();
-        if (snapshot.cached()) {
-            removeSnapshot(snapshot.version());
-        }
-
-        // TODO Implement commit logic
-        commitResponse->set_succeeded(true);
-    } break;
-
-    default: {
-        response.set_error(proto::RpcResponse::UNKNOWN_REQUEST);
-    } break;
-    }
-}
-
-void ClientConnection::sendResponseBatch(const proto::RpcResponseBatch& responseBatch) {
-    auto sbuffer = mSocket.acquireSendBuffer(responseBatch.ByteSize());
-    if (sbuffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
-        LOG_ERROR("System ran out of buffers");
-        // TODO Handle this situation somehow
-        return;
-    }
-    responseBatch.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(sbuffer.data()));
-
-    boost::system::error_code ec;
-    mSocket.send(sbuffer, 0, ec);
-    if (ec)  {
-        mSocket.releaseSendBuffer(sbuffer);
-        LOG_ERROR("Error sending message");
-        // TODO Handle this situation somehow
-    }
-}
-
 template <typename Fun>
-void ClientConnection::handleSnapshot(const proto::SnapshotDescriptor& snapshot, proto::RpcResponse& response, Fun f) {
-    if (snapshot.cached()) {
+void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& request, MessageWriter& writer, Fun f) {
+    /**
+     * The snapshot descriptor has the following format:
+     * - 8 bytes: The version of the snapshot
+     * - 1 byte:  Whether we want to get / put the snapshot descriptor from / into the cache
+     * - 1 byte:  Whether we sent the full descriptor
+     * If the message contains a full descriptor:
+     * - 2 bytes: Padding
+     * - 4 bytes: Length of the descriptor
+     * - x bytes: The descriptor data
+     */
+    auto version = request.read<uint64_t>();
+    bool cached = request.read<uint8_t>();
+    bool hasDescriptor = request.read<uint8_t>();
+    if (cached) {
         tbb::queuing_rw_mutex::scoped_lock lock(mSnapshotsMutex, false);
-        auto i = mSnapshots.find(snapshot.version());
+        auto i = mSnapshots.find(version);
 
         // Either we already have the snapshot in our cache or the client send it to us
         auto found = (i != mSnapshots.end());
-        if (found ^ snapshot.has_data()) {
-            response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+        if (found ^ hasDescriptor) {
+            boost::system::error_code ec;
+            writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
+            if (ec) {
+                LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());
+            }
             return;
         }
 
         if (!found) {
             // We have to add the snapshot to the cache
-            auto res = mSnapshots.insert(std::make_pair(snapshot.version(), snapshotFromMessage(snapshot)));
+            auto res = mSnapshots.insert(std::make_pair(version, readSnapshot(version, request)));
             if (!res.second) { // Element was inserted by another thread
-                response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+                boost::system::error_code ec;
+                writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
+                if (ec) {
+                    LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());
+                }
                 return;
             }
             i = res.first;
         }
 
-        f(i->second, response);
+        f(i->second);
     } else {
-        if (!snapshot.has_data()) {
-            response.set_error(proto::RpcResponse::INVALID_SNAPSHOT);
+        if (!hasDescriptor) {
+            boost::system::error_code ec;
+            writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
+            if (ec) {
+                LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());
+            }
             return;
         }
-        f(snapshotFromMessage(snapshot), response);
+        f(readSnapshot(version, request));
     }
 }
 

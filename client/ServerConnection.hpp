@@ -1,10 +1,10 @@
 #pragma once
 
+#include <util/MessageTypes.hpp>
+
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/string.hpp>
-
-#include <google/protobuf/message.h>
 
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/queuing_rw_mutex.h>
@@ -18,32 +18,23 @@
 namespace tell {
 namespace store {
 
-namespace proto {
-class RpcRequest;
-class RpcResponse;
-} // namespace proto
-
 class Schema;
 class SnapshotDescriptor;
 class TransactionManager;
+
+class BufferReader;
 
 class ServerConnection : private crossbow::infinio::InfinibandSocketHandler {
 public:
     class Response {
     public:
         Response()
-                : mError(0x0u),
-                  mType(0x0u) {
+                : mType(ResponseType::ERROR),
+                  mMessage(nullptr) {
         }
 
-        Response(uint32_t error)
-                : mError(error),
-                  mType(0x0u) {
-        }
-
-        Response(uint32_t type, google::protobuf::Message* message)
-                : mError(0x0u),
-                  mType(type),
+        Response(ResponseType type, BufferReader* message)
+                : mType(type),
                   mMessage(message) {
         }
 
@@ -51,20 +42,18 @@ public:
 
         bool createTable(uint64_t& tableId, boost::system::error_code& ec);
 
-        bool get(size_t& size, const char*& data, bool& isNewest, boost::system::error_code& ec);
+        bool getTableId(uint64_t& tableId, boost::system::error_code& ec);
 
-        void insert(bool* succeeded, boost::system::error_code& ec);
+        bool get(size_t& size, const char*& data, uint64_t& version, bool& isNewest, boost::system::error_code& ec);
+
+        bool modification(boost::system::error_code& ec);
 
     private:
-        template <typename R>
-        R* getMessage(int field, boost::system::error_code& ec);
+        bool checkMessage(ResponseType type, boost::system::error_code& ec);
 
-        uint32_t mError;
-        uint32_t mType;
-        std::unique_ptr<google::protobuf::Message> mMessage;
+        ResponseType mType;
+        BufferReader* mMessage;
     };
-
-    static constexpr uint64_t RESPONSE_ERROR_TYPE = std::numeric_limits<std::uint64_t>::max();
 
     ServerConnection(crossbow::infinio::InfinibandService& service, TransactionManager& manager)
             : mSocket(service),
@@ -80,11 +69,24 @@ public:
     void createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,
             boost::system::error_code& ec);
 
+    void getTableId(uint64_t transactionId, const crossbow::string& name, boost::system::error_code& ec);
+
     void get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
             boost::system::error_code& ec);
 
+    void getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, boost::system::error_code& ec);
+
+    void update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const SnapshotDescriptor& snapshot, boost::system::error_code& ec);
+
     void insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
             const SnapshotDescriptor& snapshot, bool succeeded, boost::system::error_code& ec);
+
+    void remove(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+            boost::system::error_code& ec);
+
+    void revert(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
+            boost::system::error_code& ec);
 
 private:
     virtual void onConnected(const boost::system::error_code& ec) final override;
@@ -97,9 +99,7 @@ private:
 
     virtual void onDisconnected() final override;
 
-    void handleResponse(proto::RpcResponse& response);
-
-    void sendRequest(std::unique_ptr<proto::RpcRequest> request, boost::system::error_code& ec);
+    void sendRequest(crossbow::infinio::InfinibandBuffer& buffer, boost::system::error_code& ec);
 
     crossbow::infinio::InfinibandSocket mSocket;
 

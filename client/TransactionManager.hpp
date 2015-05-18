@@ -4,7 +4,6 @@
 
 #include <util/NonCopyable.hpp>
 
-#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/string.hpp>
 
 #include <tbb/concurrent_unordered_map.h>
@@ -64,11 +63,23 @@ public:
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
             boost::system::error_code& ec);
 
+    bool getTableId(const crossbow::string& name, uint64_t& tableId, boost::system::error_code& ec);
+
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
             bool& isNewest, boost::system::error_code& ec);
 
+    bool getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
+            boost::system::error_code& ec);
+
+    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
+            boost::system::error_code& ec);
+
     void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
             boost::system::error_code& ec, bool* succeeded = nullptr);
+
+    bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, boost::system::error_code& ec);
+
+    bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, boost::system::error_code& ec);
 
 private:
     friend class TransactionManager;
@@ -107,10 +118,9 @@ private:
 
 class TransactionManager {
 public:
-    TransactionManager(crossbow::infinio::EventDispatcher& dispatcher)
+    TransactionManager(crossbow::infinio::InfinibandService& service)
             : mTransactionId(0x0u),
-              mService(dispatcher),
-              mConnection(mService, *this) {
+              mConnection(service, *this) {
     }
 
     ~TransactionManager();
@@ -131,7 +141,6 @@ private:
 
     std::atomic<uint64_t> mTransactionId;
 
-    crossbow::infinio::InfinibandService mService;
     ServerConnection mConnection;
 
     tbb::queuing_rw_mutex mTransactionsMutex;

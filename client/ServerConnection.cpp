@@ -1,12 +1,12 @@
 #include "ServerConnection.hpp"
 
-#include "RpcMessages.pb.h"
-
-#include "ErrorCode.hpp"
 #include "TransactionManager.hpp"
 
 #include <util/Epoch.hpp>
+#include <util/ErrorCode.hpp>
 #include <util/Logging.hpp>
+#include <util/MessageTypes.hpp>
+#include <util/MessageWriter.hpp>
 #include <util/Record.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
@@ -15,6 +15,21 @@
 
 namespace tell {
 namespace store {
+
+namespace {
+
+void writeSnapshot(BufferWriter& message, const SnapshotDescriptor& snapshot) {
+    message.write<uint64_t>(snapshot.version());
+    // TODO Implement snapshot caching
+    message.write<uint8_t>(0x0u); // Cached
+    message.write<uint8_t>(0x1u); // HasDescriptor
+    message.align(sizeof(uint32_t));
+    auto descriptorLength = snapshot.length();
+    message.write<uint32_t>(descriptorLength);
+    message.write(snapshot.descriptor(), descriptorLength);
+}
+
+} // anonymous namespace
 
 ServerConnection::~ServerConnection() {
     boost::system::error_code ec;
@@ -49,57 +64,160 @@ void ServerConnection::shutdown() {
 
 void ServerConnection::createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,
         boost::system::error_code& ec) {
-    std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(transactionId);
-
-    auto createTableRequest = request->mutable_createtable();
-    createTableRequest->set_name(name.c_str());
-
+    auto nameSize = name.size();
     auto schemaSize = schema.schemaSize();
-    char schemaData[schemaSize];
-    schema.serialize(schemaData);
-    createTableRequest->set_schema(schemaData, schemaSize);
+    auto messageSize = sizeof(uint16_t) + nameSize;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += schemaSize;
 
-    sendRequest(std::move(request), ec);
+    MessageWriter writer(mSocket);
+    auto request = writer.writeRequest(transactionId, RequestType::CREATE_TABLE, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    request.write<uint16_t>(nameSize);
+    request.write(name.data(), nameSize);
+
+    request.align(sizeof(uint64_t));
+    schema.serialize(request.data());
+    request.advance(schemaSize);
+
+    writer.flush(ec);
+}
+
+void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string& name, boost::system::error_code& ec) {
+    auto nameSize = name.size();
+    auto messageSize = sizeof(uint16_t) + nameSize;
+
+    MessageWriter writer(mSocket);
+    auto request = writer.writeRequest(transactionId, RequestType::GET_TABLEID, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    request.write<uint16_t>(nameSize);
+    request.write(name.data(), nameSize);
+
+    writer.flush(ec);
 }
 
 void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
         boost::system::error_code& ec) {
-    std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(transactionId);
+    auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    auto getRequest = request->mutable_get();
-    getRequest->set_tableid(tableId);
-    getRequest->set_key(key);
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::GET, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+    writeSnapshot(message, snapshot);
 
-    // TODO Cache snapshot descriptor
-    auto snapshotRequest = getRequest->mutable_snapshot();
-    snapshotRequest->set_version(snapshot.version());
-    snapshotRequest->set_data(snapshot.descriptor(), snapshot.length());
-    snapshotRequest->set_cached(false);
+    writer.flush(ec);
+}
 
-    sendRequest(std::move(request), ec);
+void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key,
+        boost::system::error_code& ec) {
+    auto messageSize = 2 * sizeof(uint64_t);
+
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::GET_NEWEST, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+
+    writer.flush(ec);
+}
+
+void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
+        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+    auto messageSize = 3 * sizeof(uint64_t) + size;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
+
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+
+    message.align(sizeof(uint32_t));
+    message.write<uint32_t>(size);
+    message.write(data, size);
+
+    message.align(sizeof(uint64_t));
+    writeSnapshot(message, snapshot);
+
+    writer.flush(ec);
 }
 
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, bool succeeded, boost::system::error_code& ec) {
-    std::unique_ptr<proto::RpcRequest> request(new proto::RpcRequest());
-    request->set_messageid(transactionId);
+    auto messageSize = 3 * sizeof(uint64_t) + size;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
 
-    auto insertRequest = request->mutable_insert();
-    insertRequest->set_tableid(tableId);
-    insertRequest->set_key(key);
-    insertRequest->set_data(data, size);
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+    message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
 
-    // TODO Cache snapshot descriptor
-    auto snapshotRequest = insertRequest->mutable_snapshot();
-    snapshotRequest->set_version(snapshot.version());
-    snapshotRequest->set_data(snapshot.descriptor(), snapshot.length());
-    snapshotRequest->set_cached(false);
+    message.align(sizeof(uint32_t));
+    message.write<uint32_t>(size);
+    message.write(data, size);
+    message.align(sizeof(uint64_t));
 
-    insertRequest->set_succeeded(succeeded);
+    writeSnapshot(message, snapshot);
 
-    sendRequest(std::move(request), ec);
+    writer.flush(ec);
+}
+
+void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t key,
+        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+    auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
+
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::REMOVE, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+
+    writeSnapshot(message, snapshot);
+
+    writer.flush(ec);
+}
+
+void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t key,
+        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+    auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
+
+    MessageWriter writer(mSocket);
+    auto message = writer.writeRequest(transactionId, RequestType::REVERT, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    message.write<uint64_t>(tableId);
+    message.write<uint64_t>(key);
+
+    writeSnapshot(message, snapshot);
+
+    writer.flush(ec);
 }
 
 void ServerConnection::onConnected(const boost::system::error_code& ec) {
@@ -113,21 +231,24 @@ void ServerConnection::onReceive(const void* buffer, size_t length, const boost:
         return;
     }
 
-    proto::RpcResponseBatch responseBatch;
-    if (!responseBatch.ParseFromArray(buffer, length)) {
-        LOG_ERROR("Error parsing protobuf message");
-        // TODO Handle this situation somehow
-        return;
-    }
+    BufferReader responseReader(reinterpret_cast<const char*>(buffer), length);
+    while (!responseReader.exhausted()) {
+        auto transactionId = responseReader.read<uint64_t>();
+        auto responseType = responseReader.read<uint64_t>();
+        if (responseType > static_cast<uint64_t>(ResponseType::LAST)) {
+            // Unknown request type
+        }
 
-    for (auto& response : *responseBatch.mutable_response()) {
-        handleResponse(response);
+        LOG_TRACE("T %1%] Handling response of type %2%", transactionId, responseType);
+        mManager.handleResponse(transactionId, Response(static_cast<ResponseType>(responseType), &responseReader));
+
+        responseReader.align(sizeof(uint64_t));
     }
 }
 
 void ServerConnection::onSend(uint32_t userId, const boost::system::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Error sending message");
+        LOG_ERROR("Error sending message [errcode = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
     }
 }
@@ -143,41 +264,8 @@ void ServerConnection::onDisconnected() {
     // TODO Impl
 }
 
-void ServerConnection::handleResponse(proto::RpcResponse& response) {
-    if (response.has_error()) {
-        mManager.handleResponse(response.messageid(), ServerConnection::Response(response.error()));
-        return;
-    }
-
-#define HANDLE_RESPONSE_CASE(_case, _name) \
-    case _case: {\
-        mManager.handleResponse(response.messageid(),\
-                ServerConnection::Response(_case##FieldNumber, response.release_ ## _name()));\
-    } break
-
-    switch (response.Response_case()) {
-    HANDLE_RESPONSE_CASE(proto::RpcResponse::kCreateTable, createtable);
-    HANDLE_RESPONSE_CASE(proto::RpcResponse::kGet, get);
-    HANDLE_RESPONSE_CASE(proto::RpcResponse::kInsert, insert);
-    default: {
-        mManager.handleResponse(response.messageid(), ServerConnection::Response(proto::RpcResponse::UNKNOWN_RESPONSE));
-    } break;
-    }
-}
-
-void ServerConnection::sendRequest(std::unique_ptr<proto::RpcRequest> request, boost::system::error_code& ec) {
+void ServerConnection::sendRequest(crossbow::infinio::InfinibandBuffer& buffer, boost::system::error_code& ec) {
     // TODO Implement actual request batching
-    proto::RpcRequestBatch requestBatch;
-    auto requestField = requestBatch.mutable_request();
-    requestField->AddAllocated(request.release());
-
-    auto buffer = mSocket.acquireSendBuffer(requestBatch.ByteSize());
-    if (buffer.id() == crossbow::infinio::InfinibandBuffer::INVALID_ID) {
-        ec = error::invalid_buffer;
-        return;
-    }
-    requestBatch.SerializeWithCachedSizesToArray(reinterpret_cast<uint8_t*>(buffer.data()));
-
     mSocket.send(buffer, 0x0u, ec);
     if (ec) {
         mSocket.releaseSendBuffer(buffer);
@@ -186,67 +274,75 @@ void ServerConnection::sendRequest(std::unique_ptr<proto::RpcRequest> request, b
 }
 
 void ServerConnection::Response::reset() {
-    mMessage.reset();
-    mType = 0x0u;
-    mError = 0x0u;
+    mMessage = nullptr;
+    mType = ResponseType::ERROR;
 }
 
 bool ServerConnection::Response::createTable(uint64_t& tableId, boost::system::error_code& ec) {
-    auto response = getMessage<proto::CreateTableResponse>(proto::RpcResponse::kCreateTableFieldNumber, ec);
-    if (!response) {
+    if (!checkMessage(ResponseType::CREATE_TABLE, ec)) {
         return false;
     }
 
-    if (response->has_tableid()) {
-        tableId = response->tableid();
-    }
-
-    return response->has_tableid();
+    tableId = mMessage->read<uint64_t>();
+    return (tableId != 0x0u);
 }
 
-bool ServerConnection::Response::get(size_t& size, const char*& data, bool& isNewest, boost::system::error_code& ec) {
-    auto response = getMessage<proto::GetResponse>(proto::RpcResponse::kGetFieldNumber, ec);
-    if (!response) {
+bool ServerConnection::Response::getTableId(uint64_t& tableId, boost::system::error_code& ec) {
+    if (!checkMessage(ResponseType::GET_TABLEID, ec)) {
         return false;
     }
 
-    isNewest = response->isnewest();
-    if (response->has_data()) {
-        size = response->data().length();
-        // TODO Prevent this copy
+    tableId = mMessage->read<uint64_t>();
+    return (tableId != 0x0u);
+}
+
+bool ServerConnection::Response::get(size_t& size, const char*& data, uint64_t& version, bool& isNewest,
+        boost::system::error_code& ec) {
+    if (!checkMessage(ResponseType::GET, ec)) {
+        return false;
+    }
+
+    version = mMessage->read<uint64_t>();
+    isNewest = mMessage->read<uint8_t>();
+    bool success = mMessage->read<uint8_t>();
+
+    if (success) {
+        mMessage->align(sizeof(uint32_t));
+        size = mMessage->read<uint32_t>();
+
         auto dataBuffer = new char[size];
-        memcpy(dataBuffer, response->data().data(), size);
+        memcpy(dataBuffer, mMessage->data(), size);
+        mMessage->advance(size);
         data = dataBuffer;
+    } else {
+        size = 0x0u;
+        data = nullptr;
     }
 
-    return response->has_data();
+    return size != 0x0u;
 }
 
-void ServerConnection::Response::insert(bool* succeeded, boost::system::error_code& ec) {
-    auto response = getMessage<proto::InsertResponse>(proto::RpcResponse::kInsertFieldNumber, ec);
-    if (!response) {
-        return;
+bool ServerConnection::Response::modification(boost::system::error_code& ec) {
+    if (!checkMessage(ResponseType::MODIFICATION, ec)) {
+        return false;
     }
 
-    if (succeeded) {
-        LOG_ASSERT(response->has_succeeded(), "Message has no succeeded");
-        *succeeded = response->succeeded();
-    }
+    bool succeeded = mMessage->read<uint8_t>();
+    return succeeded;
 }
 
-template <typename R>
-R* ServerConnection::Response::getMessage(int field, boost::system::error_code& ec) {
-    if (mError) {
-        ec = boost::system::error_code(mError, error::get_server_category());
-        return nullptr;
+bool ServerConnection::Response::checkMessage(ResponseType type, boost::system::error_code& ec) {
+    LOG_ASSERT(mMessage, "Message is null");
+    if (mType == ResponseType::ERROR) {
+        ec = boost::system::error_code(*reinterpret_cast<uint64_t*>(mMessage), error::get_server_category());
+        return false;
     }
-    if (mType != field) {
-        ec = boost::system::error_code(proto::RpcResponse::UNKNOWN_RESPONSE, error::get_server_category());
-        return nullptr;
+    if (mType != type) {
+        ec = error::unkown_response;
+        return false;
     }
-    LOG_ASSERT(!mError && mMessage.get(), "Message is null despite indicating no error");
 
-    return static_cast<R*>(mMessage.get());
+    return true;
 }
 
 } // namespace store

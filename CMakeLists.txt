@@ -35,7 +35,6 @@ if(NOT Crossbow_INCLUDE_DIRS)
 endif()
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
-find_package(Protobuf REQUIRED)
 
 ###################
 # TellStore library
@@ -52,6 +51,7 @@ set(SOURCE_FILES
     logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
+    util/ErrorCode.hpp
     util/OpenAddressingHash.hpp
     util/OpenAddressingHash.cpp
     util/LogOperations.hpp
@@ -74,6 +74,9 @@ set(SOURCE_FILES
     util/Record.cpp
     util/Logging.hpp
     util/Logging.cpp
+    util/MessageTypes.hpp
+    util/MessageWriter.hpp
+    util/MessageWriter.cpp
     util/StorageConfig.hpp
     util/SnapshotDescriptor.hpp
     util/Request.hpp
@@ -96,6 +99,7 @@ target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(TellStore PUBLIC crossbow_infinio)
 
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
@@ -105,17 +109,6 @@ target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
 target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
 target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
-
-
-###################
-# Protocol buffer definition
-###################
-set(PROTO_FILES
-    util/RpcMessages.proto
-)
-
-# Generate protobufs
-protobuf_generate_cpp(PROTO_SOURCES PROTO_HEADERS ${PROTO_FILES})
 
 
 ###################
@@ -130,7 +123,7 @@ set(SERVER_SRCS
 )
 
 # Add TellStore server executable
-add_executable(tellstored server/main.cpp ${SERVER_SRCS} ${PROTO_SOURCES} ${PROTO_HEADERS})
+add_executable(tellstored server/main.cpp ${SERVER_SRCS})
 
 # Link against TellStore library
 target_link_libraries(tellstored PRIVATE TellStore)
@@ -139,16 +132,11 @@ target_link_libraries(tellstored PRIVATE TellStore)
 target_include_directories(tellstored PRIVATE ${Crossbow_INCLUDE_DIRS})
 target_link_libraries(tellstored PRIVATE crossbow_infinio)
 
-# Link against Protobuf
-target_include_directories(tellstored PRIVATE ${PROTOBUF_INCLUDE_DIRS})
-target_link_libraries(tellstored PRIVATE ${PROTOBUF_LIBRARIES})
-
 
 ###################
 # TellStore client
 ###################
 set(CLIENT_SRCS
-    client/ErrorCode.hpp
     client/Client.hpp
     client/Client.cpp
     client/ClientConfig.hpp
@@ -159,7 +147,7 @@ set(CLIENT_SRCS
 )
 
 # Add TellStore client executable
-add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS} ${PROTO_SOURCES} ${PROTO_HEADERS})
+add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS})
 
 # Link against TellStore library
 target_link_libraries(tellstore-client PRIVATE TellStore)
@@ -171,10 +159,6 @@ target_link_libraries(tellstore-client PUBLIC ${Boost_LIBRARIES})
 # Link against Crossbow
 target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
 target_link_libraries(tellstore-client PRIVATE crossbow_infinio)
-
-# Link against Protobuf
-target_include_directories(tellstore-client PRIVATE ${PROTOBUF_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE ${PROTOBUF_LIBRARIES})
 
 
 ###################

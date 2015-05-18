@@ -5,7 +5,6 @@
 #include <tellstore.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
-#include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
 #include <tbb/queuing_rw_mutex.h>
@@ -19,13 +18,8 @@
 namespace tell {
 namespace store {
 
-namespace proto {
-class RpcRequest;
-class RpcResponse;
-class RpcResponseBatch;
-class SnapshotDescriptor;
-} // namespace proto
-
+class MessageWriter;
+class BufferReader;
 class ConnectionManager;
 
 /**
@@ -60,10 +54,6 @@ private:
 
     void closeConnection();
 
-    void handleRequest(const proto::RpcRequest& request, proto::RpcResponse& response);
-
-    void sendResponseBatch(const proto::RpcResponseBatch& responseBatch);
-
     /**
      * @brief Get the snapshot associated with the request and pass it to the function
      *
@@ -73,15 +63,16 @@ private:
      * time). If the client requested an uncached snapshot then the snapshot is parsed from the message without
      * considering the cache.
      *
-     * In case of an error (no snapshot descriptor or conflicting data found) the error response will be set and the
-     * function will not be invoked.
+     * In case of an error (no snapshot descriptor or conflicting data found) an error response will be written back and
+     * the function will not be invoked.
      *
-     * @param snapshot Snapshot message the client sent
-     * @param response The response that will be sent back to the client
-     * @param f Function with the signature (const SnapshotDescriptor&, proto::RpcResponse&)
+     * @param transactionId The transaction ID of the current message
+     * @param request The request buffer to read the snapshot descriptor from
+     * @param writer The response writer that will be used to sent a error message back to the client
+     * @param f Function with the signature (const SnapshotDescriptor&)
      */
     template <typename Fun>
-    void handleSnapshot(const proto::SnapshotDescriptor& snapshot, proto::RpcResponse& response, Fun f);
+    void handleSnapshot(uint64_t transactionId, BufferReader& request, MessageWriter& writer, Fun f);
 
     /**
      * @brief Removes the snapshot from the cache

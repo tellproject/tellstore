@@ -1,7 +1,5 @@
 #pragma once
 
-#include "RpcMessages.pb.h"
-
 #include <boost/system/error_code.hpp>
 
 #include <cstdint>
@@ -49,6 +47,20 @@ inline boost::system::error_code make_error_code(network_errors e) {
 
 
 /**
+ * @brief Server errors related to TODO
+ */
+enum server_errors {
+    /// Server received an unknown request type.
+    unkown_request = 1,
+
+    /// Client received an unkown response type.
+    unkown_response = 2,
+
+    /// Snapshot sent to the server was invalid.
+    invalid_snapshot = 3,
+};
+
+/**
  * @brief Category for network errors
  */
 class server_category : public boost::system::error_category {
@@ -59,14 +71,14 @@ public:
 
     std::string message(int value) const {
         switch (value) {
-        case proto::RpcResponse::UNKNOWN_REQUEST:
-            return "Unknown request";
+        case error::unkown_request:
+            return "Server received an unknown request type";
 
-        case proto::RpcResponse::UNKNOWN_RESPONSE:
-            return "Unknown response";
+        case error::unkown_response:
+            return "Client received an unkown response type";
 
-        case proto::RpcResponse::INVALID_SNAPSHOT:
-            return "Invalid snapshot descriptor";
+        case error::invalid_snapshot:
+            return "Snapshot sent to the server was invalid";
 
         default:
             return "tell.store.server error";
@@ -79,7 +91,7 @@ inline const boost::system::error_category& get_server_category() {
     return instance;
 }
 
-inline boost::system::error_code make_error_code(proto::RpcResponse_Error e) {
+inline boost::system::error_code make_error_code(error::server_errors e) {
     return boost::system::error_code(static_cast<int>(e), get_server_category());
 }
 
@@ -96,7 +108,7 @@ struct is_error_code_enum<tell::store::error::network_errors> {
 };
 
 template<>
-struct is_error_code_enum<tell::store::proto::RpcResponse_Error> {
+struct is_error_code_enum<tell::store::error::server_errors> {
     static const bool value = true;
 };
 

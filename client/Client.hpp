@@ -3,6 +3,17 @@
 #include "ClientConfig.hpp"
 #include "TransactionManager.hpp"
 
+#include <util/CommitManager.hpp>
+#include <util/Record.hpp>
+
+#include <crossbow/infinio/InfinibandService.hpp>
+
+#include <tbb/spin_mutex.h>
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
 namespace crossbow {
 namespace infinio {
 class EventDispatcher;
@@ -15,8 +26,12 @@ namespace store {
 class Client {
 public:
     Client(crossbow::infinio::EventDispatcher& dispatcher, const ClientConfig& config)
-            : mConfig(config),
-              mManager(dispatcher) {
+            : mDispatcher(dispatcher),
+              mService(dispatcher, config.infinibandLimits),
+              mConfig(config),
+              mManager(mService),
+              mTableId(0x0u) {
+        mSchema.addField(FieldType::INT, "foo", true);
     }
 
     void init();
@@ -24,11 +39,24 @@ public:
     void shutdown();
 
 private:
-    void executeTransaction(Transaction& transaction);
+    void addTable(Transaction& transaction);
+
+    void executeTransaction(Transaction& transaction, uint64_t startKey, uint64_t endKey);
+
+    crossbow::infinio::EventDispatcher& mDispatcher;
+    crossbow::infinio::InfinibandService mService;
 
     ClientConfig mConfig;
 
     TransactionManager mManager;
+
+    CommitManager mCommitManager;
+    Schema mSchema;
+
+    uint64_t mTableId;
+
+    tbb::spin_mutex mTransMutex;
+    std::vector<std::unique_ptr<Transaction>> mTrans;
 };
 
 } // namespace store
