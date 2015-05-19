@@ -26,7 +26,10 @@ public:
               mConfig(config),
               mManager(mService),
               mTableId(0x0u) {
-        mSchema.addField(FieldType::INT, "foo", true);
+        mSchema.addField(FieldType::INT, "number", true);
+        mSchema.addField(FieldType::TEXT, "text1", true);
+        mSchema.addField(FieldType::BIGINT, "largenumber", true);
+        mSchema.addField(FieldType::TEXT, "text2", true);
     }
 
     void init();
@@ -37,6 +40,8 @@ private:
     void addTable(Transaction& transaction);
 
     void executeTransaction(Transaction& transaction, uint64_t startKey, uint64_t endKey);
+
+    const char* getTupleData(const char* data, Record& record, const crossbow::string& name);
 
     crossbow::infinio::EventDispatcher& mDispatcher;
     crossbow::infinio::InfinibandService mService;

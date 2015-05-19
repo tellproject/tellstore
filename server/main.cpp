@@ -37,6 +37,11 @@ int main(int argc, const char** argv) {
         return 0;
     }
 
+    serverConfig.infinibandLimits.receiveBufferCount = 128;
+    serverConfig.infinibandLimits.sendBufferCount = 128;
+    serverConfig.infinibandLimits.bufferLength = 1024;
+    serverConfig.infinibandLimits.sendQueueLength = 128;
+
     tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore server");
