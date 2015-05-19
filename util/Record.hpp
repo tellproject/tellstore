@@ -367,10 +367,6 @@ public:
     }
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
-
-    uint32_t getSize(const char* data) const {
-        return *reinterpret_cast<const uint32_t*>(data);
-    }
 };
 
 /**

@@ -91,7 +91,7 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         return false;
     }
     bool res = true;
-    for (auto iter = mFixedSizeFields.begin(); iter != mVarSizeFields.end() && res; ++iter) {
+    for (auto iter = mFixedSizeFields.begin(); iter != mFixedSizeFields.end() && res; ++iter) {
         res = iter->name() != name;
     }
     for (auto iter = mVarSizeFields.begin(); iter != mVarSizeFields.end() && res; ++iter) {
@@ -191,7 +191,7 @@ Schema::Schema(const char* ptr) {
 
 Record::Record(const Schema& schema)
     : mSchema(schema), mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size()) {
-    off_t currOffset = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
+    int32_t currOffset = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
     currOffset += (currOffset % 8) ? 8 - (currOffset % 8) : 0;
 
     size_t id = 0;
@@ -203,8 +203,8 @@ Record::Record(const Schema& schema)
     for (const auto& field : schema.varSizeFields()) {
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, currOffset);
-        // make sure, that all others are set to max
-        currOffset = std::numeric_limits<off_t>::max();
+        // make sure, that all others are set to min
+        currOffset = std::numeric_limits<int32_t>::min();
     }
 }
 
@@ -231,7 +231,7 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
             }
             continue;
         } else {
-            result += field.sizeOf(f.second);
+            result += field.sizeOf(iter->second);
         }
     }
     // we have to make sure that the size of a tuple is 8 byte aligned
@@ -375,6 +375,7 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const
                     memcpy(current, &len, sizeof(len));
                     current += sizeof(len);
                     memcpy(current, str.c_str(), len);
+                    current += len;
                 }
                 break;
             }
@@ -404,11 +405,12 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     if (p.second < 0) {
         // we need to calc the position
         auto baseId = mSchema.fixedSizeFields().size();
-        off_t pos = mFieldMetaData[baseId].second;
+        auto pos = mFieldMetaData[baseId].second;
+        LOG_ASSERT(pos > 0, "Offset for first variable length field is smaller than 0");
         for (; baseId < id; ++baseId) {
-            // we know, that now all fields are variable mLength - that means the first two bytes are always the
+            // we know, that now all fields are variable mLength - that means the first four bytes are always the
             // field size
-            pos += *reinterpret_cast<const uint16_t* const>(ptr + pos) + sizeof(uint16_t);
+            pos += *reinterpret_cast<const uint32_t* const>(ptr + pos) + sizeof(uint32_t);
         }
         return ptr + pos;
     } else {
