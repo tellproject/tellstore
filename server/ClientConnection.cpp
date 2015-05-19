@@ -63,7 +63,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
         return;
     }
 
-    auto startTime = std::chrono::high_resolution_clock::now();
+    auto startTime = std::chrono::steady_clock::now();
 
     BufferReader request(reinterpret_cast<const char*>(buffer), length);
     MessageWriter writer(mSocket);
@@ -390,7 +390,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
         LOG_ERROR("Error while flushing response batch [error = %1% %2%]", ec2, ec2.message());
     }
 
-    auto endTime = std::chrono::high_resolution_clock::now();
+    auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_DEBUG("Handling request took %1%ns", duration.count());
 }

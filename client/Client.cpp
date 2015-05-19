@@ -43,9 +43,9 @@ void Client::addTable(Transaction& transaction) {
     boost::system::error_code ec;
 
     LOG_TRACE("Adding table");
-    auto startTime = std::chrono::high_resolution_clock::now();
+    auto startTime = std::chrono::steady_clock::now();
     auto res = transaction.createTable("testTable", mSchema, mTableId, ec);
-    auto endTime = std::chrono::high_resolution_clock::now();
+    auto endTime = std::chrono::steady_clock::now();
     if (ec) {
         LOG_ERROR("Error adding table [error = %1% %2%]", ec, ec.message());
         return;
@@ -82,15 +82,15 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
 
     std::chrono::nanoseconds totalInsertDuration(0x0u);
     std::chrono::nanoseconds totalGetDuration(0x0u);
-    auto startTime = std::chrono::high_resolution_clock::now();
+    auto startTime = std::chrono::steady_clock::now();
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         GenericTuple insertTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)});
         size_t insertSize;
         std::unique_ptr<char[]> insertData(record.create(insertTuple, insertSize));
-        auto insertStartTime = std::chrono::high_resolution_clock::now();
+        auto insertStartTime = std::chrono::steady_clock::now();
         transaction.insert(mTableId, key, insertSize, insertData.get(), snapshot, ec, &succeeded);
-        auto insertEndTime = std::chrono::high_resolution_clock::now();
+        auto insertEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
             return;
@@ -107,9 +107,9 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         size_t getSize;
         const char* getData;
         bool isNewest = false;
-        auto getStartTime = std::chrono::high_resolution_clock::now();
+        auto getStartTime = std::chrono::steady_clock::now();
         succeeded = transaction.get(mTableId, key, getSize, getData, snapshot, isNewest, ec);
-        auto getEndTime = std::chrono::high_resolution_clock::now();
+        auto getEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
             return;
@@ -138,7 +138,7 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         }
         LOG_TRACE("Tuple check successful");
     }
-    auto endTime = std::chrono::high_resolution_clock::now();
+    auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     LOG_INFO("TID %1%] Transaction completed in %2%ms [total = %3%ms / %4%ms, average = %5%us / %6%us]",
              transaction.id(),
