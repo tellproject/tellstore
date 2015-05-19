@@ -4,6 +4,7 @@
 
 #include <tellstore.hpp>
 
+#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
@@ -11,12 +12,6 @@
 #include <tbb/concurrent_unordered_set.h>
 
 #include <boost/system/error_code.hpp>
-
-namespace crossbow {
-namespace infinio {
-class EventDispatcher;
-} // namespace infinio
-} // namespace crossbow
 
 namespace tell {
 namespace store {

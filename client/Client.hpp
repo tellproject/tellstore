@@ -6,6 +6,7 @@
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
 
+#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 
 #include <tbb/spin_mutex.h>
@@ -13,12 +14,6 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-
-namespace crossbow {
-namespace infinio {
-class EventDispatcher;
-} // namespace infinio
-} // namespace crossbow
 
 namespace tell {
 namespace store {

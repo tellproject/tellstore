@@ -8,8 +8,6 @@
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
-#include <thread>
-#include <vector>
 
 int main(int argc, const char** argv) {
     tell::store::ClientConfig clientConfig;
@@ -41,26 +39,13 @@ int main(int argc, const char** argv) {
     tell::store::init();
 
     // Initialize network stack
-    crossbow::infinio::EventDispatcher dispatcher;
+    crossbow::infinio::EventDispatcher dispatcher(clientConfig.networkThreads);
     tell::store::Client client(dispatcher, clientConfig);
     client.init();
 
-    // Start event dispatcher threads
-    auto execDispatcher = [&dispatcher] () {
-        dispatcher.run();
-    };
-
     LOG_INFO("Start dispatcher threads");
-    std::vector<std::thread> threads;
-    for (size_t i = 1; i < clientConfig.networkThreads; ++i) {
-        threads.emplace_back(execDispatcher);
-    }
-    execDispatcher();
+    dispatcher.run();
 
-    // Join event dispatcher threads
-    for (auto& t : threads) {
-        t.join();
-    }
-
+    LOG_INFO("Exiting TellStore client");
     return 0;
 }

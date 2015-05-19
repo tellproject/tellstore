@@ -10,8 +10,6 @@
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
-#include <thread>
-#include <vector>
 
 int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;
@@ -48,7 +46,7 @@ int main(int argc, const char** argv) {
     tell::store::Storage storage(storageConfig);
 
     // Initialize network server
-    crossbow::infinio::EventDispatcher dispatcher;
+    crossbow::infinio::EventDispatcher dispatcher(serverConfig.serverThreads);
     tell::store::ConnectionManager connectionManager(storage, dispatcher, serverConfig);
     boost::system::error_code ec;
     connectionManager.init(ec);
@@ -57,21 +55,9 @@ int main(int argc, const char** argv) {
         return 1;
     }
 
-    // Start event dispatcher threads
-    auto execDispatcher = [&dispatcher] () {
-        dispatcher.run();
-    };
+    LOG_INFO("Start dispatcher threads");
+    dispatcher.run();
 
-    std::vector<std::thread> threads;
-    for (size_t i = 1; i < serverConfig.serverThreads; ++i) {
-        threads.emplace_back(execDispatcher);
-    }
-    execDispatcher();
-
-    // Join event dispatcher threads
-    for (auto& t : threads) {
-        t.join();
-    }
-
+    LOG_INFO("Exiting TellStore server");
     return 0;
 }

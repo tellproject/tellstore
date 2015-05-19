@@ -4,6 +4,7 @@
 
 #include <util/NonCopyable.hpp>
 
+#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/string.hpp>
 
 #include <tbb/concurrent_unordered_map.h>
@@ -21,12 +22,6 @@
 #include <string>
 
 #include <jemalloc/jemalloc.h>
-
-namespace crossbow {
-namespace infinio {
-class EventDispatcher;
-} // namespace infinio
-} // namespace crossbow
 
 namespace tell {
 namespace store {

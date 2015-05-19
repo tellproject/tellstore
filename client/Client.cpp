@@ -4,8 +4,6 @@
 #include <util/Record.hpp>
 #include <util/Logging.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
-
 #include <boost/system/error_code.hpp>
 
 #include <chrono>
