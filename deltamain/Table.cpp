@@ -232,7 +232,7 @@ void Table::insert(uint64_t key,
     insertRecord.writeVersion(snapshot.version());
     insertRecord.writePrevious(nullptr);
     insertRecord.writeData(size, data);
-    while (iter != iterEnd) {
+    for (; iter != iterEnd; ++iter) {
         // we busy wait if the entry was not sealed
         while (iter->data() != entry->data() && !iter->sealed()) {}
         const LogEntry* en = iter.operator->();
@@ -312,7 +312,7 @@ bool Table::genericUpdate(const Fun& appendFun,
     auto iterEnd = mInsertLog.end();
     auto ptr = mHashTable.load()->get(key);
     if (!ptr) {
-        while (iter != iterEnd) {
+        for (; iter != iterEnd; ++iter) {
             CDMRecord rec(iter->data());
             if (rec.isValidDataRecord() && rec.key() == key) {
                 // we found it!
