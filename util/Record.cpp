@@ -191,15 +191,9 @@ Schema::Schema(const char* ptr) {
 
 Record::Record(const Schema& schema)
     : mSchema(schema), mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size()) {
-    off_t headOffset = 4;
-    {
-        if (schema.varSizeFields().size() > 0) {
-            headOffset += (mFieldMetaData.size() + 7) / 8;
-        }
-        // Padding
-        headOffset += 8 - (headOffset % 8);
-    }
-    off_t currOffset = headOffset;
+    off_t currOffset = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
+    currOffset += (currOffset % 8) ? 8 - (currOffset % 8) : 0;
+
     size_t id = 0;
     for (const auto& field : schema.fixedSizeFields()) {
         mIdMap.insert(std::make_pair(field.name(), id));
@@ -216,7 +210,7 @@ Record::Record(const Schema& schema)
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
 {
-    size_t result = mSchema.allNotNull() ? 0 : (mSchema.schemaSize() + 7)/8;
+    size_t result = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
     result += (result % 8) ? 8 - (result % 8) : 0;
     for (auto& f : mFieldMetaData) {
         auto& field = f.first;
@@ -252,8 +246,8 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const
     size = size_t(recSize);
     std::unique_ptr<char[]> result(new char[recSize]);
     char* res = result.get();
-    auto headerSize = (mFieldMetaData.size() + 7)/8;
-    headerSize += (headerSize % sizeof(char*)) ? (sizeof(char*) - (headerSize % 8)) : 0;
+    auto headerSize = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
+    headerSize += (headerSize % 8) ? (8 - (headerSize % 8)) : 0;
     char* current = res + headerSize;
     memset(res, 0, recSize);
     for (id_t id = 0; id < mFieldMetaData.size(); ++id) {
@@ -276,7 +270,7 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const
                 // function.
             } else {
                 // In this case we set the field to NULL
-                uchar& bitmap = *reinterpret_cast<uchar*>(res + 4 + id / 8);
+                uchar& bitmap = *reinterpret_cast<uchar*>(res + id / 8);
                 uchar pos = uchar(id % 8);
                 bitmap |= uchar(0x1 << pos);
             }
@@ -399,7 +393,7 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     isNull = false;
     if (!mSchema.allNotNull()) {
         // TODO: Check whether the compiler optimizes this correctly - otherwise this might be inefficient (but more readable)
-        uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + 4 + id / 8);
+        uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + id / 8);
         unsigned char pos = uchar(id % 8);
         isNull = (uchar(0x1 << pos) & bitmap) == 0;
     }
