@@ -32,14 +32,14 @@ void writeSnapshot(BufferWriter& message, const SnapshotDescriptor& snapshot) {
 } // anonymous namespace
 
 ServerConnection::~ServerConnection() {
-    boost::system::error_code ec;
+    std::error_code ec;
     mSocket.close(ec);
     if (ec) {
         // TODO Handle this situation somehow (this should probably not happen at this point)
     }
 }
 
-void ServerConnection::connect(const crossbow::string& host, uint16_t port, boost::system::error_code& ec) {
+void ServerConnection::connect(const crossbow::string& host, uint16_t port, std::error_code& ec) {
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
     // Open socket
@@ -54,7 +54,7 @@ void ServerConnection::connect(const crossbow::string& host, uint16_t port, boos
 }
 
 void ServerConnection::shutdown() {
-    boost::system::error_code ec;
+    std::error_code ec;
     mSocket.disconnect(ec);
     if (ec) {
         LOG_ERROR("Error disconnecting");
@@ -63,7 +63,7 @@ void ServerConnection::shutdown() {
 }
 
 void ServerConnection::createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,
-        boost::system::error_code& ec) {
+        std::error_code& ec) {
     auto nameSize = name.size();
     auto schemaSize = schema.schemaSize();
     auto messageSize = sizeof(uint16_t) + nameSize;
@@ -87,7 +87,7 @@ void ServerConnection::createTable(uint64_t transactionId, const crossbow::strin
     writer.flush(ec);
 }
 
-void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string& name, boost::system::error_code& ec) {
+void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string& name, std::error_code& ec) {
     auto nameSize = name.size();
     auto messageSize = sizeof(uint16_t) + nameSize;
 
@@ -103,7 +103,7 @@ void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string
 }
 
 void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
-        boost::system::error_code& ec) {
+        std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
     MessageWriter writer(mSocket);
@@ -118,8 +118,7 @@ void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t ke
     writer.flush(ec);
 }
 
-void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key,
-        boost::system::error_code& ec) {
+void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec) {
     auto messageSize = 2 * sizeof(uint64_t);
 
     MessageWriter writer(mSocket);
@@ -134,7 +133,7 @@ void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint6
 }
 
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 3 * sizeof(uint64_t) + size;
     messageSize += ((messageSize % sizeof(uint64_t) != 0)
             ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
@@ -160,7 +159,7 @@ void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t
 }
 
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
-        const SnapshotDescriptor& snapshot, bool succeeded, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec) {
     auto messageSize = 3 * sizeof(uint64_t) + size;
     messageSize += ((messageSize % sizeof(uint64_t) != 0)
             ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
@@ -187,7 +186,7 @@ void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t
 }
 
 void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t key,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
     MessageWriter writer(mSocket);
@@ -204,7 +203,7 @@ void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t
 }
 
 void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t key,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
     MessageWriter writer(mSocket);
@@ -220,11 +219,11 @@ void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t
     writer.flush(ec);
 }
 
-void ServerConnection::onConnected(const boost::system::error_code& ec) {
+void ServerConnection::onConnected(const std::error_code& ec) {
     mManager.onConnected(ec);
 }
 
-void ServerConnection::onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) {
+void ServerConnection::onReceive(const void* buffer, size_t length, const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error receiving message");
         // TODO Handle this situation somehow
@@ -246,7 +245,7 @@ void ServerConnection::onReceive(const void* buffer, size_t length, const boost:
     }
 }
 
-void ServerConnection::onSend(uint32_t userId, const boost::system::error_code& ec) {
+void ServerConnection::onSend(uint32_t userId, const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error sending message [errcode = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
@@ -264,7 +263,7 @@ void ServerConnection::onDisconnected() {
     // TODO Impl
 }
 
-void ServerConnection::sendRequest(crossbow::infinio::InfinibandBuffer& buffer, boost::system::error_code& ec) {
+void ServerConnection::sendRequest(crossbow::infinio::InfinibandBuffer& buffer, std::error_code& ec) {
     // TODO Implement actual request batching
     mSocket.send(buffer, 0x0u, ec);
     if (ec) {
@@ -278,7 +277,7 @@ void ServerConnection::Response::reset() {
     mType = ResponseType::ERROR;
 }
 
-bool ServerConnection::Response::createTable(uint64_t& tableId, boost::system::error_code& ec) {
+bool ServerConnection::Response::createTable(uint64_t& tableId, std::error_code& ec) {
     if (!checkMessage(ResponseType::CREATE_TABLE, ec)) {
         return false;
     }
@@ -287,7 +286,7 @@ bool ServerConnection::Response::createTable(uint64_t& tableId, boost::system::e
     return (tableId != 0x0u);
 }
 
-bool ServerConnection::Response::getTableId(uint64_t& tableId, boost::system::error_code& ec) {
+bool ServerConnection::Response::getTableId(uint64_t& tableId, std::error_code& ec) {
     if (!checkMessage(ResponseType::GET_TABLEID, ec)) {
         return false;
     }
@@ -297,7 +296,7 @@ bool ServerConnection::Response::getTableId(uint64_t& tableId, boost::system::er
 }
 
 bool ServerConnection::Response::get(size_t& size, const char*& data, uint64_t& version, bool& isNewest,
-        boost::system::error_code& ec) {
+        std::error_code& ec) {
     if (!checkMessage(ResponseType::GET, ec)) {
         return false;
     }
@@ -322,7 +321,7 @@ bool ServerConnection::Response::get(size_t& size, const char*& data, uint64_t& 
     return size != 0x0u;
 }
 
-bool ServerConnection::Response::modification(boost::system::error_code& ec) {
+bool ServerConnection::Response::modification(std::error_code& ec) {
     if (!checkMessage(ResponseType::MODIFICATION, ec)) {
         return false;
     }
@@ -331,10 +330,10 @@ bool ServerConnection::Response::modification(boost::system::error_code& ec) {
     return succeeded;
 }
 
-bool ServerConnection::Response::checkMessage(ResponseType type, boost::system::error_code& ec) {
+bool ServerConnection::Response::checkMessage(ResponseType type, std::error_code& ec) {
     LOG_ASSERT(mMessage, "Message is null");
     if (mType == ResponseType::ERROR) {
-        ec = boost::system::error_code(*reinterpret_cast<uint64_t*>(mMessage), error::get_server_category());
+        ec = std::error_code(*reinterpret_cast<uint64_t*>(mMessage), error::get_server_category());
         return false;
     }
     if (mType != type) {

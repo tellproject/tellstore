@@ -10,7 +10,7 @@
 namespace tell {
 namespace store {
 
-void ConnectionManager::init(boost::system::error_code& ec) {
+void ConnectionManager::init(std::error_code& ec) {
     LOG_INFO("Initializing the connection manager");
 
     // Open socket
@@ -38,7 +38,7 @@ void ConnectionManager::init(boost::system::error_code& ec) {
 void ConnectionManager::shutdown() {
     LOG_INFO("Shutting down the connection manager");
 
-    boost::system::error_code ec;
+    std::error_code ec;
     mAcceptor.close(ec);
     if (ec) {
         // TODO Handle this situation somehow

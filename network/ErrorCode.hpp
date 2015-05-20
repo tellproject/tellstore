@@ -1,8 +1,8 @@
 #pragma once
 
-#include <boost/system/error_code.hpp>
-
 #include <cstdint>
+#include <system_error>
+#include <type_traits>
 
 namespace tell {
 namespace store {
@@ -19,7 +19,7 @@ enum network_errors {
 /**
  * @brief Category for network errors
  */
-class network_category : public boost::system::error_category {
+class network_category : public std::error_category {
 public:
     const char* name() const noexcept {
         return "tell.store.network";
@@ -36,13 +36,13 @@ public:
     }
 };
 
-inline const boost::system::error_category& get_network_category() {
+inline const std::error_category& get_network_category() {
     static network_category instance;
     return instance;
 }
 
-inline boost::system::error_code make_error_code(network_errors e) {
-    return boost::system::error_code(static_cast<int>(e), get_network_category());
+inline std::error_code make_error_code(network_errors e) {
+    return std::error_code(static_cast<int>(e), get_network_category());
 }
 
 
@@ -63,7 +63,7 @@ enum server_errors {
 /**
  * @brief Category for server errors
  */
-class server_category : public boost::system::error_category {
+class server_category : public std::error_category {
 public:
     const char* name() const noexcept {
         return "tell.store.server";
@@ -86,31 +86,27 @@ public:
     }
 };
 
-inline const boost::system::error_category& get_server_category() {
+inline const std::error_category& get_server_category() {
     static server_category instance;
     return instance;
 }
 
-inline boost::system::error_code make_error_code(error::server_errors e) {
-    return boost::system::error_code(static_cast<int>(e), get_server_category());
+inline std::error_code make_error_code(error::server_errors e) {
+    return std::error_code(static_cast<int>(e), get_server_category());
 }
 
 } // namespace error
 } // namespace store
 } // namespace tell
 
-namespace boost {
-namespace system {
+namespace std {
 
 template<>
-struct is_error_code_enum<tell::store::error::network_errors> {
-    static const bool value = true;
+struct is_error_code_enum<tell::store::error::network_errors> : public std::true_type {
 };
 
 template<>
-struct is_error_code_enum<tell::store::error::server_errors> {
-    static const bool value = true;
+struct is_error_code_enum<tell::store::error::server_errors> : public std::true_type {
 };
 
-} // namespace system
-} // namespace boost
+} // namespace std

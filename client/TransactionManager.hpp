@@ -13,13 +13,13 @@
 
 #include <boost/context/fcontext.hpp>
 #include <boost/lockfree/queue.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/version.hpp>
 
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <system_error>
 
 #include <jemalloc/jemalloc.h>
 
@@ -55,26 +55,25 @@ public:
 
     bool execute(std::function<void(Transaction&)> fun);
 
-    bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
-            boost::system::error_code& ec);
+    bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId, std::error_code& ec);
 
-    bool getTableId(const crossbow::string& name, uint64_t& tableId, boost::system::error_code& ec);
+    bool getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec);
 
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
-            bool& isNewest, boost::system::error_code& ec);
+            bool& isNewest, std::error_code& ec);
 
     bool getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
-            boost::system::error_code& ec);
+            std::error_code& ec);
 
     bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-            boost::system::error_code& ec);
+            std::error_code& ec);
 
     void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-            boost::system::error_code& ec, bool* succeeded = nullptr);
+            std::error_code& ec, bool* succeeded = nullptr);
 
-    bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, boost::system::error_code& ec);
+    bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec);
 
-    bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, boost::system::error_code& ec);
+    bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec);
 
 private:
     friend class TransactionManager;
@@ -120,7 +119,7 @@ public:
 
     ~TransactionManager();
 
-    void init(const ClientConfig& config, boost::system::error_code& ec, std::function<void()> callback);
+    void init(const ClientConfig& config, std::error_code& ec, std::function<void()> callback);
 
     std::unique_ptr<Transaction> startTransaction();
 
@@ -128,7 +127,7 @@ private:
     friend class Transaction;
     friend class ServerConnection;
 
-    void onConnected(const boost::system::error_code& ec);
+    void onConnected(const std::error_code& ec);
 
     void handleResponse(uint64_t id, ServerConnection::Response response);
 

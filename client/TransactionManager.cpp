@@ -45,7 +45,7 @@ bool Transaction::execute(std::function<void(Transaction&)> fun) {
 }
 
 bool Transaction::createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
-        boost::system::error_code& ec) {
+        std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -58,7 +58,7 @@ bool Transaction::createTable(const crossbow::string& name, const Schema& schema
     return mResponse.createTable(tableId, ec);
 }
 
-bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, boost::system::error_code& ec) {
+bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -72,7 +72,7 @@ bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, bo
 }
 
 bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-        const SnapshotDescriptor& snapshot, bool& isNewest, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, bool& isNewest, std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -86,8 +86,8 @@ bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*&
     return mResponse.get(size, data, version, isNewest, ec);
 }
 
-bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-        uint64_t& version, boost::system::error_code& ec) {
+bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
+        std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -102,7 +102,7 @@ bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const 
 }
 
 bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char* data,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec) {
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -116,7 +116,7 @@ bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char
 }
 
 void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
-        const SnapshotDescriptor& snapshot, boost::system::error_code& ec, bool* succeeded) {
+        const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -135,8 +135,7 @@ void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char
     }
 }
 
-bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
-        boost::system::error_code& ec) {
+bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -149,8 +148,7 @@ bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescripto
     return mResponse.modification(ec);
 }
 
-bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
-        boost::system::error_code& ec) {
+bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mManager.mConnection;
 
     ++mOutstanding;
@@ -220,7 +218,7 @@ TransactionManager::~TransactionManager() {
     // TODO Abort all transactions
 }
 
-void TransactionManager::init(const ClientConfig& config, boost::system::error_code& ec, std::function<void ()> callback) {
+void TransactionManager::init(const ClientConfig& config, std::error_code& ec, std::function<void ()> callback) {
     mCallback = std::move(callback);
     mConnection.connect(config.server, config.port, ec);
 
@@ -241,7 +239,7 @@ std::unique_ptr<Transaction> TransactionManager::startTransaction() {
     return std::move(transaction);
 }
 
-void TransactionManager::onConnected(const boost::system::error_code& ec) {
+void TransactionManager::onConnected(const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Failed to connect to server [error = %1% %2%]", ec, ec.message());
         return;

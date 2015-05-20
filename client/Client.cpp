@@ -4,10 +4,9 @@
 #include <util/Record.hpp>
 #include <util/Logging.hpp>
 
-#include <boost/system/error_code.hpp>
-
 #include <chrono>
 #include <functional>
+#include <system_error>
 
 namespace tell {
 namespace store {
@@ -15,7 +14,7 @@ namespace store {
 void Client::init() {
     LOG_INFO("Initializing TellStore client");
 
-    boost::system::error_code ec;
+    std::error_code ec;
     mManager.init(mConfig, ec, [this] () {
         LOG_DEBUG("Start transaction");
         auto trans = mManager.startTransaction();
@@ -38,7 +37,7 @@ void Client::shutdown() {
 }
 
 void Client::addTable(Transaction& transaction) {
-    boost::system::error_code ec;
+    std::error_code ec;
 
     LOG_TRACE("Adding table");
     auto startTime = std::chrono::steady_clock::now();
@@ -72,7 +71,7 @@ void Client::addTable(Transaction& transaction) {
 void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uint64_t endKey) {
     LOG_DEBUG("TID %1%] Starting transaction", transaction.id());
 
-    boost::system::error_code ec;
+    std::error_code ec;
 
     Record record(mSchema);
     auto snapshot = mCommitManager.startTx();

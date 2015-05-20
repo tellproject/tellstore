@@ -10,6 +10,7 @@
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
+#include <system_error>
 
 int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;
@@ -53,7 +54,7 @@ int main(int argc, const char** argv) {
     // Initialize network server
     crossbow::infinio::EventDispatcher dispatcher(serverConfig.serverThreads);
     tell::store::ConnectionManager connectionManager(storage, dispatcher, serverConfig);
-    boost::system::error_code ec;
+    std::error_code ec;
     connectionManager.init(ec);
     if (ec) {
         LOG_FATAL("Failure initializing the connection manager [error = %1% %2%]", ec, ec.message());

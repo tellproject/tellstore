@@ -3,8 +3,7 @@
 namespace tell {
 namespace store {
 
-void MessageWriter::writeErrorResponse(uint64_t transactionId, error::server_errors error,
-        boost::system::error_code& ec) {
+void MessageWriter::writeErrorResponse(uint64_t transactionId, error::server_errors error, std::error_code& ec) {
     auto message = writeResponse(transactionId, ResponseType::ERROR, sizeof(uint64_t), ec);
     if (ec) {
         return;
@@ -13,7 +12,7 @@ void MessageWriter::writeErrorResponse(uint64_t transactionId, error::server_err
     message.write<uint64_t>(static_cast<uint64_t>(error));
 }
 
-void MessageWriter::flush(boost::system::error_code& ec) {
+void MessageWriter::flush(std::error_code& ec) {
     if (!mBuffer.valid()) {
         return;
     }
@@ -25,8 +24,7 @@ void MessageWriter::flush(boost::system::error_code& ec) {
     }
 }
 
-BufferWriter MessageWriter::writeMessage(uint64_t transactionId, uint64_t type, size_t length,
-        boost::system::error_code& ec) {
+BufferWriter MessageWriter::writeMessage(uint64_t transactionId, uint64_t type, size_t length, std::error_code& ec) {
     alignPointer(mPos, sizeof(uint64_t));
 
     auto messageSize = 2 * sizeof(uint64_t) + length;
@@ -53,7 +51,7 @@ BufferWriter MessageWriter::writeMessage(uint64_t transactionId, uint64_t type, 
     return message;
 }
 
-void MessageWriter::sendCurrentBuffer(boost::system::error_code& ec) {
+void MessageWriter::sendCurrentBuffer(std::error_code& ec) {
     if (!mBuffer.valid()) {
         return;
     }

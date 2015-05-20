@@ -29,7 +29,7 @@ SnapshotDescriptor readSnapshot(uint64_t version, BufferReader& request) {
 } // anonymous namespace
 
 ClientConnection::~ClientConnection() {
-    boost::system::error_code ec;
+    std::error_code ec;
     mSocket.close(ec);
     if (ec) {
         // TODO Handle this situation somehow (this should probably not happen at this point)
@@ -41,7 +41,7 @@ void ClientConnection::init() {
 }
 
 void ClientConnection::shutdown() {
-    boost::system::error_code ec;
+    std::error_code ec;
     mSocket.disconnect(ec);
     if (ec) {
         LOG_ERROR("Error disconnecting [error = %1% %2%]", ec, ec.message());
@@ -49,14 +49,14 @@ void ClientConnection::shutdown() {
     }
 }
 
-void ClientConnection::onConnected(const boost::system::error_code& ec) {
+void ClientConnection::onConnected(const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Failure while establishing client connection [error = %1% %2%]", ec, ec.message());
         mManager.removeConnection(this);
     }
 }
 
-void ClientConnection::onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) {
+void ClientConnection::onReceive(const void* buffer, size_t length, const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error receiving message [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
@@ -106,7 +106,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
             LOG_ASSERT((tableId != 0) || !succeeded, "Table ID of 0 does not denote failure");
 
             size_t messageSize = sizeof(uint64_t);
-            boost::system::error_code ec;
+            std::error_code ec;
             auto response = writer.writeResponse(transactionId, ResponseType::CREATE_TABLE, messageSize, ec);
             if (ec) {
                 LOG_ERROR("Error while handling create table request [error = %1% %2%]", ec, ec.message());
@@ -133,7 +133,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
             LOG_ASSERT((tableId == 0) ^ succeeded, "Table ID of 0 does not denote failure");
 
             size_t messageSize = sizeof(uint64_t);
-            boost::system::error_code ec;
+            std::error_code ec;
             auto response = writer.writeResponse(transactionId, ResponseType::GET_TABLEID, messageSize, ec);
             if (ec) {
                 LOG_ERROR("Error while handling get table ID request [error = %1% %2%]", ec, ec.message());
@@ -169,7 +169,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
                 // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
                 size_t messageSize = 2 * sizeof(uint64_t) + size;
-                boost::system::error_code ec;
+                std::error_code ec;
                 auto response = writer.writeResponse(transactionId, ResponseType::GET, messageSize, ec);
                 if (ec) {
                     LOG_ERROR("Error while handling get request [error = %1% %2%]", ec, ec.message());
@@ -211,7 +211,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
             // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
             size_t messageSize = 2 * sizeof(uint64_t) + size;
-            boost::system::error_code ec;
+            std::error_code ec;
             auto response = writer.writeResponse(transactionId, ResponseType::GET, messageSize, ec);
             if (ec) {
                 LOG_ERROR("Error while handling get newest request [error = %1% %2%]", ec, ec.message());
@@ -256,7 +256,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
                 // Message size is 1 byte (succeeded)
                 size_t messageSize = sizeof(uint8_t);
-                boost::system::error_code ec;
+                std::error_code ec;
                 auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
                 if (ec) {
                     LOG_ERROR("Error while handling update request [error = %1% %2%]", ec, ec.message());
@@ -298,7 +298,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
                 // Message size is 1 byte (succeeded)
                 size_t messageSize = sizeof(uint8_t);
-                boost::system::error_code ec;
+                std::error_code ec;
                 auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
                 if (ec) {
                     LOG_ERROR("Error while handling insert request [error = %1% %2%]", ec, ec.message());
@@ -327,7 +327,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
                 // Message size is 1 byte (succeeded)
                 size_t messageSize = sizeof(uint8_t);
-                boost::system::error_code ec;
+                std::error_code ec;
                 auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
                 if (ec) {
                     LOG_ERROR("Error while handling remove request [error = %1% %2%]", ec, ec.message());
@@ -356,7 +356,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
 
                 // Message size is 1 byte (succeeded)
                 size_t messageSize = sizeof(uint8_t);
-                boost::system::error_code ec;
+                std::error_code ec;
                 auto response = writer.writeResponse(transactionId, ResponseType::MODIFICATION, messageSize, ec);
                 if (ec) {
                     LOG_ERROR("Error while handling revert request [error = %1% %2%]", ec, ec.message());
@@ -371,7 +371,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
         } break;
 
         default: {
-            boost::system::error_code ec;
+            std::error_code ec;
             writer.writeErrorResponse(transactionId, error::unkown_request, ec);
             if (ec) {
                 LOG_ERROR("Error while handling an unknown request [error = %1% %2%]", ec, ec.message());
@@ -384,7 +384,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
     }
 
     // Send remaining response batch
-    boost::system::error_code ec2;
+    std::error_code ec2;
     writer.flush(ec2);
     if (ec2) {
         LOG_ERROR("Error while flushing response batch [error = %1% %2%]", ec2, ec2.message());
@@ -395,7 +395,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const boost:
     LOG_DEBUG("Handling request took %1%ns", duration.count());
 }
 
-void ClientConnection::onSend(uint32_t userId, const boost::system::error_code& ec) {
+void ClientConnection::onSend(uint32_t userId, const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Error sending message [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow
@@ -435,7 +435,7 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
         // Either we already have the snapshot in our cache or the client send it to us
         auto found = (i != mSnapshots.end());
         if (found ^ hasDescriptor) {
-            boost::system::error_code ec;
+            std::error_code ec;
             writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
             if (ec) {
                 LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());
@@ -447,7 +447,7 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
             // We have to add the snapshot to the cache
             auto res = mSnapshots.insert(std::make_pair(version, readSnapshot(version, request)));
             if (!res.second) { // Element was inserted by another thread
-                boost::system::error_code ec;
+                std::error_code ec;
                 writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
                 if (ec) {
                     LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());
@@ -460,7 +460,7 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
         f(i->second);
     } else {
         if (!hasDescriptor) {
-            boost::system::error_code ec;
+            std::error_code ec;
             writer.writeErrorResponse(transactionId, error::invalid_snapshot, ec);
             if (ec) {
                 LOG_ERROR("Error while writing error response [error = %1% %2%]", ec, ec.message());

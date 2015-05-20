@@ -10,10 +10,9 @@
 #include <tbb/queuing_rw_mutex.h>
 #include <tbb/concurrent_unordered_map.h>
 
-#include <boost/system/error_code.hpp>
-
 #include <cstdint>
 #include <string>
+#include <system_error>
 
 namespace tell {
 namespace store {
@@ -42,11 +41,11 @@ public:
     void shutdown();
 
 private:
-    virtual void onConnected(const boost::system::error_code& ec) final override;
+    virtual void onConnected(const std::error_code& ec) final override;
 
-    virtual void onReceive(const void* buffer, size_t length, const boost::system::error_code& ec) final override;
+    virtual void onReceive(const void* buffer, size_t length, const std::error_code& ec) final override;
 
-    virtual void onSend(uint32_t userId, const boost::system::error_code& ec) final override;
+    virtual void onSend(uint32_t userId, const std::error_code& ec) final override;
 
     virtual void onDisconnect() final override;
 

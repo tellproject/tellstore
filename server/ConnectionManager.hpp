@@ -11,7 +11,7 @@
 #include <tbb/queuing_rw_mutex.h>
 #include <tbb/concurrent_unordered_set.h>
 
-#include <boost/system/error_code.hpp>
+#include <system_error>
 
 namespace tell {
 namespace store {
@@ -27,7 +27,7 @@ public:
               mAcceptor(mService) {
     }
 
-    void init(boost::system::error_code& ec);
+    void init(std::error_code& ec);
 
     void shutdown();
 

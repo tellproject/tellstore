@@ -6,10 +6,9 @@
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
-#include <boost/system/error_code.hpp>
-
 #include <cstddef>
 #include <cstdint>
+#include <system_error>
 
 namespace tell {
 namespace store {
@@ -133,13 +132,11 @@ public:
               mEnd(mPos) {
     }
 
-    BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length,
-            boost::system::error_code& ec) {
+    BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length, std::error_code& ec) {
         return writeMessage(transactionId, static_cast<uint64_t>(request), length, ec);
     }
 
-    BufferWriter writeResponse(uint64_t transactionId, ResponseType response, size_t length,
-            boost::system::error_code& ec) {
+    BufferWriter writeResponse(uint64_t transactionId, ResponseType response, size_t length, std::error_code& ec) {
         return writeMessage(transactionId, static_cast<uint64_t>(response), length, ec);
     }
 
@@ -150,19 +147,19 @@ public:
      * @param error Error code to send
      * @param ec Error in case the send failed
      */
-    void writeErrorResponse(uint64_t transactionId, error::server_errors error, boost::system::error_code& ec);
+    void writeErrorResponse(uint64_t transactionId, error::server_errors error, std::error_code& ec);
 
     /**
      * @brief Flush any unsent buffer
      *
      * @param ec Error in case the flush failed
      */
-    void flush(boost::system::error_code& ec);
+    void flush(std::error_code& ec);
 
 private:
-    BufferWriter writeMessage(uint64_t transactionId, uint64_t type, size_t length, boost::system::error_code& ec);
+    BufferWriter writeMessage(uint64_t transactionId, uint64_t type, size_t length, std::error_code& ec);
 
-    void sendCurrentBuffer(boost::system::error_code& ec);
+    void sendCurrentBuffer(std::error_code& ec);
 
     crossbow::infinio::InfinibandSocket& mSocket;
     crossbow::infinio::InfinibandBuffer mBuffer;

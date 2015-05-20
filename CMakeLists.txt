@@ -29,7 +29,7 @@ if (CMAKE_COMPILER_IS_GNUCXX)
 endif()
 
 # Find dependencies
-find_package(Boost COMPONENTS context system REQUIRED)
+find_package(Boost COMPONENTS context REQUIRED)
 if(NOT Crossbow_INCLUDE_DIRS)
     find_package(Crossbow COMPONENTS InfinIO REQUIRED)
 endif()
@@ -122,7 +122,6 @@ target_include_directories(TellStoreNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Link against Boost
 target_include_directories(TellStoreNetwork PUBLIC ${Boost_INCLUDE_DIRS})
-target_link_libraries(TellStoreNetwork PUBLIC ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(TellStoreNetwork PUBLIC ${Crossbow_INCLUDE_DIRS})
@@ -148,7 +147,6 @@ target_link_libraries(tellstored PRIVATE TellStoreNetwork TellStore)
 
 # Link against Boost
 target_include_directories(tellstored PRIVATE ${Boost_INCLUDE_DIRS})
-target_link_libraries(tellstored PRIVATE ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(tellstored PRIVATE ${Crossbow_INCLUDE_DIRS})
