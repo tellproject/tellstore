@@ -36,6 +36,11 @@ endif()
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 
+# Create configuration file
+configure_file(config.h.in ${PROJECT_BINARY_DIR}/config.h)
+
+add_subdirectory(util)
+
 ###################
 # TellStore library
 ###################
@@ -51,134 +56,22 @@ set(SOURCE_FILES
     logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
-    util/OpenAddressingHash.hpp
-    util/OpenAddressingHash.cpp
-    util/LogOperations.hpp
-    util/LogOperations.cpp
-    util/NonCopyable.hpp
-    util/Log.hpp
-    util/Log.cpp
-    util/TransactionImpl.hpp
-    util/CommitManager.hpp
-    util/CommitManager.cpp
-    util/PageManager.cpp
-    util/PageManager.hpp
-    util/CuckooHash.cpp
-    util/CuckooHash.hpp
-    util/FixedSizeStack.hpp
-    util/Epoch.cpp
-    util/Epoch.hpp
-    util/TableManager.hpp
-    util/Record.hpp
-    util/Record.cpp
-    util/Logging.hpp
-    util/Logging.cpp
-    util/StorageConfig.hpp
-    util/SnapshotDescriptor.hpp
-    util/Request.hpp
-    util/Scan.hpp
-    util/ScanQuery.hpp
-    util/IteratorEntry.hpp
-    util/chunk_allocator.hpp
-    util/functional.hpp)
-
-# Create configuration file
-configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+)
 
 # Add TellStore library
-add_library(TellStore STATIC ${SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/config.h)
-target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(TellStore PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+add_library(TellStore STATIC ${SOURCE_FILES} ${PROJECT_BINARY_DIR}/config.h)
+target_include_directories(TellStore PUBLIC ${PROJECT_SOURCE_DIR})
+target_include_directories(TellStore PUBLIC ${PROJECT_BINARY_DIR})
 
-# Link against Boost
-target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
+# Link against TellStore library
+target_link_libraries(TellStore PUBLIC TellStoreUtil)
 
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
 
-# Link against TBB
-target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
-target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
-
-# Link against Jemalloc
-target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
-target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
-target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
-
-
-###################
-# TellStore Network library
-###################
-set(NETWORK_SRCS
-    network/ErrorCode.hpp
-    network/MessageTypes.hpp
-    network/MessageWriter.hpp
-    network/MessageWriter.cpp
-)
-
-# Add TellStore network library
-add_library(TellStoreNetwork STATIC ${NETWORK_SRCS})
-target_include_directories(TellStoreNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-# Link against Boost
-target_include_directories(TellStoreNetwork PUBLIC ${Boost_INCLUDE_DIRS})
-
-# Link against Crossbow
-target_include_directories(TellStoreNetwork PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(TellStoreNetwork PUBLIC crossbow_infinio)
-
-
-###################
-# TellStore server
-###################
-set(SERVER_SRCS
-    server/ClientConnection.hpp
-    server/ClientConnection.cpp
-    server/ConnectionManager.hpp
-    server/ConnectionManager.cpp
-    server/ServerConfig.hpp
-)
-
-# Add TellStore server executable
-add_executable(tellstored server/main.cpp ${SERVER_SRCS})
-
-# Link against TellStore library
-target_link_libraries(tellstored PRIVATE TellStoreNetwork TellStore)
-
-# Link against Boost
-target_include_directories(tellstored PRIVATE ${Boost_INCLUDE_DIRS})
-
-# Link against Crossbow
-target_include_directories(tellstored PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstored PRIVATE crossbow_infinio)
-
-
-###################
-# TellStore client
-###################
-set(CLIENT_SRCS
-    client/Client.hpp
-    client/Client.cpp
-    client/ClientConfig.hpp
-    client/ServerConnection.hpp
-    client/ServerConnection.cpp
-    client/TransactionManager.hpp
-    client/TransactionManager.cpp
-)
-
-# Add TellStore client executable
-add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS})
-
-# Link against TellStore library
-target_link_libraries(tellstore-client PRIVATE TellStoreNetwork TellStore)
-
-# Link against Boost
-target_include_directories(tellstore-client PRIVATE ${Boost_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE ${Boost_LIBRARIES})
-
-# Link against Crossbow
-target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE crossbow_infinio)
+add_subdirectory(network)
+add_subdirectory(server)
+add_subdirectory(client)
 
 
 ###################
