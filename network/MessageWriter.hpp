@@ -1,14 +1,15 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
+#include <network/ErrorCode.hpp>
+#include <network/MessageTypes.hpp>
 
-#include <util/ErrorCode.hpp>
-#include <util/MessageTypes.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
 #include <boost/system/error_code.hpp>
+
+#include <cstddef>
+#include <cstdint>
 
 namespace tell {
 namespace store {

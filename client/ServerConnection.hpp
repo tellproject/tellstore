@@ -1,6 +1,6 @@
 #pragma once
 
-#include <util/MessageTypes.hpp>
+#include <network/MessageTypes.hpp>
 
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>

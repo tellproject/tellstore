@@ -51,7 +51,6 @@ set(SOURCE_FILES
     logstructured/Record.hpp
     logstructured/Table.cpp
     logstructured/Table.hpp
-    util/ErrorCode.hpp
     util/OpenAddressingHash.hpp
     util/OpenAddressingHash.cpp
     util/LogOperations.hpp
@@ -74,9 +73,6 @@ set(SOURCE_FILES
     util/Record.cpp
     util/Logging.hpp
     util/Logging.cpp
-    util/MessageTypes.hpp
-    util/MessageWriter.hpp
-    util/MessageWriter.cpp
     util/StorageConfig.hpp
     util/SnapshotDescriptor.hpp
     util/Request.hpp
@@ -99,7 +95,6 @@ target_include_directories(TellStore PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(TellStore PUBLIC crossbow_infinio)
 
 # Link against TBB
 target_include_directories(TellStore PUBLIC ${TBB_INCLUDE_DIRS})
@@ -109,6 +104,29 @@ target_link_libraries(TellStore PUBLIC ${TBB_LIBRARIES})
 target_include_directories(TellStore PUBLIC ${Jemalloc_INCLUDE_DIRS})
 target_link_libraries(TellStore PUBLIC ${Jemalloc_LIBRARIES})
 target_compile_definitions(TellStore PUBLIC JEMALLOC_NO_DEMANGLE)
+
+
+###################
+# TellStore Network library
+###################
+set(NETWORK_SRCS
+    network/ErrorCode.hpp
+    network/MessageTypes.hpp
+    network/MessageWriter.hpp
+    network/MessageWriter.cpp
+)
+
+# Add TellStore network library
+add_library(TellStoreNetwork STATIC ${NETWORK_SRCS})
+target_include_directories(TellStoreNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Link against Boost
+target_include_directories(TellStoreNetwork PUBLIC ${Boost_INCLUDE_DIRS})
+target_link_libraries(TellStoreNetwork PUBLIC ${Boost_LIBRARIES})
+
+# Link against Crossbow
+target_include_directories(TellStoreNetwork PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(TellStoreNetwork PUBLIC crossbow_infinio)
 
 
 ###################
@@ -126,7 +144,11 @@ set(SERVER_SRCS
 add_executable(tellstored server/main.cpp ${SERVER_SRCS})
 
 # Link against TellStore library
-target_link_libraries(tellstored PRIVATE TellStore)
+target_link_libraries(tellstored PRIVATE TellStoreNetwork TellStore)
+
+# Link against Boost
+target_include_directories(tellstored PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(tellstored PRIVATE ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(tellstored PRIVATE ${Crossbow_INCLUDE_DIRS})
@@ -150,11 +172,11 @@ set(CLIENT_SRCS
 add_executable(tellstore-client client/main.cpp ${CLIENT_SRCS})
 
 # Link against TellStore library
-target_link_libraries(tellstore-client PRIVATE TellStore)
+target_link_libraries(tellstore-client PRIVATE TellStoreNetwork TellStore)
 
 # Link against Boost
-target_include_directories(tellstore-client PUBLIC ${Boost_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PUBLIC ${Boost_LIBRARIES})
+target_include_directories(tellstore-client PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(tellstore-client PRIVATE ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})

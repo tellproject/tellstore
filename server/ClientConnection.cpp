@@ -2,11 +2,11 @@
 
 #include "ConnectionManager.hpp"
 
+#include <network/ErrorCode.hpp>
+#include <network/MessageTypes.hpp>
+#include <network/MessageWriter.hpp>
 #include <util/Epoch.hpp>
-#include <util/ErrorCode.hpp>
 #include <util/Logging.hpp>
-#include <util/MessageTypes.hpp>
-#include <util/MessageWriter.hpp>
 
 namespace tell {
 namespace store {

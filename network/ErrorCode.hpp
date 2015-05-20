@@ -47,7 +47,7 @@ inline boost::system::error_code make_error_code(network_errors e) {
 
 
 /**
- * @brief Server errors related to TODO
+ * @brief Server errors triggered while processing a request
  */
 enum server_errors {
     /// Server received an unknown request type.
@@ -61,7 +61,7 @@ enum server_errors {
 };
 
 /**
- * @brief Category for network errors
+ * @brief Category for server errors
  */
 class server_category : public boost::system::error_category {
 public:

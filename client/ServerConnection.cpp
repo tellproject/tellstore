@@ -2,11 +2,11 @@
 
 #include "TransactionManager.hpp"
 
+#include <network/ErrorCode.hpp>
+#include <network/MessageTypes.hpp>
+#include <network/MessageWriter.hpp>
 #include <util/Epoch.hpp>
-#include <util/ErrorCode.hpp>
 #include <util/Logging.hpp>
-#include <util/MessageTypes.hpp>
-#include <util/MessageWriter.hpp>
 #include <util/Record.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
