@@ -37,7 +37,7 @@ enum class ResponseType : uint64_t {
     COMMIT,
 
 
-    LAST = RequestType::COMMIT
+    LAST = ResponseType::COMMIT
 };
 
 } // namespace store

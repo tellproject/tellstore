@@ -24,9 +24,7 @@ if ( ENABLE_HEAVYWEIGHT_TESTS )
 endif()
 
 # The cx16 flag is required for GCC to enable 128 bit atomics
-if (CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
-endif()
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
 
 # Find dependencies
 find_package(Boost COMPONENTS context REQUIRED)
