@@ -118,7 +118,7 @@ public:
             return false;
         }
 
-        auto ptr = tell::store::malloc(sizeof(Table), alignof(Table));
+        auto ptr = allocator::malloc(sizeof(Table), alignof(Table));
         LOG_ASSERT(ptr, "Unable to allocate table");
         mTables[idx] = new(ptr) Table(mPageManager, schema, idx, std::forward<Args>(args)...);
         return true;

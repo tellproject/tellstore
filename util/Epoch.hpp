@@ -16,14 +16,6 @@ extern void init();
 
 extern void destroy();
 
-extern void* malloc(std::size_t size);
-
-extern void* malloc(std::size_t size, std::size_t align);
-
-extern void free(void* ptr);
-
-extern void free_now(void* ptr);
-
 class allocator {
     std::atomic<uint64_t>* cnt_;
     static std::mutex mutex_;
