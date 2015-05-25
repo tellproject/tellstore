@@ -9,10 +9,8 @@
 
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
-#include <tbb/queuing_rw_mutex.h>
-#include <tbb/concurrent_unordered_map.h>
-
 #include <cstdint>
+#include <unordered_map>
 #include <string>
 #include <system_error>
 
@@ -97,11 +95,9 @@ private:
     ConnectionManager& mManager;
     Storage& mStorage;
 
-    /// Mutex for the snapshot cache
-    tbb::queuing_rw_mutex mSnapshotsMutex;
-
+    // TODO Replace with google dense map (SnapshotDescriptor has no copy / default constructor)
     /// Snapshot cache mapping the version number to the snapshot descriptor
-    tbb::concurrent_unordered_map<uint64_t, SnapshotDescriptor> mSnapshots;
+    std::unordered_map<uint64_t, SnapshotDescriptor> mSnapshots;
 };
 
 } // namespace store

@@ -394,7 +394,6 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
     bool cached = request.read<uint8_t>();
     bool hasDescriptor = request.read<uint8_t>();
     if (cached) {
-        tbb::queuing_rw_mutex::scoped_lock lock(mSnapshotsMutex, false);
         auto i = mSnapshots.find(version);
 
         // Either we already have the snapshot in our cache or the client send it to us
@@ -406,7 +405,7 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
 
         if (!found) {
             // We have to add the snapshot to the cache
-            auto res = mSnapshots.insert(std::make_pair(version, readSnapshot(version, request)));
+            auto res = mSnapshots.emplace(version, readSnapshot(version, request));
             if (!res.second) { // Element was inserted by another thread
                 writeErrorResponse(transactionId, error::invalid_snapshot);
                 return;
@@ -425,8 +424,11 @@ void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& requ
 }
 
 void ClientConnection::removeSnapshot(uint64_t version) {
-    tbb::queuing_rw_mutex::scoped_lock lock(mSnapshotsMutex, true);
-    mSnapshots.unsafe_erase(version);
+    auto i = mSnapshots.find(version);
+    if (i == mSnapshots.end()) {
+        return;
+    }
+    mSnapshots.erase(i);
 }
 
 void ClientConnection::writeErrorResponse(uint64_t transactionId, error::server_errors error) {
