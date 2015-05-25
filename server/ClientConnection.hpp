@@ -28,7 +28,7 @@ class ConnectionManager;
  */
 class ClientConnection : private crossbow::infinio::InfinibandSocketHandler {
 public:
-    ClientConnection(ConnectionManager& manager, Storage& storage, crossbow::infinio::InfinibandSocket&& socket)
+    ClientConnection(ConnectionManager& manager, Storage& storage, crossbow::infinio::InfinibandSocket socket)
             : mManager(manager),
               mStorage(storage),
               mSocket(std::move(socket)) {
@@ -41,7 +41,7 @@ public:
     void shutdown();
 
 private:
-    virtual void onConnected(const std::error_code& ec) final override;
+    virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
     virtual void onReceive(const void* buffer, size_t length, const std::error_code& ec) final override;
 

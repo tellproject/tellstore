@@ -4,7 +4,6 @@
 #include <util/Epoch.hpp>
 #include <util/Logging.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
@@ -44,12 +43,8 @@ int main(int argc, const char** argv) {
     tell::store::init();
 
     // Initialize network stack
-    crossbow::infinio::EventDispatcher dispatcher(clientConfig.networkThreads);
-    tell::store::Client client(dispatcher, clientConfig);
+    tell::store::Client client(clientConfig);
     client.init();
-
-    LOG_INFO("Start dispatcher threads");
-    dispatcher.run();
 
     LOG_INFO("Exiting TellStore client");
     return 0;

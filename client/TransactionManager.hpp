@@ -4,7 +4,6 @@
 
 #include <util/NonCopyable.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/string.hpp>
 
 #include <tbb/concurrent_unordered_map.h>
@@ -35,9 +34,9 @@ public:
 
     static constexpr size_t STACK_SIZE = 0x800000;
 
-    static Transaction* allocate(TransactionManager& manager, uint64_t id) {
+    static Transaction* allocate(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun) {
         void* data = je_malloc(STACK_SIZE + sizeof(Transaction));
-        return new (data) Transaction(manager, id);
+        return new (data) Transaction(manager, id, std::move(fun));
     }
 
     static void destroy(Transaction* transaction) {
@@ -45,15 +44,11 @@ public:
         je_free(transaction);
     }
 
-    Transaction(TransactionManager& manager, uint64_t id);
-
-    ~Transaction();
+    Transaction(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun);
 
     uint64_t id() const {
         return mId;
     }
-
-    bool execute(std::function<void(Transaction&)> fun);
 
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId, std::error_code& ec);
 
@@ -82,7 +77,7 @@ private:
 
     void start();
 
-    bool resume();
+    void resume();
 
     void wait();
 
@@ -91,6 +86,8 @@ private:
     TransactionManager& mManager;
 
     uint64_t mId;
+
+    std::function<void(Transaction&)> mFun;
 
     /// We expect transactions to yield immediately after posting the last send so the lock is only for safety reasons
     /// and will not often be contended.
@@ -103,8 +100,6 @@ private:
 #endif
 
     boost::context::fcontext_t mReturnContext;
-
-    std::function<void(Transaction&)> mContextFun;
 
     std::atomic<uint32_t> mOutstanding;
     ServerConnection::Response mResponse;
@@ -121,7 +116,7 @@ public:
 
     void init(const ClientConfig& config, std::error_code& ec, std::function<void()> callback);
 
-    std::unique_ptr<Transaction> startTransaction();
+    void executeTransaction(std::function<void(Transaction&)> fun);
 
 private:
     friend class Transaction;
@@ -131,7 +126,7 @@ private:
 
     void handleResponse(uint64_t id, ServerConnection::Response response);
 
-    void endTransaction(Transaction* transaction);
+    void endTransaction(uint64_t id);
 
     std::atomic<uint64_t> mTransactionId;
 

@@ -17,17 +17,12 @@ void Client::init() {
     std::error_code ec;
     mManager.init(mConfig, ec, [this] () {
         LOG_DEBUG("Start transaction");
-        auto trans = mManager.startTransaction();
-        auto res = trans->execute(std::bind(&Client::addTable, this, std::placeholders::_1));
-        if (!res) {
-            LOG_ERROR("Unable to execute transaction function");
-        }
-        tbb::spin_mutex::scoped_lock lock(mTransMutex);
-        mTrans.emplace_back(std::move(trans));
+        mManager.executeTransaction(std::bind(&Client::addTable, this, std::placeholders::_1));
     });
     if (ec) {
         LOG_ERROR("Failure init [error = %1% %2%]", ec, ec.message());
     }
+    mService.run();
 }
 
 void Client::shutdown() {
@@ -55,16 +50,8 @@ void Client::addTable(Transaction& transaction) {
     LOG_INFO("Adding table took %1%ns", duration.count());
 
     for (auto i = 0; i < 10; ++i) {
-        mDispatcher.post([this, i] () {
-            auto trans = mManager.startTransaction();
-            auto res = trans->execute(std::bind(&Client::executeTransaction, this, std::placeholders::_1,
-                    i * 10000 + 1, (i + 1) * 10000 + 1));
-            if (!res) {
-                LOG_ERROR("Unable to execute transaction function");
-            }
-            tbb::spin_mutex::scoped_lock lock(mTransMutex);
-            mTrans.emplace_back(std::move(trans));
-        });
+        mManager.executeTransaction(std::bind(&Client::executeTransaction, this, std::placeholders::_1, i * 10000 + 1,
+                (i + 1) * 10000 + 1));
     }
 }
 

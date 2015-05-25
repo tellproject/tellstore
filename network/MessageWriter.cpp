@@ -20,7 +20,7 @@ void MessageWriter::flush(std::error_code& ec) {
     if (mPos != reinterpret_cast<char*>(mBuffer.data())) {
         sendCurrentBuffer(ec);
     } else {
-        mSocket.releaseSendBuffer(mBuffer);
+        mSocket->releaseSendBuffer(mBuffer);
     }
 }
 
@@ -34,7 +34,7 @@ BufferWriter MessageWriter::writeMessage(uint64_t transactionId, uint64_t type, 
             return BufferWriter(nullptr, 0x0u);
         }
 
-        mBuffer = mSocket.acquireSendBuffer();
+        mBuffer = mSocket->acquireSendBuffer();
         if (!mBuffer.valid()) {
             ec = error::invalid_buffer;
             return BufferWriter(nullptr, 0x0u);
@@ -60,9 +60,9 @@ void MessageWriter::sendCurrentBuffer(std::error_code& ec) {
     auto bytesWritten = static_cast<size_t>(mPos - reinterpret_cast<char*>(mBuffer.data()));
     mBuffer.shrink(bytesWritten);
 
-    mSocket.send(mBuffer, 0, ec);
+    mSocket->send(mBuffer, 0, ec);
     if (ec)  {
-        mSocket.releaseSendBuffer(mBuffer);
+        mSocket->releaseSendBuffer(mBuffer);
     }
 }
 

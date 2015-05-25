@@ -33,7 +33,7 @@ void writeSnapshot(BufferWriter& message, const SnapshotDescriptor& snapshot) {
 
 ServerConnection::~ServerConnection() {
     std::error_code ec;
-    mSocket.close(ec);
+    mSocket->close(ec);
     if (ec) {
         // TODO Handle this situation somehow (this should probably not happen at this point)
     }
@@ -43,19 +43,20 @@ void ServerConnection::connect(const crossbow::string& host, uint16_t port, std:
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
     // Open socket
-    mSocket.open(ec);
+    mSocket->open(ec);
     if (ec) {
         return;
     }
-    mSocket.setHandler(this);
+    mSocket->setHandler(this);
 
     // Connect to remote server
-    mSocket.connect(crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), host, port), ec);
+    crossbow::infinio::Endpoint ep(crossbow::infinio::Endpoint::ipv4(), host, port);
+    mSocket->connect(ep, ec);
 }
 
 void ServerConnection::shutdown() {
     std::error_code ec;
-    mSocket.disconnect(ec);
+    mSocket->disconnect(ec);
     if (ec) {
         LOG_ERROR("Error disconnecting");
         // TODO Handle this situation somehow - Can this even happen?
@@ -72,7 +73,7 @@ void ServerConnection::createTable(uint64_t transactionId, const crossbow::strin
             :  0);
     messageSize += schemaSize;
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto request = writer.writeRequest(transactionId, RequestType::CREATE_TABLE, messageSize, ec);
     if (ec) {
         return;
@@ -91,7 +92,7 @@ void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string
     auto nameSize = name.size();
     auto messageSize = sizeof(uint16_t) + nameSize;
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto request = writer.writeRequest(transactionId, RequestType::GET_TABLEID, messageSize, ec);
     if (ec) {
         return;
@@ -106,7 +107,7 @@ void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t ke
         std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::GET, messageSize, ec);
     if (ec) {
         return;
@@ -121,7 +122,7 @@ void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t ke
 void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec) {
     auto messageSize = 2 * sizeof(uint64_t);
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::GET_NEWEST, messageSize, ec);
     if (ec) {
         return;
@@ -140,7 +141,7 @@ void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t
             :  0);
     messageSize += 2 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
     if (ec) {
         return;
@@ -166,7 +167,7 @@ void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t
             :  0);
     messageSize += 2 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
     if (ec) {
         return;
@@ -189,7 +190,7 @@ void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::REMOVE, messageSize, ec);
     if (ec) {
         return;
@@ -206,7 +207,7 @@ void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     auto message = writer.writeRequest(transactionId, RequestType::REVERT, messageSize, ec);
     if (ec) {
         return;
@@ -219,7 +220,7 @@ void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t
     writer.flush(ec);
 }
 
-void ServerConnection::onConnected(const std::error_code& ec) {
+void ServerConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {
     mManager.onConnected(ec);
 }
 
@@ -265,9 +266,9 @@ void ServerConnection::onDisconnected() {
 
 void ServerConnection::sendRequest(crossbow::infinio::InfinibandBuffer& buffer, std::error_code& ec) {
     // TODO Implement actual request batching
-    mSocket.send(buffer, 0x0u, ec);
+    mSocket->send(buffer, 0x0u, ec);
     if (ec) {
-        mSocket.releaseSendBuffer(buffer);
+        mSocket->releaseSendBuffer(buffer);
         return;
     }
 }

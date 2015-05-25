@@ -125,7 +125,7 @@ private:
 
 class MessageWriter {
 public:
-    MessageWriter(crossbow::infinio::InfinibandSocket& socket)
+    MessageWriter(crossbow::infinio::InfinibandSocketImpl* socket)
             : mSocket(socket),
               mBuffer(crossbow::infinio::InfinibandBuffer::INVALID_ID),
               mPos(static_cast<char*>(nullptr)),
@@ -161,7 +161,7 @@ private:
 
     void sendCurrentBuffer(std::error_code& ec);
 
-    crossbow::infinio::InfinibandSocket& mSocket;
+    crossbow::infinio::InfinibandSocketImpl* mSocket;
     crossbow::infinio::InfinibandBuffer mBuffer;
     char* mPos;
     char* mEnd;

@@ -55,11 +55,15 @@ public:
     };
 
     ServerConnection(crossbow::infinio::InfinibandService& service, TransactionManager& manager)
-            : mSocket(service),
+            : mSocket(service.createSocket()),
               mManager(manager) {
     }
 
     ~ServerConnection();
+
+    void execute(std::function<void()> fun, std::error_code& ec) {
+        mSocket->execute(std::move(fun), ec);
+    }
 
     void connect(const crossbow::string& host, uint16_t port, std::error_code& ec);
 
@@ -87,7 +91,7 @@ public:
             std::error_code& ec);
 
 private:
-    virtual void onConnected(const std::error_code& ec) final override;
+    virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
     virtual void onReceive(const void* buffer, size_t length, const std::error_code& ec) final override;
 

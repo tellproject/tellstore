@@ -9,9 +9,6 @@ namespace tell {
 namespace store {
 
 struct ClientConfig {
-    /// Number of threads executing the RPC event loop
-    size_t networkThreads = 2;
-
     /// Address of the server to connect to
     crossbow::string server = "";
 

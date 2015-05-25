@@ -6,7 +6,6 @@
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 
 #include <tbb/spin_mutex.h>
@@ -20,9 +19,8 @@ namespace store {
 
 class Client {
 public:
-    Client(crossbow::infinio::EventDispatcher& dispatcher, const ClientConfig& config)
-            : mDispatcher(dispatcher),
-              mService(dispatcher, config.infinibandLimits),
+    Client(const ClientConfig& config)
+            : mService(config.infinibandLimits),
               mConfig(config),
               mManager(mService),
               mTableId(0x0u) {
@@ -43,7 +41,6 @@ private:
 
     const char* getTupleData(const char* data, Record& record, const crossbow::string& name);
 
-    crossbow::infinio::EventDispatcher& mDispatcher;
     crossbow::infinio::InfinibandService mService;
 
     ClientConfig mConfig;

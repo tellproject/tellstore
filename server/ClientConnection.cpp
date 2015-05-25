@@ -30,26 +30,26 @@ SnapshotDescriptor readSnapshot(uint64_t version, BufferReader& request) {
 
 ClientConnection::~ClientConnection() {
     std::error_code ec;
-    mSocket.close(ec);
+    mSocket->close(ec);
     if (ec) {
         // TODO Handle this situation somehow (this should probably not happen at this point)
     }
 }
 
 void ClientConnection::init() {
-    mSocket.setHandler(this);
+    mSocket->setHandler(this);
 }
 
 void ClientConnection::shutdown() {
     std::error_code ec;
-    mSocket.disconnect(ec);
+    mSocket->disconnect(ec);
     if (ec) {
         LOG_ERROR("Error disconnecting [error = %1% %2%]", ec, ec.message());
         // TODO Handle this situation somehow - Can this even happen?
     }
 }
 
-void ClientConnection::onConnected(const std::error_code& ec) {
+void ClientConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Failure while establishing client connection [error = %1% %2%]", ec, ec.message());
         mManager.removeConnection(this);
@@ -66,7 +66,7 @@ void ClientConnection::onReceive(const void* buffer, size_t length, const std::e
     auto startTime = std::chrono::steady_clock::now();
 
     BufferReader request(reinterpret_cast<const char*>(buffer), length);
-    MessageWriter writer(mSocket);
+    MessageWriter writer(mSocket.get());
     while (!request.exhausted()) {
         auto transactionId = request.read<uint64_t>();
         auto requestType = request.read<uint64_t>();

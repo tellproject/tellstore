@@ -4,7 +4,6 @@
 
 #include <tellstore.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
@@ -18,13 +17,13 @@ namespace store {
 
 class ClientConnection;
 
-class ConnectionManager : private crossbow::infinio::InfinibandSocketHandler {
+class ConnectionManager : private crossbow::infinio::InfinibandAcceptorHandler {
 public:
-    ConnectionManager(Storage& storage, crossbow::infinio::EventDispatcher& dispatcher, const ServerConfig& config)
+    ConnectionManager(Storage& storage, const ServerConfig& config)
             : mConfig(config),
               mStorage(storage),
-              mService(dispatcher, mConfig.infinibandLimits),
-              mAcceptor(mService) {
+              mService(mConfig.infinibandLimits),
+              mAcceptor(mService.createAcceptor()) {
     }
 
     void init(std::error_code& ec);
@@ -35,7 +34,7 @@ public:
 private:
     friend class ClientConnection;
 
-    virtual bool onConnection(crossbow::infinio::InfinibandSocket socket) final override;
+    virtual void onConnection(crossbow::infinio::InfinibandSocket socket, const crossbow::string& data) final override;
 
     void removeConnection(ClientConnection* con);
 

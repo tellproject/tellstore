@@ -21,27 +21,15 @@ void Transaction::entry_fun(intptr_t p) {
     assert(false); // never returns
 }
 
-Transaction::Transaction(TransactionManager& manager, uint64_t id)
+Transaction::Transaction(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun)
     : mManager(manager),
       mId(id),
+      mFun(std::move(fun)),
       mContext(boost::context::make_fcontext(stackFromTransaction(this), STACK_SIZE, &Transaction::entry_fun)),
 #if BOOST_VERSION >= 105600
       mReturnContext(nullptr),
 #endif
       mOutstanding(0x0u) {
-}
-
-Transaction::~Transaction() {
-    mManager.endTransaction(this);
-}
-
-bool Transaction::execute(std::function<void(Transaction&)> fun) {
-    // Not Thread safe
-    if (mContextFun) {
-        return false;
-    }
-    mContextFun = std::move(fun);
-    return resume();
 }
 
 bool Transaction::createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
@@ -162,30 +150,19 @@ bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescripto
 }
 
 void Transaction::start() {
-    while (true) {
-        if (!mContextFun) {
-            wait();
-            continue;
-        }
-
-        try {
-            LOG_TRACE("Invoking transaction function");
-            mContextFun(*this);
-            mContextFun = std::function<void(Transaction&)>();
-            wait();
-        } catch (...) {
-            LOG_FATAL("Exception triggered in ExecutionContext");
-            std::terminate();
-        }
+    try {
+        LOG_TRACE("Invoking transaction function");
+        mFun(*this);
+    } catch (std::exception& e) {
+        LOG_ERROR("Exception triggered in transaction function [error = %1%]", e.what());
+    } catch (...) {
+        LOG_ERROR("Exception triggered in transaction function");
     }
+    mManager.endTransaction(mId);
 }
 
-bool Transaction::resume() {
+void Transaction::resume() {
     tbb::spin_mutex::scoped_lock lock(mContextMutex);
-
-    if (!mContextFun) {
-        return false;
-    }
 
 #if BOOST_VERSION >= 105600
     LOG_ASSERT(!mReturnContext, "Resuming an already active context");
@@ -195,7 +172,6 @@ bool Transaction::resume() {
     auto res = boost::context::jump_fcontext(&mReturnContext, mContext, reinterpret_cast<intptr_t>(this));
 #endif
     LOG_ASSERT(res == reinterpret_cast<intptr_t>(this), "Not returning from yield()");
-    return true;
 }
 
 void Transaction::wait() {
@@ -218,25 +194,29 @@ TransactionManager::~TransactionManager() {
     // TODO Abort all transactions
 }
 
-void TransactionManager::init(const ClientConfig& config, std::error_code& ec, std::function<void ()> callback) {
+void TransactionManager::init(const ClientConfig& config, std::error_code& ec, std::function<void()> callback) {
     mCallback = std::move(callback);
     mConnection.connect(config.server, config.port, ec);
 
     // TODO Use a context/future to block for connect?
 }
 
-std::unique_ptr<Transaction> TransactionManager::startTransaction() {
+void TransactionManager::executeTransaction(std::function<void(Transaction&)> fun) {
     auto id = ++mTransactionId;
 
     LOG_DEBUG("Starting transaction %1%", id);
-
-    std::unique_ptr<Transaction> transaction(Transaction::allocate(*this, id));
+    auto transaction = Transaction::allocate(*this, id, std::move(fun));
 
     tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
-    auto res = mTransactions.insert(std::make_pair(id, transaction.get())).second;
+    auto res = mTransactions.insert(std::make_pair(id, transaction)).second;
     LOG_ASSERT(res, "Unable to insert context for message ID %1%", id);
 
-    return std::move(transaction);
+    std::error_code ec;
+    mConnection.execute([transaction] () {
+        transaction->resume();
+    }, ec);
+
+    // TODO Error handling
 }
 
 void TransactionManager::onConnected(const std::error_code& ec) {
@@ -262,17 +242,34 @@ void TransactionManager::handleResponse(uint64_t id, ServerConnection::Response 
     }
 
     if (transaction->setResponse(std::move(response))) {
-        // TODO Schedule this through the event loop?
         transaction->resume();
     }
 }
 
-void TransactionManager::endTransaction(Transaction* transaction) {
-    LOG_DEBUG("Ending transaction %1%", transaction->id());
+void TransactionManager::endTransaction(uint64_t id) {
+    LOG_DEBUG("Ending transaction %1%", id);
 
-    tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, true);
-    auto res = mTransactions.unsafe_erase(transaction->id());
-    LOG_ASSERT(res == 1, "Unable to remove context for transaction ID %1%", transaction->id());
+    Transaction* transaction = nullptr;
+    {
+        tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, true);
+        auto i = mTransactions.find(id);
+        if (i == mTransactions.end()) {
+            LOG_DEBUG("Transaction with ID %1% not found", id);
+            return;
+        }
+        transaction = i->second;
+        mTransactions.unsafe_erase(i);
+    }
+
+    // endTransaction() is called from the transaction context itself, so we can not free the memory associated with the
+    // context here - defer deletion to the event loop
+    std::error_code ec;
+    mConnection.execute([transaction] () {
+        je_free(transaction);
+    }, ec);
+    // TODO Error handling
+
+    transaction->wait();
 }
 
 } // namespace store
