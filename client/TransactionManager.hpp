@@ -5,6 +5,7 @@
 #include <util/NonCopyable.hpp>
 #include <util/sparsehash/dense_hash_map>
 
+#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/string.hpp>
 
 #include <boost/context/fcontext.hpp>

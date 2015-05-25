@@ -14,6 +14,9 @@ namespace error {
 enum network_errors {
     /// Network buffer was invalid.
     invalid_buffer = 1,
+
+    /// Received message was invalid.
+    invalid_message = 2,
 };
 
 /**
@@ -29,6 +32,9 @@ public:
         switch (value) {
         case error::invalid_buffer:
             return "Network buffer was invalid";
+
+        case error::invalid_message:
+            return "Received message was invalid";
 
         default:
             return "tell.store.network error";

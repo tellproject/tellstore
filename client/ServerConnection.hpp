@@ -1,13 +1,10 @@
 #pragma once
 
+#include <network/MessageSocket.hpp>
 #include <network/MessageTypes.hpp>
 
-#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/string.hpp>
-
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/queuing_rw_mutex.h>
 
 #include <cstdint>
 #include <memory>
@@ -21,9 +18,7 @@ class Schema;
 class SnapshotDescriptor;
 class TransactionProcessor;
 
-class BufferReader;
-
-class ServerConnection : private crossbow::infinio::InfinibandSocketHandler {
+class ServerConnection : private MessageSocket<ServerConnection> {
 public:
     class Response {
     public:
@@ -55,7 +50,7 @@ public:
     };
 
     ServerConnection(crossbow::infinio::InfinibandSocket socket, TransactionProcessor& processor)
-            : mSocket(std::move(socket)),
+            : MessageSocket(std::move(socket)),
               mProcessor(processor) {
     }
 
@@ -91,19 +86,21 @@ public:
             std::error_code& ec);
 
 private:
+    friend class MessageSocket;
+
     virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
-    virtual void onReceive(const void* buffer, size_t length, const std::error_code& ec) final override;
+    void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
 
-    virtual void onSend(uint32_t userId, const std::error_code& ec) final override;
+    void onSocketError(const std::error_code& ec);
 
     virtual void onDisconnect() final override;
 
     virtual void onDisconnected() final override;
 
-    void sendRequest(crossbow::infinio::InfinibandBuffer& buffer, std::error_code& ec);
-
-    crossbow::infinio::InfinibandSocket mSocket;
+    BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length, std::error_code& ec) {
+        return writeMessage(transactionId, static_cast<uint32_t>(request), length, ec);
+    }
 
     TransactionProcessor& mProcessor;
 };

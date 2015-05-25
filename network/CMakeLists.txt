@@ -3,9 +3,8 @@
 ###################
 set(NETWORK_SRCS
     ErrorCode.hpp
+    MessageSocket.hpp
     MessageTypes.hpp
-    MessageWriter.hpp
-    MessageWriter.cpp
 )
 
 # Add TellStore network library

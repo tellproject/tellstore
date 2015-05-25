@@ -3,9 +3,8 @@
 #include "TransactionManager.hpp"
 
 #include <network/ErrorCode.hpp>
-#include <network/MessageTypes.hpp>
-#include <network/MessageWriter.hpp>
 #include <util/Epoch.hpp>
+#include <util/helper.hpp>
 #include <util/Logging.hpp>
 #include <util/Record.hpp>
 #include <util/SnapshotDescriptor.hpp>
@@ -42,12 +41,13 @@ ServerConnection::~ServerConnection() {
 void ServerConnection::connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec) {
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
+    MessageSocket::init();
+
     // Open socket
     mSocket->open(ec);
     if (ec) {
         return;
     }
-    mSocket->setHandler(this);
 
     // Connect to remote server
     crossbow::infinio::Endpoint ep(crossbow::infinio::Endpoint::ipv4(), host, port);
@@ -77,8 +77,7 @@ void ServerConnection::createTable(uint64_t transactionId, const crossbow::strin
             :  0);
     messageSize += schemaSize;
 
-    MessageWriter writer(mSocket.get());
-    auto request = writer.writeRequest(transactionId, RequestType::CREATE_TABLE, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::CREATE_TABLE, messageSize, ec);
     if (ec) {
         return;
     }
@@ -88,53 +87,42 @@ void ServerConnection::createTable(uint64_t transactionId, const crossbow::strin
     request.align(sizeof(uint64_t));
     schema.serialize(request.data());
     request.advance(schemaSize);
-
-    writer.flush(ec);
 }
 
 void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string& name, std::error_code& ec) {
     auto nameSize = name.size();
     auto messageSize = sizeof(uint16_t) + nameSize;
 
-    MessageWriter writer(mSocket.get());
-    auto request = writer.writeRequest(transactionId, RequestType::GET_TABLEID, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::GET_TABLEID, messageSize, ec);
     if (ec) {
         return;
     }
     request.write<uint16_t>(nameSize);
     request.write(name.data(), nameSize);
-
-    writer.flush(ec);
 }
 
 void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
         std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::GET, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::GET, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
-    writeSnapshot(message, snapshot);
-
-    writer.flush(ec);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
+    writeSnapshot(request, snapshot);
 }
 
 void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec) {
     auto messageSize = 2 * sizeof(uint64_t);
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::GET_NEWEST, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::GET_NEWEST, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
-
-    writer.flush(ec);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
 }
 
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
@@ -145,22 +133,19 @@ void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t
             :  0);
     messageSize += 2 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
 
-    message.align(sizeof(uint32_t));
-    message.write<uint32_t>(size);
-    message.write(data, size);
+    request.align(sizeof(uint32_t));
+    request.write<uint32_t>(size);
+    request.write(data, size);
 
-    message.align(sizeof(uint64_t));
-    writeSnapshot(message, snapshot);
-
-    writer.flush(ec);
+    request.align(sizeof(uint64_t));
+    writeSnapshot(request, snapshot);
 }
 
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
@@ -171,90 +156,66 @@ void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t
             :  0);
     messageSize += 2 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
-    message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
+    request.write<uint8_t>(succeeded ? 0x1u : 0x0u);
 
-    message.align(sizeof(uint32_t));
-    message.write<uint32_t>(size);
-    message.write(data, size);
-    message.align(sizeof(uint64_t));
+    request.align(sizeof(uint32_t));
+    request.write<uint32_t>(size);
+    request.write(data, size);
+    request.align(sizeof(uint64_t));
 
-    writeSnapshot(message, snapshot);
-
-    writer.flush(ec);
+    writeSnapshot(request, snapshot);
 }
 
 void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t key,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::REMOVE, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::REMOVE, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
 
-    writeSnapshot(message, snapshot);
-
-    writer.flush(ec);
+    writeSnapshot(request, snapshot);
 }
 
 void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t key,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto messageSize = 4 * sizeof(uint64_t) + snapshot.length();
 
-    MessageWriter writer(mSocket.get());
-    auto message = writer.writeRequest(transactionId, RequestType::REVERT, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::REVERT, messageSize, ec);
     if (ec) {
         return;
     }
-    message.write<uint64_t>(tableId);
-    message.write<uint64_t>(key);
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
 
-    writeSnapshot(message, snapshot);
-
-    writer.flush(ec);
+    writeSnapshot(request, snapshot);
 }
 
 void ServerConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {
     mProcessor.onConnected(ec);
 }
 
-void ServerConnection::onReceive(const void* buffer, size_t length, const std::error_code& ec) {
-    if (ec) {
-        LOG_ERROR("Error receiving message");
-        // TODO Handle this situation somehow
-        return;
+void ServerConnection::onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message) {
+    if (messageType > to_underlying(ResponseType::LAST)) {
+        messageType = to_underlying(ResponseType::UNKOWN);
     }
 
-    BufferReader responseReader(reinterpret_cast<const char*>(buffer), length);
-    while (!responseReader.exhausted()) {
-        auto transactionId = responseReader.read<uint64_t>();
-        auto responseType = responseReader.read<uint64_t>();
-        if (responseType > static_cast<uint64_t>(ResponseType::LAST)) {
-            // Unknown request type
-        }
-
-        LOG_TRACE("T %1%] Handling response of type %2%", transactionId, responseType);
-        mProcessor.handleResponse(transactionId, Response(static_cast<ResponseType>(responseType), &responseReader));
-
-        responseReader.align(sizeof(uint64_t));
-    }
+    LOG_TRACE("T %1%] Handling response of type %2%", transactionId, messageType);
+    mProcessor.handleResponse(transactionId, Response(from_underlying<ResponseType>(messageType), &message));
 }
 
-void ServerConnection::onSend(uint32_t userId, const std::error_code& ec) {
-    if (ec) {
-        LOG_ERROR("Error sending message [errcode = %1% %2%]", ec, ec.message());
-        // TODO Handle this situation somehow
-    }
+void ServerConnection::onSocketError(const std::error_code& ec) {
+    LOG_ERROR("Error during socket operation [error = %1% %2%]", ec, ec.message());
+    shutdown();
 }
 
 void ServerConnection::onDisconnect() {
@@ -266,15 +227,6 @@ void ServerConnection::onDisconnected() {
     // No more handlers are active so we do not need to synchronize
 
     // TODO Impl
-}
-
-void ServerConnection::sendRequest(crossbow::infinio::InfinibandBuffer& buffer, std::error_code& ec) {
-    // TODO Implement actual request batching
-    mSocket->send(buffer, 0x0u, ec);
-    if (ec) {
-        mSocket->releaseSendBuffer(buffer);
-        return;
-    }
 }
 
 void ServerConnection::Response::reset() {
@@ -338,7 +290,8 @@ bool ServerConnection::Response::modification(std::error_code& ec) {
 bool ServerConnection::Response::checkMessage(ResponseType type, std::error_code& ec) {
     LOG_ASSERT(mMessage, "Message is null");
     if (mType == ResponseType::ERROR) {
-        ec = std::error_code(*reinterpret_cast<uint64_t*>(mMessage), error::get_server_category());
+        auto error = mMessage->read<uint64_t>();
+        ec = std::error_code(error, error::get_server_category());
         return false;
     }
     if (mType != type) {
