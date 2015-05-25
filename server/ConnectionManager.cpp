@@ -52,12 +52,19 @@ void ConnectionManager::shutdown() {
 }
 
 void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket, const crossbow::string& data) {
-    LOG_INFO("New incoming connection");
+    if (data.size() < sizeof(uint64_t)) {
+        LOG_ERROR("Client did not send enough data in connection attempt");
+        return;
+    }
+    auto thread = *reinterpret_cast<const uint64_t*>(&data.front());
+
+    LOG_INFO("New incoming connection [address = %1%, thread = %2%]", socket->remoteAddress(), thread);
+
     auto con = new (allocator::malloc(sizeof(ClientConnection))) ClientConnection(*this, mStorage, socket);
     con->init();
 
     std::error_code ec;
-    socket->accept(crossbow::string(), 0, ec);
+    socket->accept(crossbow::string(), thread, ec);
     if (ec) {
         LOG_ERROR("Error accepting connection [error = %1% %2%]", ec, ec.message());
         socket->close(ec);

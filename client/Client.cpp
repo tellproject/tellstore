@@ -15,13 +15,12 @@ void Client::init() {
     LOG_INFO("Initializing TellStore client");
 
     std::error_code ec;
-    mManager.init(mConfig, ec, [this] () {
-        LOG_DEBUG("Start transaction");
-        mManager.executeTransaction(std::bind(&Client::addTable, this, std::placeholders::_1));
-    });
+    mManager.init(mConfig, ec);
     if (ec) {
         LOG_ERROR("Failure init [error = %1% %2%]", ec, ec.message());
     }
+    LOG_DEBUG("Start transaction");
+    mManager.executeTransaction(std::bind(&Client::addTable, this, std::placeholders::_1));
     mService.run();
 }
 

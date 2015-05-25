@@ -21,8 +21,8 @@ void Transaction::entry_fun(intptr_t p) {
     assert(false); // never returns
 }
 
-Transaction::Transaction(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun)
-    : mManager(manager),
+Transaction::Transaction(TransactionProcessor& processor, uint64_t id, std::function<void(Transaction&)> fun)
+    : mProcessor(processor),
       mId(id),
       mFun(std::move(fun)),
       mContext(boost::context::make_fcontext(stackFromTransaction(this), STACK_SIZE, &Transaction::entry_fun)),
@@ -34,7 +34,7 @@ Transaction::Transaction(TransactionManager& manager, uint64_t id, std::function
 
 bool Transaction::createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
         std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.createTable(mId, name, schema, ec);
@@ -47,7 +47,7 @@ bool Transaction::createTable(const crossbow::string& name, const Schema& schema
 }
 
 bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.getTableId(mId, name, ec);
@@ -61,7 +61,7 @@ bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, st
 
 bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
         const SnapshotDescriptor& snapshot, bool& isNewest, std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.get(mId, tableId, key, snapshot, ec);
@@ -76,7 +76,7 @@ bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*&
 
 bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
         std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.getNewest(mId, tableId, key, ec);
@@ -91,7 +91,7 @@ bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const 
 
 bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.update(mId, tableId, key, size, data, snapshot, ec);
@@ -105,7 +105,7 @@ bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char
 
 void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.insert(mId, tableId, key, size, data, snapshot, (succeeded == nullptr ? false : true), ec);
@@ -124,7 +124,7 @@ void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char
 }
 
 bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.remove(mId, tableId, key, snapshot, ec);
@@ -137,7 +137,7 @@ bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescripto
 }
 
 bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
-    auto& con = mManager.mConnection;
+    auto& con = mProcessor.mConnection;
 
     ++mOutstanding;
     con.revert(mId, tableId, key, snapshot, ec);
@@ -158,12 +158,10 @@ void Transaction::start() {
     } catch (...) {
         LOG_ERROR("Exception triggered in transaction function");
     }
-    mManager.endTransaction(mId);
+    mProcessor.endTransaction(mId);
 }
 
 void Transaction::resume() {
-    tbb::spin_mutex::scoped_lock lock(mContextMutex);
-
 #if BOOST_VERSION >= 105600
     LOG_ASSERT(!mReturnContext, "Resuming an already active context");
     auto res = boost::context::jump_fcontext(&mReturnContext, mContext, reinterpret_cast<intptr_t>(this));
@@ -190,51 +188,88 @@ bool Transaction::setResponse(ServerConnection::Response response) {
     return (--mOutstanding == 0);
 }
 
-TransactionManager::~TransactionManager() {
+TransactionProcessor::~TransactionProcessor() {
     // TODO Abort all transactions
 }
 
-void TransactionManager::init(const ClientConfig& config, std::error_code& ec, std::function<void()> callback) {
-    mCallback = std::move(callback);
-    mConnection.connect(config.server, config.port, ec);
-
-    // TODO Use a context/future to block for connect?
+void TransactionProcessor::init(const ClientConfig& config, std::error_code& ec) {
+    mConnection.connect(config.server, config.port, mProcessorNumber, ec);
 }
 
-void TransactionManager::executeTransaction(std::function<void(Transaction&)> fun) {
+void TransactionProcessor::executeTransaction(std::function<void(Transaction&)> fun) {
+    ++mTransactionCount;
+
     auto id = ++mTransactionId;
 
-    LOG_DEBUG("Starting transaction %1%", id);
+    LOG_DEBUG("Proc %1% TID %2%] Starting transaction", mProcessorNumber, id);
     auto transaction = Transaction::allocate(*this, id, std::move(fun));
 
-    tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
-    auto res = mTransactions.insert(std::make_pair(id, transaction)).second;
-    LOG_ASSERT(res, "Unable to insert context for message ID %1%", id);
-
     std::error_code ec;
-    mConnection.execute([transaction] () {
-        transaction->resume();
+    mConnection.execute([this, transaction] () {
+        auto res = mTransactions.insert(std::make_pair(transaction->id(), transaction)).second;
+        LOG_ASSERT(res, "Unable to insert transaction");
+        if (mConnected) {
+            transaction->resume();
+        }
     }, ec);
-
-    // TODO Error handling
-}
-
-void TransactionManager::onConnected(const std::error_code& ec) {
     if (ec) {
-        LOG_ERROR("Failed to connect to server [error = %1% %2%]", ec, ec.message());
-        return;
+        LOG_ERROR("Proc %1% TID %2%] Failure starting transaction [error = %3% %4%]", mProcessorNumber, id, ec,
+                ec.message());
+        je_free(transaction);
     }
-    LOG_DEBUG("Connected to server");
-    mCallback();
 }
 
-void TransactionManager::handleResponse(uint64_t id, ServerConnection::Response response) {
+void TransactionProcessor::endTransaction(uint64_t id) {
+    LOG_DEBUG("Proc %1% TID %2%] Ending transaction", mProcessorNumber, id);
+
     Transaction* transaction;
     {
-        tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, false);
         auto i = mTransactions.find(id);
         if (i == mTransactions.end()) {
-            LOG_WARN("Transaction for ID %1% not found", id);
+            LOG_DEBUG("Proc %1% ID %2%] Transaction not found", mProcessorNumber, id);
+            return;
+        }
+        transaction = i->second;
+        mTransactions.erase(i);
+    }
+
+    // endTransaction() is called from the transaction context itself, so we can not free the memory associated with the
+    // context here - defer deletion to the event loop
+    std::error_code ec;
+    mConnection.execute([transaction] () {
+        transaction->~Transaction();
+        je_free(transaction);
+    }, ec);
+    if (ec) {
+        LOG_ERROR("Proc %1% TID %2%] Failure releasing transaction [error = %3% %4%]", mProcessorNumber, id, ec,
+                ec.message());
+        return;
+    }
+
+    transaction->wait();
+}
+
+void TransactionProcessor::onConnected(const std::error_code& ec) {
+    if (ec) {
+        LOG_ERROR("Proc %1%] Failed to connect to server [error = %2% %3%]", mProcessorNumber, ec, ec.message());
+        return;
+    }
+    LOG_DEBUG("Proc %1%] Connected to server", mProcessorNumber);
+
+    mConnected = true;
+
+    // Start all transactions that have been waiting for the connect
+    for (auto trans : mTransactions) {
+        trans.second->resume();
+    }
+}
+
+void TransactionProcessor::handleResponse(uint64_t id, ServerConnection::Response response) {
+    Transaction* transaction;
+    {
+        auto i = mTransactions.find(id);
+        if (i == mTransactions.end()) {
+            LOG_DEBUG("Proc %1% ID %2%] Transaction not found", mProcessorNumber, id);
             // TODO Handle this correctly
             return;
         }
@@ -246,30 +281,43 @@ void TransactionManager::handleResponse(uint64_t id, ServerConnection::Response 
     }
 }
 
-void TransactionManager::endTransaction(uint64_t id) {
-    LOG_DEBUG("Ending transaction %1%", id);
+TransactionManager::TransactionManager(crossbow::infinio::InfinibandService& service) {
+    auto numThreads = service.limits().contextThreads;
+    mProcessor.reserve(numThreads);
+    for (auto i = 0; i < numThreads; ++i) {
+        mProcessor.emplace_back(new TransactionProcessor(service, i));
+    }
+}
 
-    Transaction* transaction = nullptr;
-    {
-        tbb::queuing_rw_mutex::scoped_lock lock(mTransactionsMutex, true);
-        auto i = mTransactions.find(id);
-        if (i == mTransactions.end()) {
-            LOG_DEBUG("Transaction with ID %1% not found", id);
+TransactionManager::~TransactionManager() {
+    for (auto proc : mProcessor) {
+        delete proc;
+    }
+}
+
+void TransactionManager::init(const ClientConfig& config, std::error_code& ec) {
+    for (auto proc : mProcessor) {
+        proc->init(config, ec);
+        if (ec) {
             return;
         }
-        transaction = i->second;
-        mTransactions.unsafe_erase(i);
     }
+}
 
-    // endTransaction() is called from the transaction context itself, so we can not free the memory associated with the
-    // context here - defer deletion to the event loop
-    std::error_code ec;
-    mConnection.execute([transaction] () {
-        je_free(transaction);
-    }, ec);
-    // TODO Error handling
+void TransactionManager::executeTransaction(std::function<void(Transaction&)> fun) {
+    TransactionProcessor* processor = nullptr;
+    uint64_t minCount = std::numeric_limits<uint64_t>::max();
+    for (auto proc : mProcessor) {
+        auto count = proc->transactionCount();
+        if (minCount < count) {
+            continue;
+        }
+        processor = proc;
+        minCount = count;
+    }
+    LOG_ASSERT(processor != nullptr, "Found no processor");
 
-    transaction->wait();
+    processor->executeTransaction(std::move(fun));
 }
 
 } // namespace store

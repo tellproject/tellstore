@@ -19,7 +19,7 @@ namespace store {
 
 class Schema;
 class SnapshotDescriptor;
-class TransactionManager;
+class TransactionProcessor;
 
 class BufferReader;
 
@@ -54,9 +54,9 @@ public:
         BufferReader* mMessage;
     };
 
-    ServerConnection(crossbow::infinio::InfinibandService& service, TransactionManager& manager)
-            : mSocket(service.createSocket()),
-              mManager(manager) {
+    ServerConnection(crossbow::infinio::InfinibandSocket socket, TransactionProcessor& processor)
+            : mSocket(std::move(socket)),
+              mProcessor(processor) {
     }
 
     ~ServerConnection();
@@ -65,7 +65,7 @@ public:
         mSocket->execute(std::move(fun), ec);
     }
 
-    void connect(const crossbow::string& host, uint16_t port, std::error_code& ec);
+    void connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec);
 
     void shutdown();
 
@@ -105,7 +105,7 @@ private:
 
     crossbow::infinio::InfinibandSocket mSocket;
 
-    TransactionManager& mManager;
+    TransactionProcessor& mProcessor;
 };
 
 } // namespace store

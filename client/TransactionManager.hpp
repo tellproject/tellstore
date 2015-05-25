@@ -3,22 +3,19 @@
 #include "ServerConnection.hpp"
 
 #include <util/NonCopyable.hpp>
+#include <util/sparsehash/dense_hash_map>
 
 #include <crossbow/string.hpp>
 
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/queuing_rw_mutex.h>
-#include <tbb/spin_mutex.h>
-
 #include <boost/context/fcontext.hpp>
-#include <boost/lockfree/queue.hpp>
 #include <boost/version.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
 #include <system_error>
+#include <vector>
 
 #include <jemalloc/jemalloc.h>
 
@@ -34,9 +31,9 @@ public:
 
     static constexpr size_t STACK_SIZE = 0x800000;
 
-    static Transaction* allocate(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun) {
+    static Transaction* allocate(TransactionProcessor& processor, uint64_t id, std::function<void(Transaction&)> fun) {
         void* data = je_malloc(STACK_SIZE + sizeof(Transaction));
-        return new (data) Transaction(manager, id, std::move(fun));
+        return new (data) Transaction(processor, id, std::move(fun));
     }
 
     static void destroy(Transaction* transaction) {
@@ -44,7 +41,7 @@ public:
         je_free(transaction);
     }
 
-    Transaction(TransactionManager& manager, uint64_t id, std::function<void(Transaction&)> fun);
+    Transaction(TransactionProcessor& processor, uint64_t id, std::function<void(Transaction&)> fun);
 
     uint64_t id() const {
         return mId;
@@ -71,7 +68,7 @@ public:
     bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec);
 
 private:
-    friend class TransactionManager;
+    friend class TransactionProcessor;
 
     static void entry_fun(intptr_t p);
 
@@ -83,15 +80,11 @@ private:
 
     bool setResponse(ServerConnection::Response response);
 
-    TransactionManager& mManager;
+    TransactionProcessor& mProcessor;
 
     uint64_t mId;
 
     std::function<void(Transaction&)> mFun;
-
-    /// We expect transactions to yield immediately after posting the last send so the lock is only for safety reasons
-    /// and will not often be contended.
-    tbb::spin_mutex mContextMutex;
 
 #if BOOST_VERSION >= 105600
     boost::context::fcontext_t mContext;
@@ -101,43 +94,67 @@ private:
 
     boost::context::fcontext_t mReturnContext;
 
-    std::atomic<uint32_t> mOutstanding;
+    uint32_t mOutstanding;
     ServerConnection::Response mResponse;
 };
 
-class TransactionManager {
+class TransactionProcessor {
 public:
-    TransactionManager(crossbow::infinio::InfinibandService& service)
-            : mTransactionId(0x0u),
-              mConnection(service, *this) {
+    TransactionProcessor(crossbow::infinio::InfinibandService& service, uint64_t num)
+            : mProcessorNumber(num),
+              mTransactionCount(0),
+              mTransactionId(0x0u),
+              mConnection(service.createSocket(mProcessorNumber), *this),
+              mConnected(false) {
+        mTransactions.set_empty_key(0x0u);
+        mTransactions.set_deleted_key(std::numeric_limits<uint64_t>::max());
     }
 
-    ~TransactionManager();
+    ~TransactionProcessor();
 
-    void init(const ClientConfig& config, std::error_code& ec, std::function<void()> callback);
+    void init(const ClientConfig& config, std::error_code& ec);
+
+    uint64_t transactionCount() const {
+        return mTransactionCount;
+    }
 
     void executeTransaction(std::function<void(Transaction&)> fun);
 
+    void endTransaction(uint64_t id);
+
 private:
-    friend class Transaction;
     friend class ServerConnection;
+    friend class Transaction;
 
     void onConnected(const std::error_code& ec);
 
     void handleResponse(uint64_t id, ServerConnection::Response response);
 
-    void endTransaction(uint64_t id);
+    uint64_t mProcessorNumber;
+
+    std::atomic<uint64_t> mTransactionCount;
 
     std::atomic<uint64_t> mTransactionId;
 
     ServerConnection mConnection;
 
-    tbb::queuing_rw_mutex mTransactionsMutex;
+    bool mConnected;
 
-    tbb::concurrent_unordered_map<uint64_t, Transaction*> mTransactions;
+    google::dense_hash_map<uint64_t, Transaction*> mTransactions;
+};
 
+class TransactionManager {
+public:
+    TransactionManager(crossbow::infinio::InfinibandService& service);
 
-    std::function<void()> mCallback;
+    ~TransactionManager();
+
+    void init(const ClientConfig& config, std::error_code& ec);
+
+    void executeTransaction(std::function<void(Transaction&)> fun);
+
+private:
+    std::vector<TransactionProcessor*> mProcessor;
 };
 
 } // namespace store

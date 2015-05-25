@@ -39,7 +39,7 @@ ServerConnection::~ServerConnection() {
     }
 }
 
-void ServerConnection::connect(const crossbow::string& host, uint16_t port, std::error_code& ec) {
+void ServerConnection::connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec) {
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
     // Open socket
@@ -51,7 +51,11 @@ void ServerConnection::connect(const crossbow::string& host, uint16_t port, std:
 
     // Connect to remote server
     crossbow::infinio::Endpoint ep(crossbow::infinio::Endpoint::ipv4(), host, port);
-    mSocket->connect(ep, ec);
+
+    crossbow::string data;
+    data.append(reinterpret_cast<char*>(&thread), sizeof(uint64_t));
+
+    mSocket->connect(ep, data, ec);
 }
 
 void ServerConnection::shutdown() {
@@ -221,7 +225,7 @@ void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t
 }
 
 void ServerConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {
-    mManager.onConnected(ec);
+    mProcessor.onConnected(ec);
 }
 
 void ServerConnection::onReceive(const void* buffer, size_t length, const std::error_code& ec) {
@@ -240,7 +244,7 @@ void ServerConnection::onReceive(const void* buffer, size_t length, const std::e
         }
 
         LOG_TRACE("T %1%] Handling response of type %2%", transactionId, responseType);
-        mManager.handleResponse(transactionId, Response(static_cast<ResponseType>(responseType), &responseReader));
+        mProcessor.handleResponse(transactionId, Response(static_cast<ResponseType>(responseType), &responseReader));
 
         responseReader.align(sizeof(uint64_t));
     }
