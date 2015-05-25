@@ -8,7 +8,7 @@ namespace store {
 /**
  * @brief The possible messages types of a request
  */
-enum class RequestType : uint64_t {
+enum class RequestType : uint32_t {
     UNKOWN = 0x0u,
     CREATE_TABLE,
     GET_TABLEID,
@@ -27,7 +27,7 @@ enum class RequestType : uint64_t {
 /**
  * @brief The possible messages types of a response
  */
-enum class ResponseType : uint64_t {
+enum class ResponseType : uint32_t {
     UNKOWN = 0x0u,
     ERROR,
     CREATE_TABLE,

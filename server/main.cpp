@@ -6,7 +6,6 @@
 #include <util/Logging.hpp>
 #include <util/StorageConfig.hpp>
 
-#include <crossbow/infinio/EventDispatcher.hpp>
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
@@ -52,17 +51,13 @@ int main(int argc, const char** argv) {
     tell::store::Storage storage(storageConfig);
 
     // Initialize network server
-    crossbow::infinio::EventDispatcher dispatcher(serverConfig.serverThreads);
-    tell::store::ConnectionManager connectionManager(storage, dispatcher, serverConfig);
+    tell::store::ConnectionManager connectionManager(storage, serverConfig);
     std::error_code ec;
     connectionManager.init(ec);
     if (ec) {
         LOG_FATAL("Failure initializing the connection manager [error = %1% %2%]", ec, ec.message());
         return 1;
     }
-
-    LOG_INFO("Start dispatcher threads");
-    dispatcher.run();
 
     LOG_INFO("Exiting TellStore server");
     return 0;

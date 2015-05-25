@@ -86,22 +86,6 @@ std::atomic<lists*> oldest_list;
 namespace tell {
 namespace store {
 
-void* malloc(std::size_t size) {
-    return allocator::malloc(size);
-}
-
-void* malloc(std::size_t size, std::size_t align) {
-    return allocator::malloc(size, align);
-}
-
-void free(void* ptr) {
-    allocator::free(ptr);
-}
-
-void free_now(void* ptr) {
-    allocator::free_now(ptr);
-}
-
 void init() {
     active_cnt.store(new std::atomic<uint64_t>(1));
     old_cnt.store(new std::atomic<uint64_t>(0));

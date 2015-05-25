@@ -39,6 +39,13 @@ add_library(TellStoreUtil STATIC ${UTIL_SRCS} ${PROJECT_BINARY_DIR}/config.h)
 target_include_directories(TellStoreUtil PUBLIC ${PROJECT_SOURCE_DIR})
 target_include_directories(TellStoreUtil PUBLIC ${PROJECT_BINARY_DIR})
 
+# Workaround for link failure with GCC 5.1 (GCC Bug 65913)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "5.1.0")
+        target_link_libraries(TellStoreUtil PUBLIC atomic)
+    endif()
+endif()
+
 # Link against Boost
 target_include_directories(TellStoreUtil PUBLIC ${Boost_INCLUDE_DIRS})
 

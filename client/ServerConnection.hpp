@@ -1,13 +1,10 @@
 #pragma once
 
+#include <network/MessageSocket.hpp>
 #include <network/MessageTypes.hpp>
 
-#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/string.hpp>
-
-#include <tbb/concurrent_unordered_map.h>
-#include <tbb/queuing_rw_mutex.h>
 
 #include <cstdint>
 #include <memory>
@@ -19,11 +16,9 @@ namespace store {
 
 class Schema;
 class SnapshotDescriptor;
-class TransactionManager;
+class TransactionProcessor;
 
-class BufferReader;
-
-class ServerConnection : private crossbow::infinio::InfinibandSocketHandler {
+class ServerConnection : private MessageSocket<ServerConnection> {
 public:
     class Response {
     public:
@@ -54,14 +49,18 @@ public:
         BufferReader* mMessage;
     };
 
-    ServerConnection(crossbow::infinio::InfinibandService& service, TransactionManager& manager)
-            : mSocket(service),
-              mManager(manager) {
+    ServerConnection(crossbow::infinio::InfinibandSocket socket, TransactionProcessor& processor)
+            : MessageSocket(std::move(socket)),
+              mProcessor(processor) {
     }
 
     ~ServerConnection();
 
-    void connect(const crossbow::string& host, uint16_t port, std::error_code& ec);
+    void execute(std::function<void()> fun, std::error_code& ec) {
+        mSocket->execute(std::move(fun), ec);
+    }
+
+    void connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec);
 
     void shutdown();
 
@@ -87,21 +86,23 @@ public:
             std::error_code& ec);
 
 private:
-    virtual void onConnected(const std::error_code& ec) final override;
+    friend class MessageSocket;
 
-    virtual void onReceive(const void* buffer, size_t length, const std::error_code& ec) final override;
+    virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
-    virtual void onSend(uint32_t userId, const std::error_code& ec) final override;
+    void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
+
+    void onSocketError(const std::error_code& ec);
 
     virtual void onDisconnect() final override;
 
     virtual void onDisconnected() final override;
 
-    void sendRequest(crossbow::infinio::InfinibandBuffer& buffer, std::error_code& ec);
+    BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length, std::error_code& ec) {
+        return writeMessage(transactionId, static_cast<uint32_t>(request), length, ec);
+    }
 
-    crossbow::infinio::InfinibandSocket mSocket;
-
-    TransactionManager& mManager;
+    TransactionProcessor& mProcessor;
 };
 
 } // namespace store
