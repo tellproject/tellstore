@@ -13,11 +13,10 @@ void* const  gDeletedPtr = reinterpret_cast<void*>(0x1u);
 void* const gInvalidPtr = reinterpret_cast<void*>(0x2u);
 
 /**
- * @brief Check the wellformedness of tableId and keyId
+ * @brief Check the wellformedness of tableId and key
  */
-void checkDataKey(uint64_t table, uint64_t key) {
+void checkDataKey(uint64_t table, uint64_t /* key */) {
     LOG_ASSERT(table != 0x0u, "Table ID must not be 0");
-    LOG_ASSERT(key != 0x0u, "Key ID must not be 0");
 }
 
 /**
