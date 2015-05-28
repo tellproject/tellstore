@@ -125,51 +125,44 @@ void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint6
     request.write<uint64_t>(key);
 }
 
+void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record,
+        const GenericTuple& tuple, const SnapshotDescriptor& snapshot, std::error_code& ec) {
+    auto size = record.sizeOfTuple(tuple);
+    doUpdate(transactionId, tableId, key, size, snapshot, [size, &record, &tuple] (BufferWriter& request) {
+        if (!record.create(request.data(), tuple, size)) {
+            return false;
+        }
+        request.advance(size);
+        return true;
+    }, ec);
+}
+
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
-    auto messageSize = 3 * sizeof(uint64_t) + size;
-    messageSize += ((messageSize % sizeof(uint64_t) != 0)
-            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
-            :  0);
-    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
+    doUpdate(transactionId, tableId, key, size, snapshot, [size, data] (BufferWriter& request) {
+        request.write(data, size);
+        return true;
+    }, ec);
+}
 
-    auto request = writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
-    if (ec) {
-        return;
-    }
-    request.write<uint64_t>(tableId);
-    request.write<uint64_t>(key);
-
-    request.align(sizeof(uint32_t));
-    request.write<uint32_t>(size);
-    request.write(data, size);
-
-    request.align(sizeof(uint64_t));
-    writeSnapshot(request, snapshot);
+void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record,
+        const GenericTuple& tuple, const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec) {
+    auto size = record.sizeOfTuple(tuple);
+    doInsert(transactionId, tableId, key, size, snapshot, succeeded, [size, &record, &tuple] (BufferWriter& request) {
+        if (!record.create(request.data(), tuple, size)) {
+            return false;
+        }
+        request.advance(size);
+        return true;
+    }, ec);
 }
 
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec) {
-    auto messageSize = 3 * sizeof(uint64_t) + size;
-    messageSize += ((messageSize % sizeof(uint64_t) != 0)
-            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
-            :  0);
-    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
-
-    auto request = writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
-    if (ec) {
-        return;
-    }
-    request.write<uint64_t>(tableId);
-    request.write<uint64_t>(key);
-    request.write<uint8_t>(succeeded ? 0x1u : 0x0u);
-
-    request.align(sizeof(uint32_t));
-    request.write<uint32_t>(size);
-    request.write(data, size);
-    request.align(sizeof(uint64_t));
-
-    writeSnapshot(request, snapshot);
+    doInsert(transactionId, tableId, key, size, snapshot, succeeded, [size, data] (BufferWriter& request) {
+        request.write(data, size);
+        return true;
+    }, ec);
 }
 
 void ServerConnection::remove(uint64_t transactionId, uint64_t tableId, uint64_t key,
@@ -300,6 +293,63 @@ bool ServerConnection::Response::checkMessage(ResponseType type, std::error_code
     }
 
     return true;
+}
+
+template <typename Fun>
+void ServerConnection::doUpdate(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size,
+        const SnapshotDescriptor& snapshot, Fun f, std::error_code& ec) {
+    auto messageSize = 3 * sizeof(uint64_t) + size;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
+
+    auto request = writeRequest(transactionId, RequestType::UPDATE, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
+
+    request.align(sizeof(uint32_t));
+    request.write<uint32_t>(size);
+    if (!f(request)) {
+        revertMessage();
+        ec = error::invalid_tuple;
+        return;
+    }
+
+    request.align(sizeof(uint64_t));
+    writeSnapshot(request, snapshot);
+}
+
+template <typename Fun>
+void ServerConnection::doInsert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size,
+        const SnapshotDescriptor& snapshot, bool succeeded, Fun f, std::error_code& ec) {
+    auto messageSize = 3 * sizeof(uint64_t) + size;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
+
+    auto request = writeRequest(transactionId, RequestType::INSERT, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    request.write<uint64_t>(tableId);
+    request.write<uint64_t>(key);
+    request.write<uint8_t>(succeeded ? 0x1u : 0x0u);
+
+    request.align(sizeof(uint32_t));
+    request.write<uint32_t>(size);
+    if (!f(request)) {
+        revertMessage();
+        ec = error::invalid_tuple;
+        return;
+    }
+
+    request.align(sizeof(uint64_t));
+    writeSnapshot(request, snapshot);
 }
 
 } // namespace store

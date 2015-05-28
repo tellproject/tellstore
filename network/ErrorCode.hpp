@@ -17,6 +17,9 @@ enum network_errors {
 
     /// Received message was invalid.
     invalid_message = 2,
+
+    /// The tuple was invalid.
+    invalid_tuple = 3,
 };
 
 /**
@@ -35,6 +38,9 @@ public:
 
         case error::invalid_message:
             return "Received message was invalid";
+
+        case error::invalid_tuple:
+            return "The tuple was invalid";
 
         default:
             return "tell.store.network error";

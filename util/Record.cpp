@@ -239,13 +239,21 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
     return result;
 }
 
-char* Record::create(const GenericTuple& tuple, size_t& size) const
-{
-    using uchar = unsigned char;
+
+char* Record::create(const GenericTuple& tuple, size_t& size) const {
     uint32_t recSize = uint32_t(sizeOfTuple(tuple));
     size = size_t(recSize);
     std::unique_ptr<char[]> result(new char[recSize]);
-    char* res = result.get();
+    if (!create(result.get(), tuple, recSize)) {
+        return nullptr;
+    }
+    return result.release();
+}
+
+char* Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) const {
+    LOG_ASSERT(recSize == sizeOfTuple(tuple), "Size has to be the actual tuple size");
+    using uchar = unsigned char;
+    char* res = result;
     auto headerSize = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
     headerSize += (headerSize % 8) ? (8 - (headerSize % 8)) : 0;
     char* current = res + headerSize;
@@ -381,7 +389,7 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const
             }
         }
     }
-    return result.release();
+    return result;
 }
 
 const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {

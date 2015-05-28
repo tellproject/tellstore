@@ -2,6 +2,7 @@
 
 #include <network/MessageSocket.hpp>
 #include <network/MessageTypes.hpp>
+#include <util/GenericTuple.hpp>
 
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/string.hpp>
@@ -14,6 +15,7 @@
 namespace tell {
 namespace store {
 
+class Record;
 class Schema;
 class SnapshotDescriptor;
 class TransactionProcessor;
@@ -73,8 +75,14 @@ public:
 
     void getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec);
 
+    void update(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+            const SnapshotDescriptor& snapshot, std::error_code& ec);
+
     void update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
             const SnapshotDescriptor& snapshot, std::error_code& ec);
+
+    void insert(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+            const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec);
 
     void insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
             const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec);
@@ -87,6 +95,14 @@ public:
 
 private:
     friend class MessageSocket;
+
+    template <typename Fun>
+    void doUpdate(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size,
+            const SnapshotDescriptor& snapshot, Fun f, std::error_code& ec);
+
+    template <typename Fun>
+    void doInsert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size,
+            const SnapshotDescriptor& snapshot, bool succeeded, Fun f, std::error_code& ec);
 
     virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 

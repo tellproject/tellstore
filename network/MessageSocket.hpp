@@ -2,6 +2,7 @@
 
 #include <network/ErrorCode.hpp>
 #include <network/MessageTypes.hpp>
+#include <util/Logging.hpp>
 
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
@@ -130,6 +131,7 @@ protected:
             : mSocket(std::move(socket)),
               mBuffer(crossbow::infinio::InfinibandBuffer::INVALID_ID),
               mSendBuffer(static_cast<char*>(nullptr), 0),
+              mOldOffset(std::numeric_limits<uint32_t>::max()),
               mFlush(false) {
     }
 
@@ -152,6 +154,12 @@ protected:
     BufferWriter writeMessage(uint64_t transactionId, uint32_t messageType, uint32_t messageLength,
             std::error_code& ec);
 
+    /**
+     * @brief Deallocates the buffer space for the last allocated message
+     *
+     * This can only be called once and only after writeMessage has been called.
+     */
+    void revertMessage();
 
     crossbow::infinio::InfinibandSocket mSocket;
 
@@ -196,6 +204,8 @@ private:
     /// A buffer writer to write data to the current Infiniband buffer
     BufferWriter mSendBuffer;
 
+    uint32_t mOldOffset;
+
     /// Whether a flush task is pending
     bool mFlush;
 };
@@ -223,6 +233,8 @@ BufferWriter MessageSocket<Handler>::writeMessage(uint64_t transactionId, uint32
         }
     }
 
+    mOldOffset = static_cast<uint32_t>(mSendBuffer.data() - reinterpret_cast<char*>(mBuffer.data()));
+
     mSendBuffer.write<uint64_t>(transactionId);
     mSendBuffer.write<uint32_t>(messageType);
     mSendBuffer.write<uint32_t>(messageLength);
@@ -232,6 +244,15 @@ BufferWriter MessageSocket<Handler>::writeMessage(uint64_t transactionId, uint32
     mSendBuffer.align(sizeof(uint64_t));
 
     return message;
+}
+
+template <typename Handler>
+void MessageSocket<Handler>::revertMessage() {
+    LOG_ASSERT(mOldOffset != std::numeric_limits<uint32_t>::max(), "Invalid offset");
+    LOG_ASSERT(mBuffer.length() < mOldOffset, "Offset larger than buffer length");
+
+    mSendBuffer = BufferWriter(reinterpret_cast<char*>(mBuffer.data()) + mOldOffset, mBuffer.length() - mOldOffset);
+    mOldOffset = std::numeric_limits<uint32_t>::max();
 }
 
 template <typename Handler>

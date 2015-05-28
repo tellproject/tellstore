@@ -72,10 +72,8 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
                 std::make_pair<crossbow::string, boost::any>("text1", crossbow::string("This is a sample text")),
                 std::make_pair<crossbow::string, boost::any>("largenumber", 0x7FFFFFFF00000001),
                 std::make_pair<crossbow::string, boost::any>("text2", crossbow::string("This is a second sample text"))});
-        size_t insertSize;
-        std::unique_ptr<char[]> insertData(record.create(insertTuple, insertSize));
         auto insertStartTime = std::chrono::steady_clock::now();
-        transaction.insert(mTableId, key, insertSize, insertData.get(), snapshot, ec, &succeeded);
+        transaction.insert(mTableId, key, record, insertTuple, snapshot, ec, &succeeded);
         auto insertEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());

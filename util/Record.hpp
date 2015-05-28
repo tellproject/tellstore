@@ -348,13 +348,16 @@ private:
     const Schema& mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, int32_t>> mFieldMetaData;
-    size_t sizeOfTuple(const GenericTuple& tuple) const;
 public:
     Record(const Schema& schema);
+
+    size_t sizeOfTuple(const GenericTuple& tuple) const;
 
     bool idOf(const crossbow::string& name, id_t& result) const;
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
+
+    char* create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
     char* create(const GenericTuple& tuple, size_t& size) const;
 
     /**

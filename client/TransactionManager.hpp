@@ -3,6 +3,7 @@
 #include "ServerConnection.hpp"
 
 #include <util/NonCopyable.hpp>
+#include <util/GenericTuple.hpp>
 #include <util/sparsehash/dense_hash_map>
 
 #include <crossbow/infinio/InfinibandService.hpp>
@@ -24,6 +25,7 @@ namespace tell {
 namespace store {
 
 class ClientConfig;
+class Record;
 class TransactionManager;
 
 class Transaction : NonCopyable, NonMovable {
@@ -58,8 +60,14 @@ public:
     bool getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
             std::error_code& ec);
 
+    bool update(uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+            const SnapshotDescriptor& snapshot, std::error_code& ec);
+
     bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
             std::error_code& ec);
+
+    void insert(uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+            const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded = nullptr);
 
     void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
             std::error_code& ec, bool* succeeded = nullptr);

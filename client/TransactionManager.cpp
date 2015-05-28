@@ -89,6 +89,20 @@ bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const 
     return mResponse.get(size, data, version, isNewest, ec);
 }
 
+bool Transaction::update(uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
+    auto& con = mProcessor.mConnection;
+
+    ++mOutstanding;
+    con.update(mId, tableId, key, record, tuple, snapshot, ec);
+    if (ec) {
+        return false;
+    }
+    wait();
+
+    return mResponse.modification(ec);
+}
+
 bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
@@ -101,6 +115,26 @@ bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char
     wait();
 
     return mResponse.modification(ec);
+}
+
+void Transaction::insert(uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
+        const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded) {
+    auto& con = mProcessor.mConnection;
+
+    ++mOutstanding;
+    con.insert(mId, tableId, key, record, tuple, snapshot, (succeeded == nullptr ? false : true), ec);
+    if (ec) {
+        if (succeeded) {
+            *succeeded = false;
+        }
+        return;
+    }
+    wait();
+
+    auto s = mResponse.modification(ec);
+    if (succeeded) {
+        *succeeded = s;
+    }
 }
 
 void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
