@@ -116,7 +116,8 @@ private:
         std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<std::pair<char*, size_t>>>> queryMap;
         auto numQueries = queryQueue.readMultiple(mEnqueuedQueries.begin(), mEnqueuedQueries.end());
         if (numQueries == 0) return false;
-        for (auto q : mEnqueuedQueries) {
+        for (size_t i = 0; i < numQueries; ++i) {
+            auto& q = mEnqueuedQueries.at(i);
             auto iter = queryMap.find(q.tableId);
             if (iter == queryMap.end()) {
                 auto res = queryMap.emplace(q.tableId, std::make_tuple(q.table, 0, std::vector<std::pair<char*, size_t>>()));
