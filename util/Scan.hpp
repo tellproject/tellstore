@@ -54,10 +54,11 @@ struct ScanThread {
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
         qbuffer += 8;
         for (; iter != end; ++iter) {
+            auto qdata = qbuffer;
             const auto& entry = *iter;
             for (uint64_t i = 0; i < numQueries; ++i) {
-                query.query = qbuffer;
-                qbuffer = query.check(entry.data(), queryBitMap, record);
+                query.query = qdata;
+                qdata = query.check(entry.data(), queryBitMap, record);
                 queryBitMap.clear();
             }
         }
