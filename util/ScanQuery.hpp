@@ -64,7 +64,7 @@ struct ScanQuery {
         return *reinterpret_cast<const uint8_t*>(query + offset + 1);
     }
 
-    char* check(const char* data, std::vector<bool> bitmap, const Record& record) const 
+    char* check(const char* data, std::vector<bool>& bitmap, const Record& record) const
     {
         auto numberOfCols = numberOfColumns();
         auto offset = offsetToFirstColumn();
