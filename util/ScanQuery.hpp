@@ -15,7 +15,6 @@ class ScanQueryImpl {
 /**
  * A query has the following form
  * - 8 bytes for the number of columns it has to check
- * - 8 bytes: A pointer to the query implementation
  * - For each column:
  *   - 2 bytes: The column id (called field id in the Record class)
  *   - 2 bytes: The number of predicates it has on the coulmn
@@ -37,15 +36,11 @@ class ScanQueryImpl {
 struct ScanQuery {
     char* query = nullptr;
 
-    constexpr static off_t offsetToFirstColumn() { return 16; }
+    constexpr static off_t offsetToFirstColumn() { return 8; }
     constexpr static off_t offsetToFirstPredicate() { return 8; }
 
     uint64_t numberOfColumns() const {
         return *reinterpret_cast<const uint64_t*>(query);
-    }
-
-    ScanQueryImpl& implementation() {
-        return *reinterpret_cast<ScanQueryImpl*>(query + 8);
     }
 
     uint16_t columnId(off_t offset) const {

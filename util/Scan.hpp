@@ -22,11 +22,13 @@ struct ScanRequest {
     Table* table;
     char* query;
     size_t querySize;
+    std::vector<ScanQueryImpl*> impls;
 };
 
 template<class Iterator>
 struct ScanThread {
     std::atomic<char*> queries;
+    std::vector<ScanQueryImpl*> impls;
     std::atomic<bool>& stopScans;
     std::atomic<Iterator*> beginIter;
     std::atomic<Iterator*> endIter;
@@ -62,6 +64,7 @@ struct ScanThread {
                 queryBitMap.clear();
             }
         }
+        impls.clear();
         beginIter.store(nullptr);
         endIter.store(nullptr);
         queries.store(nullptr);
@@ -81,8 +84,7 @@ class ScanThreads {
 public:
     ScanThreads(int numThreads)
         : numThreads(numThreads)
-        , mEnqueuedQueries(MAX_QUERY_SHARING
-        , ScanRequest<Table>{0, nullptr, nullptr})
+        , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest<Table>{0, nullptr, nullptr, 0})
         , threadObjs(numThreads, ScanThread<typename Table::Iterator>(stopSlaves))
         , stopScans(false)
         , stopSlaves(false)
@@ -113,18 +115,18 @@ private:
         //  - the Table object
         //  - the total size
         //  - a vector of queries - that means the query object and the size of the query
-        std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<std::pair<char*, size_t>>>> queryMap;
+        std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<size_t>>> queryMap;
         auto numQueries = queryQueue.readMultiple(mEnqueuedQueries.begin(), mEnqueuedQueries.end());
         if (numQueries == 0) return false;
         for (size_t i = 0; i < numQueries; ++i) {
             auto& q = mEnqueuedQueries.at(i);
             auto iter = queryMap.find(q.tableId);
             if (iter == queryMap.end()) {
-                auto res = queryMap.emplace(q.tableId, std::make_tuple(q.table, 0, std::vector<std::pair<char*, size_t>>()));
+                auto res = queryMap.emplace(q.tableId, std::make_tuple(q.table, 0, std::vector<size_t>()));
                 iter = res.first;
             }
             std::get<1>(iter->second) += q.querySize;
-            std::get<2>(iter->second).emplace_back(q.query, q.querySize);
+            std::get<2>(iter->second).emplace_back(i);
         }
         // now we have all queries in a map, so we can start the scans
         for (auto& q : queryMap) {
@@ -135,9 +137,17 @@ private:
             std::unique_ptr<char[]> queries(new char[std::get<1>(q.second) + 8]);
             *reinterpret_cast<uint64_t*>(queries.get()) = std::get<2>(q.second).size();
             size_t offset = 8;
-            for (auto& p : std::get<2>(q.second)) {
-                memcpy(queries.get() + offset, p.first, p.second);
-                offset += p.second;
+            for (auto p : std::get<2>(q.second)) {
+                auto& request = mEnqueuedQueries.at(p);
+                // Copy the scan request query into the qbuffer
+                memcpy(queries.get() + offset, request.query, request.querySize);
+                offset += request.querySize;
+
+                // Add the scan query implementations to their scan objects
+                assert(threadObjs.size() == request.impls.size());
+                for (size_t i = 0; i < threadObjs.size(); ++i) {
+                    threadObjs[i].impls.push_back(request.impls.at(i));
+                }
             }
             // now we generated the QBuffer - we now give it to all the scan threads
             auto iterators = std::get<0>(q.second)->startScan(numThreads);
