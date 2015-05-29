@@ -12,6 +12,7 @@ public:
     uint64_t mValidFrom = 0;
     uint64_t mValidTo = 0;
     const char* mData = nullptr;
+    uint64_t mSize = 0;
     const Record* mRecord = nullptr;
 
     uint64_t validFrom() const {
@@ -24,6 +25,10 @@ public:
 
     const char* data() const {
         return mData;
+    }
+
+    uint64_t size() const {
+        return mSize;
     }
 
     const Record* record() const {
