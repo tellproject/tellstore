@@ -16,11 +16,6 @@ namespace {
  */
 constexpr size_t gRecordHeaderSize = sizeof(LSMRecord) + sizeof(ChainedVersionRecord);
 
-#define checkKey(_key) if (_key == 0) {\
-    LOG_ASSERT(_key == 0, "Key should never be 0");\
-        return false;\
-    }
-
 /**
  * @brief Returns the record size contained in the LSM Record
  */
@@ -53,8 +48,6 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, H
 
 bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest)
         const {
-    checkKey(key);
-
     auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!versionRecord) {
         isNewest = true;
@@ -114,8 +107,6 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
 }
 
 bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) const {
-    checkKey(key);
-
     auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!versionRecord) {
         version = 0x0u;
@@ -161,12 +152,6 @@ void Table::insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescri
 
 void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
-    if (key == 0) {
-        LOG_ASSERT(key == 0, "Key should never be 0");
-        if (succeeded) *succeeded = false;
-        return;
-    }
-
     auto prev = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (prev) {
         // Entry already exists - Cancel if it is not in the read set or was not a delete
@@ -182,8 +167,6 @@ void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDe
 }
 
 bool Table::update(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot) {
-    checkKey(key);
-
     auto prev = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!prev) {
         return false;
@@ -199,8 +182,6 @@ bool Table::update(uint64_t key, size_t size, const char* data, const SnapshotDe
 }
 
 bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
-    checkKey(key);
-
     auto prev = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!prev) {
         return false;
@@ -216,8 +197,6 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
 }
 
 bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
-    checkKey(key);
-
     auto versionRecord = reinterpret_cast<ChainedVersionRecord*>(mHashMap.get(mTableId, key));
     if (!versionRecord) {
         return true;
