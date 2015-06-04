@@ -142,6 +142,7 @@ private:
                 // Copy the scan request query into the qbuffer
                 memcpy(queries.get() + offset, request.query, request.querySize);
                 offset += request.querySize;
+                delete[] request.query;
 
                 // Add the scan query implementations to their scan objects
                 assert(threadObjs.size() == request.impls.size());
