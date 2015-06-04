@@ -3,6 +3,7 @@
 #include "ScanQuery.hpp"
 #include "Record.hpp"
 #include <config.h>
+#include <util/Epoch.hpp>
 
 #include <crossbow/singleconsumerqueue.hpp>
 #include <vector>
@@ -150,6 +151,9 @@ private:
                     threadObjs[i].impls.push_back(request.impls.at(i));
                 }
             }
+
+            allocator _;
+
             // now we generated the QBuffer - we now give it to all the scan threads
             auto iterators = std::get<0>(q.second)->startScan(numThreads);
             for (size_t i = 0; i < threadObjs.size(); ++i) {
