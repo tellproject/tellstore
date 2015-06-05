@@ -7,6 +7,8 @@
 #include <util/helper.hpp>
 #include <util/Logging.hpp>
 
+#include <crossbow/infinio/InfinibandBuffer.hpp>
+
 namespace tell {
 namespace store {
 
@@ -348,6 +350,69 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType, B
         });
     } break;
 
+    /**
+     * The scan request has the following format:
+     * - 8 bytes: The table ID of the requested tuple
+     * - 2 bytes: The ID associated with this scan
+     * - 6 bytes: Padding
+     * - 8 bytes: The address of the remote memory region
+     * - 8 bytes: Length of the remote memory region
+     * - 4 bytes: The access key of the remote memory region
+     * - 4 bytes: Length of the query buffer's data field
+     * - x bytes: The query buffer's data
+     * - y bytes: Variable padding to make message 8 byte aligned
+     * - x bytes: Snapshot descriptor
+     */
+    case RequestType::SCAN: {
+        auto tableId = request.read<uint64_t>();
+        auto scanId = request.read<uint16_t>();
+
+        request.align(sizeof(uint64_t));
+        auto remoteAddress = request.read<uint64_t>();
+        auto remoteLength = request.read<uint64_t>();
+        auto remoteKey = request.read<uint32_t>();
+        crossbow::infinio::RemoteMemoryRegion remoteRegion(remoteAddress, remoteLength, remoteKey);
+
+        auto queryLength = request.read<uint32_t>();
+        auto queryData = request.read(queryLength);
+        std::unique_ptr<char[]> query(new char[queryLength]);
+        memcpy(query.get(), queryData, queryLength);
+
+        request.align(sizeof(uint64_t));
+        handleSnapshot(transactionId, request,
+                [this, &transactionId, &tableId, &scanId, &remoteRegion, &queryLength, &query]
+                (const SnapshotDescriptor& snapshot) {
+            auto descriptorLength = snapshot.length();
+            std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[descriptorLength]);
+            memcpy(dataBuffer.get(), snapshot.descriptor(), descriptorLength);
+            SnapshotDescriptor scanSnapshot(dataBuffer.release(), descriptorLength, snapshot.version());
+
+            std::unique_ptr<ClientScanQueryData> scanData(new ClientScanQueryData(transactionId,
+                    std::move(scanSnapshot), mManager.pageRegion(), remoteRegion, mSocket));
+            auto scanDataPtr = scanData.get();
+            auto res = mScans.emplace(scanId, std::move(scanData));
+            if (!res.second) {
+                writeErrorResponse(transactionId, error::invalid_id);
+                return;
+            }
+
+            std::vector<ScanQueryImpl*> impls;
+            auto numScans = mStorage.numScanThreads();
+            for (int i = 0; i < numScans; ++i) {
+                impls.push_back(new ClientScanQuery(scanId, scanDataPtr));
+            }
+
+            auto succeeded = mStorage.scan(tableId, query.release(), queryLength, impls);
+            if (!succeeded) {
+                writeErrorResponse(transactionId, error::server_overlad);
+                for (auto impl: impls) {
+                    delete impl;
+                }
+                mScans.erase(res.first);
+            }
+        });
+    } break;
+
     case RequestType::COMMIT: {
         // TODO Implement commit logic
     } break;
@@ -365,6 +430,50 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType, B
 void ClientConnection::onSocketError(const std::error_code& ec) {
     LOG_ERROR("Error during socket operation [error = %1% %2%]", ec, ec.message());
     shutdown();
+}
+
+void ClientConnection::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
+    // TODO We have to propagate the error to the ClientScanQuery so we can detach the scan
+    if (ec) {
+        onSocketError(ec);
+        return;
+    }
+
+    if (userId == 0x0u || userId > to_underlying(ClientScanQueryData::ScanStatus::LAST)) {
+        LOG_ERROR("Scan progress with invalid userid");
+        return;
+    }
+
+    switch (from_underlying<ClientScanQueryData::ScanStatus>(userId)) {
+
+    case ClientScanQueryData::ScanStatus::ONGOING: {
+        // Nothing to do
+    } break;
+
+    case ClientScanQueryData::ScanStatus::DONE: {
+        auto i = mScans.find(bufferId);
+        if (i == mScans.end()) {
+            return;
+        }
+        if (!i->second->decreaseActive()) {
+            return;
+        }
+
+        LOG_DEBUG("Scan with ID %1% finished", bufferId);
+        size_t messageSize = sizeof(uint16_t);
+        std::error_code ec2;
+        auto response = writeResponse(i->second->transactionId(), ResponseType::SCAN, messageSize, ec2);
+        if (ec2) {
+            LOG_ERROR("Error while writing scan response [error = %1% %2%]", ec2, ec2.message());
+            return;
+        }
+        response.write<uint16_t>(bufferId);
+        mScans.erase(i);
+    } break;
+
+    default:
+        break;
+    }
 }
 
 void ClientConnection::onDisconnect() {

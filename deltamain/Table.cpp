@@ -435,14 +435,14 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
-    , tableManager(*pageManager, config, gc, commitManager)
+    : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    , tableManager(*mPageManager, config, gc, commitManager)
 {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : pageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
-    , tableManager(*pageManager, config, gc, commitManager)
+    : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    , tableManager(*mPageManager, config, gc, commitManager)
 {
 }
 

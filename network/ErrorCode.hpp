@@ -70,6 +70,12 @@ enum server_errors {
 
     /// Snapshot sent to the server was invalid.
     invalid_snapshot = 3,
+
+    /// ID sent to the server was invalid.
+    invalid_id = 4,
+
+    /// Operation failed due to server overload.
+    server_overlad = 5,
 };
 
 /**
@@ -91,6 +97,12 @@ public:
 
         case error::invalid_snapshot:
             return "Snapshot sent to the server was invalid";
+
+        case error::invalid_id:
+            return "ID sent to the server was invalid";
+
+        case error::server_overlad:
+            return "Operation failed due to server overload";
 
         default:
             return "tell.store.server error";

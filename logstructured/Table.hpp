@@ -205,6 +205,10 @@ public:
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
 
+    PageManager& pageManager() {
+        return *(mPageManager.get());
+    }
+
     Transaction startTx() {
         return Transaction(*this, mCommitManager.startTx());
     }
@@ -246,6 +250,14 @@ public:
 
     bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {
         return mTableManager.revert(tableId, key, snapshot);
+    }
+
+    int numScanThreads() const {
+        return mTableManager.numScanThreads();
+    }
+
+    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
+        return mTableManager.scan(tableId, query, querySize, impls);
     }
 
     /**

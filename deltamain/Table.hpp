@@ -129,7 +129,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using GC = deltamain::GarbageCollector;
     using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
     using Transaction = TransactionImpl<StorageType>;
-    std::unique_ptr<PageManager, std::function<void(PageManager*)>> pageManager;
+    std::unique_ptr<PageManager, std::function<void(PageManager*)>> mPageManager;
     GC gc;
     CommitManager commitManager;
     TableManager<Table, GC> tableManager;
@@ -137,6 +137,10 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     StoreImpl(const StorageConfig& config);
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
+
+    PageManager& pageManager() {
+        return *(mPageManager.get());
+    }
 
     Transaction startTx()
     {
@@ -213,6 +217,14 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 const SnapshotDescriptor& snapshot)
     {
         return tableManager.revert(tableId, key, snapshot);
+    }
+
+    int numScanThreads() const {
+        return tableManager.numScanThreads();
+    }
+
+    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
+        return tableManager.scan(tableId, query, querySize, impls);
     }
 
     /**

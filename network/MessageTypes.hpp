@@ -18,6 +18,7 @@ enum class RequestType : uint32_t {
     INSERT,
     REMOVE,
     REVERT,
+    SCAN,
     COMMIT,
 
 
@@ -34,6 +35,7 @@ enum class ResponseType : uint32_t {
     GET_TABLEID,
     GET,
     MODIFICATION,
+    SCAN,
     COMMIT,
 
 

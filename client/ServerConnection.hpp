@@ -25,7 +25,7 @@ public:
     class Response {
     public:
         Response()
-                : mType(ResponseType::ERROR),
+                : mType(ResponseType::UNKOWN),
                   mMessage(nullptr) {
         }
 
@@ -36,6 +36,10 @@ public:
 
         void reset();
 
+        bool isSet() {
+            return (mMessage != nullptr);
+        }
+
         bool createTable(uint64_t& tableId, std::error_code& ec);
 
         bool getTableId(uint64_t& tableId, std::error_code& ec);
@@ -43,6 +47,8 @@ public:
         bool get(size_t& size, const char*& data, uint64_t& version, bool& isNewest, std::error_code& ec);
 
         bool modification(std::error_code& ec);
+
+        void scan(uint16_t& scanId, std::error_code& ec);
 
     private:
         bool checkMessage(ResponseType type, std::error_code& ec);
@@ -93,6 +99,10 @@ public:
     void revert(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
             std::error_code& ec);
 
+    void scan(uint64_t transactionId, uint64_t tableId, uint16_t id,
+            const crossbow::infinio::LocalMemoryRegion& destRegion, uint32_t querySize, const char* query,
+            const SnapshotDescriptor& snapshot, std::error_code& ec);
+
 private:
     friend class MessageSocket;
 
@@ -109,6 +119,8 @@ private:
     void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
 
     void onSocketError(const std::error_code& ec);
+
+    void onImmediate(uint32_t data) final override;
 
     virtual void onDisconnect() final override;
 

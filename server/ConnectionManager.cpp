@@ -6,12 +6,20 @@
 
 #include <util/Epoch.hpp>
 #include <util/Logging.hpp>
+#include <util/PageManager.hpp>
 
 namespace tell {
 namespace store {
 
 void ConnectionManager::init(std::error_code& ec) {
     LOG_INFO("Initializing the connection manager");
+
+    // Allocate RDMA memory region for the whole page manager
+    auto& pageManager = mStorage.pageManager();
+    mPageRegion = mService.registerMemoryRegion(pageManager.data(), pageManager.size(), 0, ec);
+    if (ec) {
+        return;
+    }
 
     // Open socket
     mAcceptor->open(ec);
@@ -48,6 +56,11 @@ void ConnectionManager::shutdown() {
 
     for (auto& con : mConnections) {
         con->shutdown();
+    }
+
+    mPageRegion.releaseMemoryRegion(ec);
+    if (ec) {
+        // TODO Handle this situation somehow
     }
 }
 

@@ -193,6 +193,34 @@ void ServerConnection::revert(uint64_t transactionId, uint64_t tableId, uint64_t
     writeSnapshot(request, snapshot);
 }
 
+void ServerConnection::scan(uint64_t transactionId, uint64_t tableId, uint16_t id,
+        const crossbow::infinio::LocalMemoryRegion& destRegion, uint32_t querySize, const char* query,
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
+    auto messageSize = 5 * sizeof(uint64_t) + querySize;
+    messageSize += ((messageSize % sizeof(uint64_t) != 0)
+            ? (sizeof(uint64_t) - (messageSize % sizeof(uint64_t)))
+            :  0);
+    messageSize += 2 * sizeof(uint64_t) + snapshot.length();
+
+    auto request = writeRequest(transactionId, RequestType::SCAN, messageSize, ec);
+    if (ec) {
+        return;
+    }
+    request.write<uint64_t>(tableId);
+    request.write<uint16_t>(id);
+
+    request.align(sizeof(uint64_t));
+    request.write<uint64_t>(destRegion.address());
+    request.write<uint64_t>(destRegion.length());
+    request.write<uint32_t>(destRegion.rkey());
+
+    request.write<uint32_t>(querySize);
+    request.write(query, querySize);
+
+    request.align(sizeof(uint64_t));
+    writeSnapshot(request, snapshot);
+}
+
 void ServerConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {
     mProcessor.onConnected(ec);
 }
@@ -211,6 +239,10 @@ void ServerConnection::onSocketError(const std::error_code& ec) {
     shutdown();
 }
 
+void ServerConnection::onImmediate(uint32_t data) {
+    mProcessor.handleScanProgress(static_cast<uint16_t>(data >> 16), static_cast<uint16_t>(data & 0xFFFFu));
+}
+
 void ServerConnection::onDisconnect() {
     shutdown();
 }
@@ -224,7 +256,7 @@ void ServerConnection::onDisconnected() {
 
 void ServerConnection::Response::reset() {
     mMessage = nullptr;
-    mType = ResponseType::ERROR;
+    mType = ResponseType::UNKOWN;
 }
 
 bool ServerConnection::Response::createTable(uint64_t& tableId, std::error_code& ec) {
@@ -278,6 +310,15 @@ bool ServerConnection::Response::modification(std::error_code& ec) {
 
     bool succeeded = mMessage->read<uint8_t>();
     return succeeded;
+}
+
+void ServerConnection::Response::scan(uint16_t& scanId, std::error_code& ec) {
+    if (!checkMessage(ResponseType::SCAN, ec)) {
+        return;
+    }
+
+    scanId = mMessage->read<uint16_t>();
+    return;
 }
 
 bool ServerConnection::Response::checkMessage(ResponseType type, std::error_code& ec) {

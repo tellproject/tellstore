@@ -33,6 +33,14 @@ public:
 
     ~PageManager();
 
+    void* data() {
+        return mData;
+    }
+
+    size_t size() const {
+        return mSize;
+    }
+
     /**
     * Allocates a new page. It is safe to call this method
     * concurrently. It will return nullptr, if there is no

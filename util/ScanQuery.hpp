@@ -10,6 +10,10 @@ namespace tell {
 namespace store {
 
 class ScanQueryImpl {
+public:
+    virtual ~ScanQueryImpl() = default;
+
+    virtual void process(uint64_t validFrom, uint64_t validTo, const char* data, size_t size, const Record& record) = 0;
 };
 
 /**

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ServerConfig.hpp"
+#include "ClientScanQuery.hpp"
 
 #include <tellstore.hpp>
 #include <network/MessageSocket.hpp>
@@ -10,6 +11,7 @@
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <string>
 #include <system_error>
@@ -48,6 +50,8 @@ private:
     void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
 
     void onSocketError(const std::error_code& ec);
+
+    virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
     virtual void onDisconnect() final override;
 
@@ -98,6 +102,10 @@ private:
     // TODO Replace with google dense map (SnapshotDescriptor has no copy / default constructor)
     /// Snapshot cache mapping the version number to the snapshot descriptor
     std::unordered_map<uint64_t, SnapshotDescriptor> mSnapshots;
+
+    /// Map from Scan ID to the shared data class associated with the scan
+    /// The Connection has the ownership because we can only free this after all RDMA writes have been processed
+    std::unordered_map<uint16_t, std::unique_ptr<ClientScanQueryData>> mScans;
 };
 
 } // namespace store

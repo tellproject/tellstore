@@ -208,6 +208,23 @@ public:
         return mTables[tableId]->revert(key, snapshot);
     }
 
+    int numScanThreads() const {
+        return mScanThreads.numThreads();
+    }
+
+    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
+        ScanRequest<Table> request;
+        request.tableId = tableId;
+        {
+            tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+            request.table = mTables[tableId];
+        }
+        request.query = query;
+        request.querySize = querySize;
+        request.impls = impls;
+        return mScanThreads.scan(std::move(request));
+    }
+
     void forceGC() {
         // Notifies the GC
         mStopCondition.notify_all();

@@ -34,7 +34,7 @@ int main(int argc, const char** argv) {
 
     clientConfig.infinibandLimits.receiveBufferCount = 128;
     clientConfig.infinibandLimits.sendBufferCount = 128;
-    clientConfig.infinibandLimits.bufferLength = 1024;
+    clientConfig.infinibandLimits.bufferLength = 32 * 1024;
     clientConfig.infinibandLimits.sendQueueLength = 128;
 
     tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);

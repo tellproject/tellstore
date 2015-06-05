@@ -76,6 +76,8 @@ public:
 
     bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec);
 
+    size_t scan(uint64_t tableId, size_t size, const char* query, const SnapshotDescriptor& snapshot, std::error_code& ec);
+
 private:
     friend class TransactionProcessor;
 
@@ -88,6 +90,8 @@ private:
     void wait();
 
     bool setResponse(ServerConnection::Response response);
+
+    void addScanTuple(uint16_t count);
 
     TransactionProcessor& mProcessor;
 
@@ -105,18 +109,24 @@ private:
 
     uint32_t mOutstanding;
     ServerConnection::Response mResponse;
+    uint64_t mTuplePending;
 };
 
 class TransactionProcessor {
 public:
-    TransactionProcessor(crossbow::infinio::InfinibandService& service, uint64_t num)
-            : mProcessorNumber(num),
+    TransactionProcessor(TransactionManager& manager, crossbow::infinio::InfinibandService& service, uint64_t num)
+            : mManager(manager),
+              mProcessorNumber(num),
+              mConnection(service.createSocket(mProcessorNumber), *this),
+              mConnected(false),
               mTransactionCount(0),
               mTransactionId(0x0u),
-              mConnection(service.createSocket(mProcessorNumber), *this),
-              mConnected(false) {
+              mScanId(0x0u) {
         mTransactions.set_empty_key(0x0u);
         mTransactions.set_deleted_key(std::numeric_limits<uint64_t>::max());
+
+        mScans.set_empty_key(0x0u);
+        mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
     }
 
     ~TransactionProcessor();
@@ -131,6 +141,11 @@ public:
 
     void endTransaction(uint64_t id);
 
+    uint16_t startScan(Transaction* transaction, uint64_t tableId, size_t size, const char* query,
+            const SnapshotDescriptor& snapshot, std::error_code& ec);
+
+    void endScan(uint16_t id);
+
 private:
     friend class ServerConnection;
     friend class Transaction;
@@ -139,17 +154,22 @@ private:
 
     void handleResponse(uint64_t id, ServerConnection::Response response);
 
+    void handleScanProgress(uint16_t id, uint16_t tupleCount);
+
+    TransactionManager& mManager;
+
     uint64_t mProcessorNumber;
-
-    std::atomic<uint64_t> mTransactionCount;
-
-    std::atomic<uint64_t> mTransactionId;
 
     ServerConnection mConnection;
 
     bool mConnected;
 
+    std::atomic<uint64_t> mTransactionCount;
+    std::atomic<uint64_t> mTransactionId;
     google::dense_hash_map<uint64_t, Transaction*> mTransactions;
+
+    uint16_t mScanId;
+    google::dense_hash_map<uint16_t, Transaction*> mScans;
 };
 
 class TransactionManager {
@@ -163,6 +183,14 @@ public:
     void executeTransaction(std::function<void(Transaction&)> fun);
 
 private:
+    friend class TransactionProcessor;
+
+    crossbow::infinio::LocalMemoryRegion& scanRegion() {
+        return mScanRegion;
+    }
+
+    crossbow::infinio::LocalMemoryRegion mScanRegion;
+
     std::vector<TransactionProcessor*> mProcessor;
 };
 

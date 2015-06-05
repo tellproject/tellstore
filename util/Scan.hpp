@@ -57,13 +57,21 @@ struct ScanThread {
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
         qbuffer += 8;
         for (; iter != end; ++iter) {
-            auto qdata = qbuffer;
+            query.query = qbuffer;
             const auto& entry = *iter;
             for (uint64_t i = 0; i < numQueries; ++i) {
-                query.query = qdata;
-                qdata = query.check(entry.data(), queryBitMap, record);
                 queryBitMap.clear();
+                query.query = query.check(entry.data(), queryBitMap, record);
+                for (auto res : queryBitMap) {
+                    if (!res) {
+                        continue;
+                    }
+                }
+                impls.at(i)->process(entry.validFrom(), entry.validTo(), entry.data(), entry.size(), record);
             }
+        }
+        for (auto impl : impls) {
+            delete impl;
         }
         impls.clear();
         beginIter.store(nullptr);
@@ -75,7 +83,7 @@ struct ScanThread {
 
 template<class Table>
 class ScanThreads {
-    int numThreads;
+    int mNumThreads;
     crossbow::SingleConsumerQueue<ScanRequest<Table>, MAX_QUERY_SHARING> queryQueue;
     std::vector<ScanRequest<Table>> mEnqueuedQueries;
     std::vector<ScanThread<typename Table::Iterator>> threadObjs;
@@ -84,7 +92,7 @@ class ScanThreads {
     std::atomic<bool> stopSlaves;
 public:
     ScanThreads(int numThreads)
-        : numThreads(numThreads)
+        : mNumThreads(numThreads)
         , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest<Table>{0, nullptr, nullptr, 0})
         , threadObjs(numThreads, ScanThread<typename Table::Iterator>(stopSlaves))
         , stopScans(false)
@@ -95,7 +103,7 @@ public:
         for (auto& t : threads) t.join();
     }
     void run() {
-        for (int i = 0; i < numThreads; ++i) {
+        for (int i = 0; i < mNumThreads; ++i) {
             if (i == 0) {
                 // the first thread is the master thread
                 threads.emplace_back([this]()
@@ -110,6 +118,15 @@ public:
             }
         }
     }
+
+    int numThreads() const {
+        return mNumThreads;
+    }
+
+    bool scan(ScanRequest<Table> request) {
+        return queryQueue.write(std::move(request));
+    }
+
 private:
     bool masterThread() {
         // A map of all queries we get during this scan phase. Key is the table id, value is:
@@ -155,7 +172,7 @@ private:
             allocator _;
 
             // now we generated the QBuffer - we now give it to all the scan threads
-            auto iterators = std::get<0>(q.second)->startScan(numThreads);
+            auto iterators = std::get<0>(q.second)->startScan(mNumThreads);
             for (size_t i = 0; i < threadObjs.size(); ++i) {
                 auto& scan = threadObjs[i];
                 // we do not need to synchronize here, we do that as soon as

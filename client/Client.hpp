@@ -23,7 +23,8 @@ public:
             : mService(config.infinibandLimits),
               mConfig(config),
               mManager(mService),
-              mTableId(0x0u) {
+              mTableId(0x0u),
+              mActiveTransactions(0) {
         mSchema.addField(FieldType::INT, "number", true);
         mSchema.addField(FieldType::TEXT, "text1", true);
         mSchema.addField(FieldType::BIGINT, "largenumber", true);
@@ -52,8 +53,7 @@ private:
 
     uint64_t mTableId;
 
-    tbb::spin_mutex mTransMutex;
-    std::vector<std::unique_ptr<Transaction>> mTrans;
+    std::atomic<size_t> mActiveTransactions;
 };
 
 } // namespace store

@@ -4,6 +4,8 @@
 
 #include <util/Logging.hpp>
 
+#include <sys/mman.h>
+
 namespace tell {
 namespace store {
 
@@ -12,6 +14,11 @@ namespace {
 void* stackFromTransaction(Transaction* transaction) {
     return reinterpret_cast<char*>(transaction) + Transaction::STACK_SIZE + sizeof(Transaction);
 }
+
+/**
+ * @brief Memory reserved for scans
+ */
+const size_t gScanTotalMemory = 0x80000000ull;
 
 } // anonymous namespace
 
@@ -29,13 +36,15 @@ Transaction::Transaction(TransactionProcessor& processor, uint64_t id, std::func
 #if BOOST_VERSION >= 105600
       mReturnContext(nullptr),
 #endif
-      mOutstanding(0x0u) {
+      mOutstanding(0x0u),
+      mTuplePending(0x0u) {
 }
 
 bool Transaction::createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId,
         std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.createTable(mId, name, schema, ec);
     if (ec) {
@@ -49,6 +58,7 @@ bool Transaction::createTable(const crossbow::string& name, const Schema& schema
 bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.getTableId(mId, name, ec);
     if (ec) {
@@ -63,6 +73,7 @@ bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*&
         const SnapshotDescriptor& snapshot, bool& isNewest, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.get(mId, tableId, key, snapshot, ec);
     if (ec) {
@@ -78,6 +89,7 @@ bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const 
         std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.getNewest(mId, tableId, key, ec);
     if (ec) {
@@ -93,6 +105,7 @@ bool Transaction::update(uint64_t tableId, uint64_t key, const Record& record, c
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.update(mId, tableId, key, record, tuple, snapshot, ec);
     if (ec) {
@@ -107,6 +120,7 @@ bool Transaction::update(uint64_t tableId, uint64_t key, size_t size, const char
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.update(mId, tableId, key, size, data, snapshot, ec);
     if (ec) {
@@ -121,6 +135,7 @@ void Transaction::insert(uint64_t tableId, uint64_t key, const Record& record, c
         const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.insert(mId, tableId, key, record, tuple, snapshot, (succeeded == nullptr ? false : true), ec);
     if (ec) {
@@ -141,6 +156,7 @@ void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char
         const SnapshotDescriptor& snapshot, std::error_code& ec, bool* succeeded) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.insert(mId, tableId, key, size, data, snapshot, (succeeded == nullptr ? false : true), ec);
     if (ec) {
@@ -160,6 +176,7 @@ void Transaction::insert(uint64_t tableId, uint64_t key, size_t size, const char
 bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.remove(mId, tableId, key, snapshot, ec);
     if (ec) {
@@ -173,6 +190,7 @@ bool Transaction::remove(uint64_t tableId, uint64_t key, const SnapshotDescripto
 bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
+    mResponse.reset();
     ++mOutstanding;
     con.revert(mId, tableId, key, snapshot, ec);
     if (ec) {
@@ -181,6 +199,30 @@ bool Transaction::revert(uint64_t tableId, uint64_t key, const SnapshotDescripto
     wait();
 
     return mResponse.modification(ec);
+}
+
+size_t Transaction::scan(uint64_t tableId, size_t size, const char* query, const SnapshotDescriptor& snapshot, std::error_code& ec) {
+    mTuplePending = 0x0u;
+    mResponse.reset();
+    ++mOutstanding;
+    auto id = mProcessor.startScan(this, tableId, size, query, snapshot, ec);
+    if (ec) {
+        return 0x0u;
+    }
+
+    while (true) {
+        wait();
+        if (mResponse.isSet()) {
+            uint16_t scanId;
+            mResponse.scan(scanId, ec);
+            break;
+        }
+
+        // TODO Process the tuples somehow
+    }
+    mProcessor.endScan(id);
+
+    return mTuplePending;
 }
 
 void Transaction::start() {
@@ -220,6 +262,10 @@ bool Transaction::setResponse(ServerConnection::Response response) {
     LOG_ASSERT(mOutstanding == 1, "Only one outstanding response supported at the moment");
     mResponse = std::move(response);
     return (--mOutstanding == 0);
+}
+
+void Transaction::addScanTuple(uint16_t count) {
+    mTuplePending += count;
 }
 
 TransactionProcessor::~TransactionProcessor() {
@@ -283,6 +329,25 @@ void TransactionProcessor::endTransaction(uint64_t id) {
     transaction->wait();
 }
 
+uint16_t TransactionProcessor::startScan(Transaction* transaction, uint64_t tableId, size_t size, const char* query,
+        const SnapshotDescriptor& snapshot, std::error_code& ec) {
+    auto id = ++mScanId;
+    mScans.insert(std::make_pair(id, transaction));
+
+    mConnection.scan(transaction->id(), tableId, id, mManager.scanRegion(), size, query, snapshot, ec);
+
+    return id;
+}
+
+void TransactionProcessor::endScan(uint16_t id) {
+    auto i = mScans.find(id);
+    if (i == mScans.end()) {
+        LOG_DEBUG("Proc %1% Scan %2%] Scan not found", mProcessorNumber, id);
+        return;
+    }
+    mScans.erase(i);
+}
+
 void TransactionProcessor::onConnected(const std::error_code& ec) {
     if (ec) {
         LOG_ERROR("Proc %1%] Failed to connect to server [error = %2% %3%]", mProcessorNumber, ec, ec.message());
@@ -303,7 +368,7 @@ void TransactionProcessor::handleResponse(uint64_t id, ServerConnection::Respons
     {
         auto i = mTransactions.find(id);
         if (i == mTransactions.end()) {
-            LOG_DEBUG("Proc %1% ID %2%] Transaction not found", mProcessorNumber, id);
+            LOG_WARN("Proc %1% ID %2%] Transaction not found", mProcessorNumber, id);
             // TODO Handle this correctly
             return;
         }
@@ -315,11 +380,39 @@ void TransactionProcessor::handleResponse(uint64_t id, ServerConnection::Respons
     }
 }
 
+void TransactionProcessor::handleScanProgress(uint16_t id, uint16_t tupleCount) {
+    Transaction* transaction;
+    {
+        auto i = mScans.find(id);
+        if (i == mScans.end()) {
+            LOG_WARN("Proc %1% Scan %2%] Transaction not found", mProcessorNumber, id);
+            // TODO Handle this correctly
+            return;
+        }
+        transaction = i->second;
+    }
+    transaction->addScanTuple(tupleCount);
+    transaction->resume();
+}
+
 TransactionManager::TransactionManager(crossbow::infinio::InfinibandService& service) {
+    auto data = mmap(nullptr, gScanTotalMemory, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+    if (data == MAP_FAILED) {
+        // TODO Error handling
+        std::terminate();
+    }
+
+    std::error_code ec;
+    mScanRegion = service.registerMemoryRegion(data, gScanTotalMemory, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE, ec);
+    if (ec) {
+        // TODO Error handling
+        std::terminate();
+    }
+
     auto numThreads = service.limits().contextThreads;
     mProcessor.reserve(numThreads);
     for (auto i = 0; i < numThreads; ++i) {
-        mProcessor.emplace_back(new TransactionProcessor(service, i));
+        mProcessor.emplace_back(new TransactionProcessor(*this, service, i));
     }
 }
 

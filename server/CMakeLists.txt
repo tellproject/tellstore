@@ -4,6 +4,8 @@
 set(SERVER_SRCS
     ClientConnection.hpp
     ClientConnection.cpp
+    ClientScanQuery.hpp
+    ClientScanQuery.cpp
     ConnectionManager.hpp
     ConnectionManager.cpp
     ServerConfig.hpp
