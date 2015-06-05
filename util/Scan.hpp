@@ -62,12 +62,16 @@ struct ScanThread {
             for (uint64_t i = 0; i < numQueries; ++i) {
                 queryBitMap.clear();
                 query.query = query.check(entry.data(), queryBitMap, record);
+                bool process = true;
                 for (auto res : queryBitMap) {
                     if (!res) {
-                        continue;
+                        process = false;
+                        break;
                     }
                 }
-                impls.at(i)->process(entry.validFrom(), entry.validTo(), entry.data(), entry.size(), record);
+                if (process) {
+                    impls.at(i)->process(entry.validFrom(), entry.validTo(), entry.data(), entry.size(), record);
+                }
             }
         }
         for (auto impl : impls) {

@@ -80,11 +80,11 @@ public:
     off_t offsetInQuery() const {
         if (isFixedSized()) {
             auto sz = staticSize();
-            if (sz <= 2) return 0;
-            if (sz <= 4) return 2;
-            else return 6;
+            if (sz <= 2) return 2;
+            if (sz <= 4) return 4;
+            else return 8;
         }
-        return 6;
+        return 8;
     }
 
     size_t staticSize() const
