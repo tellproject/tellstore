@@ -20,6 +20,8 @@ namespace {
 TEST(simple, insert_and_get)
 {
     StorageConfig config;
+    config.totalMemory = 0x10000000ull;
+    config.hashMapCapacity = 0x100000ull;
     Storage storage(config);
     Schema schema;
     schema.addField(FieldType::INT, "foo", true);
