@@ -3,6 +3,7 @@
 #include <cassert>
 #include <memory.h>
 #include <iostream>
+#include <new>
 
 namespace tell {
 namespace store {
@@ -11,6 +12,9 @@ PageManager::PageManager(size_t size)
     : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)), mSize(size), mPages(
     size / TELL_PAGE_SIZE)
 {
+    if (mData == MAP_FAILED) {
+        throw std::bad_alloc();
+    }
     assert(size % TELL_PAGE_SIZE == 0);
     auto numPages = size / TELL_PAGE_SIZE;
     memset(mData, 0, mSize);
