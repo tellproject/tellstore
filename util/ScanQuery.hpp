@@ -31,7 +31,7 @@ public:
  *     - The data if it is larger than 4 bytes or if it is variable size length (padded to 8 bytes)
  */
 struct ScanQuery {
-    char* query = nullptr;
+    const char* query = nullptr;
 
     constexpr static off_t offsetToFirstColumn() { return 8; }
     constexpr static off_t offsetToFirstPredicate() { return 8; }
@@ -71,7 +71,7 @@ struct ScanQuery {
         return *reinterpret_cast<const uint8_t*>(query + offset + 1);
     }
 
-    char* check(const char* data, std::vector<bool>& bitmap, const Record& record) const
+    const char* check(const char* data, std::vector<bool>& bitmap, const Record& record) const
     {
         auto numberOfCols = numberOfColumns();
         auto offset = offsetToFirstColumn();

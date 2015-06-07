@@ -121,7 +121,7 @@ public:
         switch (mType) {
         case FieldType::TEXT:
         case FieldType::BLOB:
-            return *reinterpret_cast<const uint32_t*>(data);
+            return *reinterpret_cast<const uint32_t*>(data) + sizeof(uint32_t);
         default:
             LOG_ERROR("Unknown type");
             std::terminate();
