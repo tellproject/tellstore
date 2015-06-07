@@ -1,8 +1,10 @@
 #include "Client.hpp"
 
+#include <network/MessageSocket.hpp>
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
 #include <util/Logging.hpp>
+#include <util/helper.hpp>
 
 #include <chrono>
 #include <functional>
@@ -13,7 +15,8 @@ namespace store {
 
 namespace {
 
-int32_t gTupleNumber = 12;
+int32_t gTuple1Number = 12;
+int32_t gTuple2Number = 13;
 int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
 crossbow::string gTupleText1 = crossbow::string("Bacon ipsum dolor amet t-bone chicken prosciutto, cupim ribeye turkey "
         "bresaola leberkas bacon. Hamburger biltong bresaola, drumstick t-bone flank ball tip.");
@@ -22,6 +25,40 @@ crossbow::string gTupleText2 = crossbow::string("Chuck pork loin ham hock tri-ti
         "bacon frankfurter meatball biltong bresaola short ribs.");
 
 } // anonymous namespace
+
+Client::Client(const ClientConfig& config)
+        : mService(config.infinibandLimits),
+          mConfig(config),
+          mManager(mService),
+          mTableId(0x0u),
+          mActiveTransactions(0),
+          mTupleSize(0) {
+    mSchema.addField(FieldType::INT, "number", true);
+    mSchema.addField(FieldType::TEXT, "text1", true);
+    mSchema.addField(FieldType::BIGINT, "largenumber", true);
+    mSchema.addField(FieldType::TEXT, "text2", true);
+
+    Record record(mSchema);
+    GenericTuple insertTuple1({
+            std::make_pair<crossbow::string, boost::any>("number", gTuple1Number),
+            std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
+            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+            std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
+    });
+    mTuple1.reset(record.create(insertTuple1, mTupleSize));
+
+    GenericTuple insertTuple2({
+            std::make_pair<crossbow::string, boost::any>("number", gTuple2Number),
+            std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
+            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+            std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
+    });
+    size_t tuple2Size = 0;
+    mTuple2.reset(record.create(insertTuple2, tuple2Size));
+    if (mTupleSize != tuple2Size) {
+        LOG_ERROR("Tuples have different size");
+    }
+}
 
 void Client::init() {
     LOG_INFO("Initializing TellStore client");
@@ -79,22 +116,14 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
     auto snapshot = mCommitManager.startTx();
     bool succeeded = false;
 
-    GenericTuple insertTuple({
-            std::make_pair<crossbow::string, boost::any>("number", gTupleNumber),
-            std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
-            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-            std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
-    });
-    size_t insertSize = 0;
-    auto insertData = record.create(insertTuple, insertSize);
-
     std::chrono::nanoseconds totalInsertDuration(0x0u);
     std::chrono::nanoseconds totalGetDuration(0x0u);
     auto startTime = std::chrono::steady_clock::now();
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
+        const char* insertTuple = (key % 2 == 0 ? mTuple1.get() : mTuple2.get());
         auto insertStartTime = std::chrono::steady_clock::now();
-        transaction.insert(mTableId, key, insertSize, insertData, snapshot, ec, &succeeded);
+        transaction.insert(mTableId, key, mTupleSize, insertTuple, snapshot, ec, &succeeded);
         auto insertEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
@@ -132,8 +161,9 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
 
         LOG_TRACE("Check tuple");
+        auto tupleNumber = (key % 2 == 0 ? gTuple1Number : gTuple2Number);
         auto numberData = getTupleData(getData, record, "number");
-        if (*reinterpret_cast<const int32_t*>(numberData) != gTupleNumber) {
+        if (*reinterpret_cast<const int32_t*>(numberData) != tupleNumber) {
             LOG_ERROR("Number value does not match");
         }
         auto text1Data = getTupleData(getData, record, "text1");
@@ -168,14 +198,46 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
     }
 
     auto scanSnapshot = mCommitManager.startTx();
-    uint64_t numColumns = 0x0u;
-    char* query = reinterpret_cast<char*>(&numColumns);
-    uint32_t querySize = 8;
 
-    LOG_INFO("TID %1%] Starting scan", transaction.id());
+    {
+        uint32_t querySize = 8;
+        std::unique_ptr<char[]> query(new char[querySize]);
 
+        BufferWriter queryWriter(query.get(), querySize);
+        queryWriter.write<uint64_t>(0x0u);
+
+        LOG_INFO("TID %1%] Starting scan with selectivity 100%%", transaction.id());
+        doScan(transaction, querySize, query.get(), scanSnapshot);
+    }
+
+    {
+        Record::id_t recordField;
+        if (!record.idOf("number", recordField)) {
+            LOG_ERROR("number field not found");
+        }
+
+        uint32_t querySize = 24;
+        std::unique_ptr<char[]> query(new char[querySize]);
+
+        BufferWriter queryWriter(query.get(), querySize);
+        queryWriter.write<uint64_t>(0x1u);
+        queryWriter.write<uint16_t>(recordField);
+        queryWriter.write<uint16_t>(0x1u);
+        queryWriter.align(sizeof(uint64_t));
+        queryWriter.write<uint8_t>(to_underlying(PredicateType::EQUAL));
+        queryWriter.write<uint8_t>(0x0u);
+        queryWriter.align(sizeof(uint32_t));
+        queryWriter.write<int32_t>(gTuple1Number);
+
+        LOG_INFO("TID %1%] Starting scan with selectivity 50%%", transaction.id());
+        doScan(transaction, querySize, query.get(), scanSnapshot);
+    }
+}
+
+void Client::doScan(Transaction& transaction, size_t querySize, const char* query, const SnapshotDescriptor& snapshot) {
+    std::error_code ec;
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanCount = transaction.scan(mTableId, querySize, query, scanSnapshot, ec);
+    auto scanCount = transaction.scan(mTableId, querySize, query, snapshot, ec);
     auto scanEndTime = std::chrono::steady_clock::now();
     if (ec) {
         LOG_ERROR("Error scanning [error = %1% %2%]", ec, ec.message());
@@ -183,11 +245,11 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
     }
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
-    auto scanDataSize = double(scanCount * insertSize) / double(1024 * 1024 * 1024);
-    auto scanBandwidth = double(scanCount * insertSize * 8) / double(1000 * 1000 * 1000 *
+    auto scanDataSize = double(scanCount * mTupleSize) / double(1024 * 1024 * 1024);
+    auto scanBandwidth = double(scanCount * mTupleSize * 8) / double(1000 * 1000 * 1000 *
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of size %4% (%5%GB total, %6%Gbps bandwidth)]", transaction.id(),
-            scanDuration.count(), scanCount, insertSize, scanDataSize, scanBandwidth);
+            scanDuration.count(), scanCount, mTupleSize, scanDataSize, scanBandwidth);
 }
 
 const char* Client::getTupleData(const char* data, Record& record, const crossbow::string& name) {
