@@ -187,4 +187,32 @@ TEST_F(ScanQueryTest, orPredicate) {
     EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 1, record));
 }
 
+/**
+ * @class ScanQuery
+ * @test Check if the check succeeds for two simple EQUAL predicates linked by an OR on the same column.
+ *
+ * The query is equal to "SELECT * WHERE number = 12 OR number = 13".
+ */
+TEST_F(ScanQueryTest, sameColumnPredicate) {
+    Record record(mSchema);
+    Record::id_t numberField;
+    ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
+
+    size_t qsize = 32;
+    std::unique_ptr<char[]> qbuffer(new char[qsize]);
+    memset(qbuffer.get(), 0, qsize);
+    *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x2u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
+    *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 28) = gTuple2Number;
+
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 1, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 1, record));
+}
+
 } // anonymous namespace
