@@ -53,12 +53,6 @@ int main(int argc, const char** argv) {
 
     // Initialize network server
     tell::store::ConnectionManager connectionManager(storage, serverConfig);
-    std::error_code ec;
-    connectionManager.init(ec);
-    if (ec) {
-        LOG_FATAL("Failure initializing the connection manager [error = %1% %2%]", ec, ec.message());
-        return 1;
-    }
 
     LOG_INFO("Exiting TellStore server");
     return 0;

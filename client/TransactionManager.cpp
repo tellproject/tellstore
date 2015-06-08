@@ -402,12 +402,8 @@ TransactionManager::TransactionManager(crossbow::infinio::InfinibandService& ser
         std::terminate();
     }
 
-    std::error_code ec;
-    mScanRegion = service.registerMemoryRegion(data, gScanTotalMemory, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE, ec);
-    if (ec) {
-        // TODO Error handling
-        std::terminate();
-    }
+    int flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
+    mScanRegion = service.registerMemoryRegion(data, gScanTotalMemory, flags);
 
     auto numThreads = service.limits().contextThreads;
     mProcessor.reserve(numThreads);

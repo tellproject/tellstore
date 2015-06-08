@@ -4,6 +4,7 @@
 #include <network/MessageTypes.hpp>
 #include <util/Logging.hpp>
 
+#include <crossbow/infinio/ErrorCode.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
@@ -133,9 +134,6 @@ protected:
               mSendBuffer(static_cast<char*>(nullptr), 0),
               mOldOffset(std::numeric_limits<uint32_t>::max()),
               mFlush(false) {
-    }
-
-    void init() {
         mSocket->setHandler(this);
     }
 
@@ -222,7 +220,7 @@ BufferWriter MessageSocket<Handler>::writeMessage(uint64_t transactionId, uint32
 
         mBuffer = mSocket->acquireSendBuffer();
         if (!mBuffer.valid()) {
-            ec = error::invalid_buffer;
+            ec = crossbow::infinio::error::invalid_buffer;
             return BufferWriter(nullptr, 0x0u);
         }
         mSendBuffer = BufferWriter(reinterpret_cast<char*>(mBuffer.data()), mBuffer.length());

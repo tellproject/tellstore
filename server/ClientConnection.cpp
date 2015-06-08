@@ -30,20 +30,15 @@ SnapshotDescriptor readSnapshot(uint64_t version, BufferReader& request) {
 } // anonymous namespace
 
 ClientConnection::~ClientConnection() {
-    std::error_code ec;
-    mSocket->close(ec);
-    if (ec) {
-        // TODO Handle this situation somehow (this should probably not happen at this point)
+    try {
+        mSocket->close();
+    } catch (std::system_error& e) {
+        LOG_ERROR("Error while closing socket [error = %1% %2%]", e.code(), e.what());
     }
 }
 
 void ClientConnection::shutdown() {
-    std::error_code ec;
-    mSocket->disconnect(ec);
-    if (ec) {
-        LOG_ERROR("Error disconnecting [error = %1% %2%]", ec, ec.message());
-        // TODO Handle this situation somehow - Can this even happen?
-    }
+    mSocket->disconnect();
 }
 
 void ClientConnection::onConnected(const crossbow::string& data, const std::error_code& ec) {

@@ -31,40 +31,28 @@ void writeSnapshot(BufferWriter& message, const SnapshotDescriptor& snapshot) {
 } // anonymous namespace
 
 ServerConnection::~ServerConnection() {
-    std::error_code ec;
-    mSocket->close(ec);
-    if (ec) {
-        // TODO Handle this situation somehow (this should probably not happen at this point)
+    try {
+        mSocket->close();
+    } catch (std::system_error& e) {
+        LOG_ERROR("Error while closing socket [error = %1% %2%]", e.code(), e.what());
     }
 }
 
 void ServerConnection::connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec) {
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
-    MessageSocket::init();
-
     // Open socket
-    mSocket->open(ec);
-    if (ec) {
-        return;
-    }
+    mSocket->open();
 
     // Connect to remote server
     crossbow::infinio::Endpoint ep(crossbow::infinio::Endpoint::ipv4(), host, port);
-
     crossbow::string data;
     data.append(reinterpret_cast<char*>(&thread), sizeof(uint64_t));
-
-    mSocket->connect(ep, data, ec);
+    mSocket->connect(ep, data);
 }
 
 void ServerConnection::shutdown() {
-    std::error_code ec;
-    mSocket->disconnect(ec);
-    if (ec) {
-        LOG_ERROR("Error disconnecting");
-        // TODO Handle this situation somehow - Can this even happen?
-    }
+    mSocket->disconnect();
 }
 
 void ServerConnection::createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema,

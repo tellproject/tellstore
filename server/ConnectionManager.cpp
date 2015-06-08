@@ -11,35 +11,20 @@
 namespace tell {
 namespace store {
 
-void ConnectionManager::init(std::error_code& ec) {
+ConnectionManager::ConnectionManager(Storage& storage, const ServerConfig& config)
+        : mConfig(config),
+          mStorage(storage),
+          mService(mConfig.infinibandLimits),
+          mAcceptor(mService.createAcceptor()),
+          mPageRegion(mService.registerMemoryRegion(mStorage.pageManager().data(), mStorage.pageManager().size(), 0)) {
     LOG_INFO("Initializing the connection manager");
 
-    // Allocate RDMA memory region for the whole page manager
-    auto& pageManager = mStorage.pageManager();
-    mPageRegion = mService.registerMemoryRegion(pageManager.data(), pageManager.size(), 0, ec);
-    if (ec) {
-        return;
-    }
-
     // Open socket
-    mAcceptor->open(ec);
-    if (ec) {
-        return;
-    }
-    mAcceptor->setHandler(this);
-
-    // Bind socket
     crossbow::infinio::Endpoint ep(crossbow::infinio::Endpoint::ipv4(), mConfig.port);
-    mAcceptor->bind(ep, ec);
-    if (ec) {
-        return;
-    }
-
-    // Start listening
-    mAcceptor->listen(10, ec);
-    if (ec) {
-        return;
-    }
+    mAcceptor->open();
+    mAcceptor->setHandler(this);
+    mAcceptor->bind(ep);
+    mAcceptor->listen(10);
 
     LOG_INFO("TellStore listening on port %1%", mConfig.port);
     mService.run();
@@ -48,19 +33,10 @@ void ConnectionManager::init(std::error_code& ec) {
 void ConnectionManager::shutdown() {
     LOG_INFO("Shutting down the connection manager");
 
-    std::error_code ec;
-    mAcceptor->close(ec);
-    if (ec) {
-        // TODO Handle this situation somehow
-    }
+    mAcceptor->close();
 
     for (auto& con : mConnections) {
         con->shutdown();
-    }
-
-    mPageRegion.releaseMemoryRegion(ec);
-    if (ec) {
-        // TODO Handle this situation somehow
     }
 }
 
@@ -74,15 +50,15 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
     LOG_INFO("New incoming connection [address = %1%, thread = %2%]", socket->remoteAddress(), thread);
 
     auto con = new (allocator::malloc(sizeof(ClientConnection))) ClientConnection(*this, mStorage, socket);
-    con->init();
 
-    std::error_code ec;
-    socket->accept(crossbow::string(), thread, ec);
-    if (ec) {
-        LOG_ERROR("Error accepting connection [error = %1% %2%]", ec, ec.message());
-        socket->close(ec);
-        if (ec) {
-            LOG_ERROR("Error closing failed connection [error = %1% %2%]", ec, ec.message());
+    try {
+        socket->accept(crossbow::string(), thread);
+    } catch (std::system_error& e) {
+        LOG_ERROR("Error accepting connection [error = %1% %2%]", e.code(), e.what());
+        try {
+            socket->close();
+        } catch (std::system_error& e2) {
+            LOG_ERROR("Error closing failed connection [error = %1% %2%]", e2.code(), e2.what());
         }
         con->~ClientConnection();
         allocator::free_now(con);

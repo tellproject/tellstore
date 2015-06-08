@@ -36,10 +36,6 @@ public:
 
     ~ClientConnection();
 
-    void init() {
-        MessageSocket::init();
-    }
-
     void shutdown();
 
 private:

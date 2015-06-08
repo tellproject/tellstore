@@ -20,14 +20,7 @@ class ClientConnection;
 
 class ConnectionManager : private crossbow::infinio::InfinibandAcceptorHandler {
 public:
-    ConnectionManager(Storage& storage, const ServerConfig& config)
-            : mConfig(config),
-              mStorage(storage),
-              mService(mConfig.infinibandLimits),
-              mAcceptor(mService.createAcceptor()) {
-    }
-
-    void init(std::error_code& ec);
+    ConnectionManager(Storage& storage, const ServerConfig& config);
 
     void shutdown();
 
