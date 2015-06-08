@@ -87,6 +87,7 @@ set(TEST_SRCS
     tests/testCommitManager.cpp
     tests/testLog.cpp
     tests/testOpenAddressingHash.cpp
+    tests/testScanQuery.cpp
     tests/simpleTests.cpp
     tests/logstructured/testTable.cpp)
 
