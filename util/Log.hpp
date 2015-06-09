@@ -153,6 +153,11 @@ public:
      */
     class EntryIterator : public std::iterator<std::input_iterator_tag, LogEntry> {
     public:
+        EntryIterator()
+                : mPage(nullptr),
+                  mPos(0x0u) {
+        }
+
         EntryIterator(LogPage* page, uint32_t pos)
                 : mPage(page),
                   mPos(pos) {
@@ -516,6 +521,10 @@ public:
         return mTail.load();
     }
 
+    size_t pages() {
+        return mPages.load();
+    }
+
     /**
      * @brief Appends the given pages to the log
      *
@@ -624,6 +633,8 @@ private:
     std::atomic<LogHead> mHead;
 
     std::atomic<LogPage*> mTail;
+
+    std::atomic<size_t> mPages;
 };
 
 /**

@@ -102,7 +102,8 @@ void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
 UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
         : BaseLogImpl(pageManager),
           mHead(LogHead(acquirePage(), nullptr)),
-          mTail(mHead.load().writeHead) {
+          mTail(mHead.load().writeHead),
+          mPages(1) {
     LOG_ASSERT((reinterpret_cast<uintptr_t>(&mHead) % 16) == 0, "Head is not 16 byte aligned");
     LOG_ASSERT(mHead.is_lock_free(), "LogHead is not lock free");
     LOG_ASSERT(mHead.load().writeHead == mTail.load(), "Head and Tail do not point to the same page");
@@ -110,6 +111,12 @@ UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
 
 void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
     auto oldHead = mHead.load();
+
+    auto pages = 1;
+    for (auto page = begin; page != end; page = page->next().load()) {
+        ++pages;
+    }
+    mPages.fetch_add(pages);
 
     while (true) {
         // Next should point to the last appendHead or the writeHead if there are no pages waiting to be appended
@@ -142,6 +149,13 @@ void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
 
     auto next = begin->next().exchange(end);
     if (next == end) return;
+
+    auto pages = 0;
+    for (auto page = next; page != end; page = page->next().load()) {
+        ++pages;
+    }
+    mPages.fetch_sub(pages);
+
     freePage(next, end);
 }
 
@@ -176,6 +190,7 @@ UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
                 LOG_ASSERT(false, "PageManager ran out of space");
                 return nHead;
             }
+            ++mPages;
             nHead.writeHead->next().store(oldHead.writeHead);
             freeHead = true;
         }
@@ -185,6 +200,7 @@ UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
         if (!mHead.compare_exchange_strong(oldHead, nHead)) {
             // We either have a new write or append head so we can free the previously allocated page
             if (freeHead) {
+                --mPages;
                 freeEmptyPageNow(nHead.writeHead);
             }
 

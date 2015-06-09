@@ -241,6 +241,7 @@ TEST_F(UnorderedLogTest, appendPage) {
     page2->next().store(page1);
     mLog.appendPage(page2, page1);
 
+    EXPECT_EQ(3, mLog.pages()) << "Page count not incremented";
     EXPECT_NE(page1, mLog.head()) << "Head pointing to appended page";
     EXPECT_NE(page2, mLog.head()) << "Head pointing to appended page";
 
@@ -269,9 +270,11 @@ TEST_F(UnorderedLogTest, appendPage) {
 TEST_F(UnorderedLogTest, appendMultiplePage) {
     auto page1 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page1);
+    EXPECT_EQ(2, mLog.pages()) << "Page count not incremented";
 
     auto page2 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page2);
+    EXPECT_EQ(3, mLog.pages()) << "Page count not incremented";
 
     auto i = mLog.pageBegin();
     auto end = mLog.pageEnd();
