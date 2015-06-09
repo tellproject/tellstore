@@ -15,8 +15,6 @@ namespace store {
 
 namespace {
 
-int32_t gTuple1Number = 12;
-int32_t gTuple2Number = 13;
 int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
 crossbow::string gTupleText1 = crossbow::string("Bacon ipsum dolor amet t-bone chicken prosciutto, cupim ribeye turkey "
         "bresaola leberkas bacon. Hamburger biltong bresaola, drumstick t-bone flank ball tip.");
@@ -39,24 +37,14 @@ Client::Client(const ClientConfig& config)
     mSchema.addField(FieldType::TEXT, "text2", true);
 
     Record record(mSchema);
-    GenericTuple insertTuple1({
-            std::make_pair<crossbow::string, boost::any>("number", gTuple1Number),
-            std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
-            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-            std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
-    });
-    mTuple1.reset(record.create(insertTuple1, mTupleSize));
-
-    GenericTuple insertTuple2({
-            std::make_pair<crossbow::string, boost::any>("number", gTuple2Number),
-            std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
-            std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
-            std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
-    });
-    size_t tuple2Size = 0;
-    mTuple2.reset(record.create(insertTuple2, tuple2Size));
-    if (mTupleSize != tuple2Size) {
-        LOG_ERROR("Tuples have different size");
+    for (int32_t i = 0; i < mTuple.size(); ++i) {
+        GenericTuple insertTuple({
+                std::make_pair<crossbow::string, boost::any>("number", i),
+                std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
+                std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
+        });
+        mTuple[i].reset(record.create(insertTuple, mTupleSize));
     }
 }
 
@@ -121,9 +109,8 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
     auto startTime = std::chrono::steady_clock::now();
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
-        const char* insertTuple = (key % 2 == 0 ? mTuple1.get() : mTuple2.get());
         auto insertStartTime = std::chrono::steady_clock::now();
-        transaction.insert(mTableId, key, mTupleSize, insertTuple, snapshot, ec, &succeeded);
+        transaction.insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(), snapshot, ec, &succeeded);
         auto insertEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
@@ -161,24 +148,27 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
 
         LOG_TRACE("Check tuple");
-        auto tupleNumber = (key % 2 == 0 ? gTuple1Number : gTuple2Number);
         auto numberData = getTupleData(getData, record, "number");
-        if (*reinterpret_cast<const int32_t*>(numberData) != tupleNumber) {
+        if (*reinterpret_cast<const int32_t*>(numberData) != (key % mTuple.size())) {
             LOG_ERROR("Number value does not match");
+            return;
         }
         auto text1Data = getTupleData(getData, record, "text1");
         uint32_t text1Length = *reinterpret_cast<const uint32_t*>(text1Data);
         if (crossbow::string(text1Data + 4, text1Length) != gTupleText1) {
             LOG_ERROR("Text1 value does not match");
+            return;
         }
         auto largenumberData = getTupleData(getData, record, "largenumber");
         if (*reinterpret_cast<const int64_t*>(largenumberData) != gTupleLargenumber) {
             LOG_ERROR("Large Number value not something large");
+            return;
         }
         auto text2Data = getTupleData(getData, record, "text2");
         uint32_t text2Length = *reinterpret_cast<const uint32_t*>(text2Data);
         if (crossbow::string(text2Data + 4, text2Length) != gTupleText2) {
             LOG_ERROR("Text2 value does not match");
+            return;
         }
         LOG_TRACE("Tuple check successful");
     }
@@ -199,45 +189,36 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
 
     auto scanSnapshot = mCommitManager.startTx();
 
-    {
-        uint32_t querySize = 8;
-        std::unique_ptr<char[]> query(new char[querySize]);
-
-        BufferWriter queryWriter(query.get(), querySize);
-        queryWriter.write<uint64_t>(0x0u);
-
-        LOG_INFO("TID %1%] Starting scan with selectivity 100%%", transaction.id());
-        doScan(transaction, querySize, query.get(), scanSnapshot);
-    }
-
-    {
-        Record::id_t recordField;
-        if (!record.idOf("number", recordField)) {
-            LOG_ERROR("number field not found");
-        }
-
-        uint32_t querySize = 24;
-        std::unique_ptr<char[]> query(new char[querySize]);
-
-        BufferWriter queryWriter(query.get(), querySize);
-        queryWriter.write<uint64_t>(0x1u);
-        queryWriter.write<uint16_t>(recordField);
-        queryWriter.write<uint16_t>(0x1u);
-        queryWriter.align(sizeof(uint64_t));
-        queryWriter.write<uint8_t>(to_underlying(PredicateType::EQUAL));
-        queryWriter.write<uint8_t>(0x0u);
-        queryWriter.align(sizeof(uint32_t));
-        queryWriter.write<int32_t>(gTuple1Number);
-
-        LOG_INFO("TID %1%] Starting scan with selectivity 50%%", transaction.id());
-        doScan(transaction, querySize, query.get(), scanSnapshot);
-    }
+    doScan(transaction, record, 1.0, scanSnapshot);
+    doScan(transaction, record, 0.5, scanSnapshot);
+    doScan(transaction, record, 0.25, scanSnapshot);
 }
 
-void Client::doScan(Transaction& transaction, size_t querySize, const char* query, const SnapshotDescriptor& snapshot) {
+void Client::doScan(Transaction& transaction, Record& record, float selectivity, const SnapshotDescriptor& snapshot) {
+    Record::id_t recordField;
+    if (!record.idOf("number", recordField)) {
+        LOG_ERROR("number field not found");
+        return;
+    }
+
+    uint32_t querySize = 24;
+    std::unique_ptr<char[]> query(new char[querySize]);
+
+    BufferWriter queryWriter(query.get(), querySize);
+    queryWriter.write<uint64_t>(0x1u);
+    queryWriter.write<uint16_t>(recordField);
+    queryWriter.write<uint16_t>(0x1u);
+    queryWriter.align(sizeof(uint64_t));
+    queryWriter.write<uint8_t>(to_underlying(PredicateType::GREATER_EQUAL));
+    queryWriter.write<uint8_t>(0x0u);
+    queryWriter.align(sizeof(uint32_t));
+    queryWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+
+    LOG_INFO("TID %1%] Starting scan with selectivity %2%%%", transaction.id(), static_cast<int>(selectivity * 100));
+
     std::error_code ec;
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanCount = transaction.scan(mTableId, querySize, query, snapshot, ec);
+    auto scanCount = transaction.scan(mTableId, querySize, query.get(), snapshot, ec);
     auto scanEndTime = std::chrono::steady_clock::now();
     if (ec) {
         LOG_ERROR("Error scanning [error = %1% %2%]", ec, ec.message());

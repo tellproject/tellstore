@@ -10,6 +10,7 @@
 
 #include <tbb/spin_mutex.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -30,7 +31,7 @@ private:
 
     void executeTransaction(Transaction& transaction, uint64_t startKey, uint64_t endKey);
 
-    void doScan(Transaction& transaction, size_t querySize, const char* query, const SnapshotDescriptor& snapshot);
+    void doScan(Transaction& transaction, Record& record, float selectivity, const SnapshotDescriptor& snapshot);
 
     const char* getTupleData(const char* data, Record& record, const crossbow::string& name);
 
@@ -48,8 +49,7 @@ private:
     std::atomic<size_t> mActiveTransactions;
 
     uint64_t mTupleSize;
-    std::unique_ptr<char[]> mTuple1;
-    std::unique_ptr<char[]> mTuple2;
+    std::array<std::unique_ptr<char[]>, 4> mTuple;
 };
 
 } // namespace store
