@@ -24,22 +24,36 @@ class ChainedVersionRecord;
  */
 class Table : NonCopyable, NonMovable {
 public:
+    using LogImpl = Log<UnorderedLogImpl>;
+    using HashTable = OpenAddressingTable;
+
     class Iterator {
     public:
         using IteratorEntry = BaseIteratorEntry;
 
+        Iterator(const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end, const Record* record);
+
         void next();
 
         bool done() {
-            return true;
+            return (mPageIt == mPageEnd && mEntryIt == mEntryEnd);
         }
 
         const IteratorEntry& value() const {
-            return *static_cast<IteratorEntry*>(nullptr);
+            return mCurrentEntry;
         }
-    };
 
-    using HashTable = OpenAddressingTable;
+    private:
+        void setCurrentEntry();
+
+        LogImpl::PageIterator mPageIt;
+        LogImpl::PageIterator mPageEnd;
+
+        LogPage::EntryIterator mEntryIt;
+        LogPage::EntryIterator mEntryEnd;
+
+        IteratorEntry mCurrentEntry;
+    };
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap);
 
@@ -125,7 +139,7 @@ public:
      * @param numThreads Number of threads to use for the scan
      * @return Pairs of begin and end iterator for each thread
      */
-    std::vector<Iterator> startScan(int numThreads) const;
+    std::vector<Iterator> startScan(int numThreads);
 
     /**
      * @brief Starts a garbage collection run
@@ -165,7 +179,7 @@ private:
     Record mRecord;
     uint64_t mTableId;
 
-    Log<UnorderedLogImpl> mLog;
+    LogImpl mLog;
 };
 
 /**

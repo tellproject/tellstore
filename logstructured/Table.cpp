@@ -26,7 +26,49 @@ size_t recordSize(const LSMRecord* record) {
 
 } // anonymous namespace
 
+Table::Iterator::Iterator(const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end, const Record* record)
+        : mPageIt(begin),
+          mPageEnd(end),
+          mEntryIt(mPageIt == mPageEnd ? LogPage::EntryIterator() : mPageIt->begin()),
+          mEntryEnd(mPageIt == mPageEnd ? LogPage::EntryIterator() : mPageIt->end()) {
+    mCurrentEntry.mRecord = record;
+    setCurrentEntry();
+}
+
 void Table::Iterator::next() {
+    ++mEntryIt;
+    if (mEntryIt == mEntryEnd) {
+        ++mPageIt;
+        if (mPageIt == mPageEnd) {
+            return;
+        }
+        mEntryIt = mPageIt->begin();
+        mEntryEnd = mPageIt->end();
+    }
+    setCurrentEntry();
+}
+
+void Table::Iterator::setCurrentEntry() {
+    for (; mPageIt != mPageEnd; ++mPageIt) {
+        for (; mEntryIt != mEntryEnd; ++mEntryIt) {
+            if (!mEntryIt->sealed()) {
+                continue;
+            }
+            LOG_ASSERT(mEntryIt->size() >= gRecordHeaderSize, "Log record is smaller than record header");
+
+            auto lsmRecord = reinterpret_cast<const LSMRecord*>(mEntryIt->data());
+            auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(lsmRecord->data());
+            if (versionRecord->isInvalid()) {
+                continue;
+            }
+
+            mCurrentEntry.mData = versionRecord->data();
+            mCurrentEntry.mSize = mEntryIt->size() - gRecordHeaderSize;
+            mCurrentEntry.mValidFrom = versionRecord->validFrom();
+            mCurrentEntry.mValidTo = versionRecord->validTo();
+            return;
+        }
+    }
 }
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
@@ -238,8 +280,30 @@ bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
     }
 }
 
-std::vector<Table::Iterator> Table::startScan(int numThreads) const {
-    return {};
+std::vector<Table::Iterator> Table::startScan(int numThreads) {
+    std::vector<Table::Iterator> result;
+    result.reserve(numThreads);
+
+    auto numPages = mLog.pages();
+    auto begin = mLog.pageBegin();
+    auto end = mLog.pageEnd();
+
+    auto mod = numPages % numThreads;
+    auto iter = begin;
+    for (decltype(numThreads) i = 1; i < numThreads; ++i) {
+        auto step = numPages / numThreads + (i < mod ? 1 : 0);
+        // Increment the page iterator by step pages (but not beyond the end page)
+        for (auto j = 0; j < step && iter != end; ++j, ++iter) {
+        }
+
+        result.emplace_back(begin, iter, &mRecord);
+        begin = iter;
+    }
+
+    // The last scan takes the remaining pages
+    result.emplace_back(begin, end, &mRecord);
+
+    return result;
 }
 
 void Table::runGC(uint64_t minVersion) {
