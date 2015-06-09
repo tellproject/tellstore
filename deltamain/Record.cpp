@@ -1018,7 +1018,7 @@ void DMRecordImplBase<T>::VersionIterator::initRes()
         auto versions = mvRec.versions();
         auto offs = mvRec.offsets();
         currEntry.mData = current + offs[idx];
-        // TODO Set size
+        currEntry.mSize = offs[idx + 1] - offs[idx];
         currEntry.mValidFrom = versions[idx];
         if (idx == nV - 1) {
             // we need to check the next pointer in order to be able
@@ -1041,7 +1041,7 @@ void DMRecordImplBase<T>::VersionIterator::initRes()
     } else if (rec.type() == RecordType::LOG_INSERT) {
         LogInsert<const char*> insRec(current);
         currEntry.mData = insRec.dataPtr();
-        // TODO Set size
+        currEntry.mSize = insRec.recordSize();
         currEntry.mValidFrom = insRec.version();
         auto n = insRec.getNewest();
         while (n != nullptr) {
@@ -1058,7 +1058,7 @@ void DMRecordImplBase<T>::VersionIterator::initRes()
     } else if (rec.type() == RecordType::LOG_UPDATE) {
         LogUpdate<const char*> up(current);
         currEntry.mData = up.dataPtr();
-        // TODO Set size
+        currEntry.mSize = up.recordSize();
         currEntry.mValidTo = currEntry.mValidFrom;
         currEntry.mValidFrom = up.version();
     }

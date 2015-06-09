@@ -43,35 +43,35 @@ public:
         std::shared_ptr<allocator> mAllocator;
         const PageList* pages;
         size_t pageIdx;
+        size_t pageEndIdx;
         LogIterator logIter;
         LogIterator logEnd;
         PageManager* pageManager;
         const Record* record;
     private: // calculated members
+        void setCurrentEntry();
+
         Page::Iterator pageIter;
         Page::Iterator pageEnd;
-        IteratorEntry currEntry;
         CDMRecord::VersionIterator currVersionIter;
-    private: // construction
+    public:
         Iterator(const std::shared_ptr<allocator>& alloc,
                  const PageList* pages,
                  size_t pageIdx,
+                 size_t pageEndIdx,
                  const LogIterator& logIter,
                  const LogIterator& logEnd,
                  PageManager* pageManager,
                  const Record* record);
-        void setCurrentEntry();
-    public:
-        Iterator() {}
-        Iterator(const Iterator& other);
-        Iterator& operator= (const Iterator& other);
-        Iterator operator++(int);
-        Iterator& operator++();
-        const IteratorEntry& operator*() const;
-        const IteratorEntry* operator->() const;
-        bool operator==(const Iterator&) const;
-        bool operator!=(const Iterator& other) const {
-            return !(*this == other);
+
+        void next();
+
+        bool done() {
+            return !currVersionIter.isValid();
+        }
+
+        const IteratorEntry& value() {
+            return *currVersionIter;
         }
     };
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
@@ -108,7 +108,8 @@ public:
                 const SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
-    std::vector<std::pair<Iterator, Iterator>> startScan(int numThreads) const;
+
+    std::vector<Iterator> startScan(int numThreads) const;
 private:
     template<class Fun>
     bool genericUpdate(const Fun& appendFun,

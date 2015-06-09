@@ -28,24 +28,14 @@ public:
     public:
         using IteratorEntry = BaseIteratorEntry;
 
-        Iterator& operator++();
+        void next();
 
-        Iterator operator++(int) {
-            Iterator result(*this);
-            operator++();
-            return result;
+        bool done() {
+            return true;
         }
 
-        const IteratorEntry& operator*() const {
-            return *operator->();
-        }
-
-        const IteratorEntry* operator->() const;
-
-        bool operator==(const Iterator& rhs) const;
-
-        bool operator!=(const Iterator& rhs) const {
-            return !operator==(rhs);
+        const IteratorEntry& value() const {
+            return *static_cast<IteratorEntry*>(nullptr);
         }
     };
 
@@ -135,7 +125,7 @@ public:
      * @param numThreads Number of threads to use for the scan
      * @return Pairs of begin and end iterator for each thread
      */
-    std::vector<std::pair<Iterator, Iterator>> startScan(int numThreads) const;
+    std::vector<Iterator> startScan(int numThreads) const;
 
     /**
      * @brief Starts a garbage collection run

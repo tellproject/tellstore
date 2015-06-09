@@ -31,8 +31,7 @@ struct ScanThread {
     std::atomic<char*> queries;
     std::vector<ScanQueryImpl*> impls;
     std::atomic<bool>& stopScans;
-    std::atomic<Iterator*> beginIter;
-    std::atomic<Iterator*> endIter;
+    std::atomic<Iterator*> scanIter;
     ScanThread(std::atomic<bool>& stopScans)
         : queries(nullptr)
         , stopScans(stopScans)
@@ -49,16 +48,14 @@ struct ScanThread {
     bool scan() {
         auto qbuffer = queries.load();
         if (qbuffer == nullptr) return false;
-        auto iter = *beginIter;
-        auto end = *endIter;
-        const Record& record = *iter->record();
         ScanQuery query;
         std::vector<bool> queryBitMap;
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
         qbuffer += 8;
-        for (; iter != end; ++iter) {
+        for (auto iter = scanIter.load(); !iter->done(); iter->next()) {
             query.query = qbuffer;
-            const auto& entry = *iter;
+            const auto& entry = iter->value();
+            const auto& record = *entry.record();
             for (uint64_t i = 0; i < numQueries; ++i) {
                 queryBitMap.clear();
                 query.query = query.check(entry.data(), queryBitMap, record);
@@ -78,8 +75,7 @@ struct ScanThread {
             delete impl;
         }
         impls.clear();
-        beginIter.store(nullptr);
-        endIter.store(nullptr);
+        scanIter.store(nullptr);
         queries.store(nullptr);
         return true;
     }
@@ -184,8 +180,7 @@ private:
                 // assignment is crucial: the master will set the queries last
                 // and the slaves will unset the queries last - therefore the
                 // queries atomic is our point of synchronisation
-                scan.beginIter.store(&iterators[i].first);
-                scan.endIter.store(&iterators[i].second);
+                scan.scanIter.store(&iterators[i]);
                 scan.queries.store(queries.get());
             }
             // do the master thread part of the scan
