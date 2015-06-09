@@ -22,7 +22,8 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'p'>("port", &serverConfig.port),
             crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
-            crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity));
+            crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity),
+            crossbow::program_options::value<'s'>("scan-threads", &storageConfig.numScanThreads));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);
