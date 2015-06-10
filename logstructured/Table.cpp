@@ -32,43 +32,50 @@ Table::Iterator::Iterator(const LogImpl::PageIterator& begin, const LogImpl::Pag
           mEntryIt(mPageIt == mPageEnd ? LogPage::EntryIterator() : mPageIt->begin()),
           mEntryEnd(mPageIt == mPageEnd ? LogPage::EntryIterator() : mPageIt->end()) {
     mCurrentEntry.mRecord = record;
-    setCurrentEntry();
+    if (!done()) {
+        setCurrentEntry();
+    }
 }
 
 void Table::Iterator::next() {
+    if (advanceEntry()) {
+        setCurrentEntry();
+    }
+}
+
+bool Table::Iterator::advanceEntry() {
     ++mEntryIt;
     if (mEntryIt == mEntryEnd) {
         ++mPageIt;
         if (mPageIt == mPageEnd) {
-            return;
+            return false;
         }
         mEntryIt = mPageIt->begin();
         mEntryEnd = mPageIt->end();
     }
-    setCurrentEntry();
+    return true;
 }
 
 void Table::Iterator::setCurrentEntry() {
-    for (; mPageIt != mPageEnd; ++mPageIt) {
-        for (; mEntryIt != mEntryEnd; ++mEntryIt) {
-            if (!mEntryIt->sealed()) {
-                continue;
-            }
-            LOG_ASSERT(mEntryIt->size() >= gRecordHeaderSize, "Log record is smaller than record header");
-
-            auto lsmRecord = reinterpret_cast<const LSMRecord*>(mEntryIt->data());
-            auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(lsmRecord->data());
-            if (versionRecord->isInvalid()) {
-                continue;
-            }
-
-            mCurrentEntry.mData = versionRecord->data();
-            mCurrentEntry.mSize = mEntryIt->size() - gRecordHeaderSize;
-            mCurrentEntry.mValidFrom = versionRecord->validFrom();
-            mCurrentEntry.mValidTo = versionRecord->validTo();
-            return;
+    do {
+        if (!mEntryIt->sealed()) {
+            continue;
         }
-    }
+        LOG_ASSERT(mEntryIt->size() >= gRecordHeaderSize, "Log record is smaller than record header");
+
+        auto lsmRecord = reinterpret_cast<const LSMRecord*>(mEntryIt->data());
+        auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(lsmRecord->data());
+        if (versionRecord->isInvalid()) {
+            continue;
+        }
+
+        mCurrentEntry.mData = versionRecord->data();
+        mCurrentEntry.mSize = mEntryIt->size() - gRecordHeaderSize;
+        mCurrentEntry.mValidFrom = versionRecord->validFrom();
+        mCurrentEntry.mValidTo = versionRecord->validTo();
+        return;
+
+    } while (advanceEntry());
 }
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)

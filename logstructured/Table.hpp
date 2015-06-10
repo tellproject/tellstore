@@ -44,6 +44,13 @@ public:
         }
 
     private:
+        /**
+         * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
+         *
+         * The iterator must not be at the end when calling this function.
+         */
+        bool advanceEntry();
+
         void setCurrentEntry();
 
         LogImpl::PageIterator mPageIt;
