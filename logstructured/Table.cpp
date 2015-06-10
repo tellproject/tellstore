@@ -65,7 +65,7 @@ void Table::Iterator::setCurrentEntry() {
 
         auto lsmRecord = reinterpret_cast<const LSMRecord*>(mEntryIt->data());
         auto versionRecord = reinterpret_cast<const ChainedVersionRecord*>(lsmRecord->data());
-        if (versionRecord->isInvalid()) {
+        if (versionRecord->isInvalid() || versionRecord->wasDeleted()) {
             continue;
         }
 
