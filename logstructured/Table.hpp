@@ -210,11 +210,7 @@ public:
     using StorageType = StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>;
     using Transaction = TransactionImpl<StorageType>;
 
-    StoreImpl(const StorageConfig& config)
-            : StoreImpl(config, config.totalMemory) {
-    }
-
-    StoreImpl(const StorageConfig& config, size_t totalMem);
+    StoreImpl(const StorageConfig& config);
 
     PageManager& pageManager() {
         return *(mPageManager.get());
@@ -292,7 +288,15 @@ public:
     }
 
 private:
-    std::unique_ptr<PageManager, std::function<void(PageManager*)>> mPageManager;
+    struct PageManagerDeleter {
+        void operator()(PageManager* pageManager) {
+            allocator::free_in_order(pageManager, [pageManager] () {
+                pageManager->~PageManager();
+            });
+        }
+    };
+
+    std::unique_ptr<PageManager, PageManagerDeleter> mPageManager;
     GC mGc;
     CommitManager mCommitManager;
     TableManager<Table, GC> mTableManager;

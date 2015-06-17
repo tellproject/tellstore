@@ -386,8 +386,8 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 } // namespace logstructured
 
-StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config, size_t totalMem)
-        : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); }),
+StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config)
+        : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory)),
           mTableManager(*mPageManager, config, mGc, mCommitManager),
           mHashMap(config.hashMapCapacity) {
 }
