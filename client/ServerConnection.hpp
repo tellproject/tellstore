@@ -120,7 +120,7 @@ private:
 
     void onSocketError(const std::error_code& ec);
 
-    void onImmediate(uint32_t data) final override;
+    virtual void onImmediate(uint32_t data) final override;
 
     virtual void onDisconnect() final override;
 
