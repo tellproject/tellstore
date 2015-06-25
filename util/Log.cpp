@@ -161,7 +161,7 @@ void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
 
 LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
     auto head = mHead.load();
-    while (true) {
+    while (head.writeHead) {
         // Try to append a new log entry to the page
         auto entry = head.writeHead->appendEntry(size, entrySize);
         if (entry != nullptr) {
@@ -171,6 +171,9 @@ LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
         // The page must be full, acquire a new one
         head = createPage(head);
     }
+
+    // This can only happen if the page manager ran out of space
+    return nullptr;
 }
 
 UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
@@ -187,7 +190,7 @@ UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
         if (!oldHead.appendHead) {
             nHead.writeHead = acquirePage();
             if (!nHead.writeHead) {
-                LOG_ASSERT(false, "PageManager ran out of space");
+                LOG_ERROR("PageManager ran out of space");
                 return nHead;
             }
             ++mPages;
@@ -240,7 +243,7 @@ bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
 
 LogEntry* OrderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
     auto head = mHead.load();
-    while (true) {
+    while (head) {
         // Try to append a new log entry to the page
         auto entry = head->appendEntry(size, entrySize);
         if (entry != nullptr) {
@@ -250,6 +253,9 @@ LogEntry* OrderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
         // The page must be full, acquire a new one
         head = createPage(head);
     }
+
+    // This can only happen if the page manager ran out of space
+    return nullptr;
 }
 
 LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
@@ -270,7 +276,7 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
     // Not enough space left in page - acquire new page
     auto nPage = acquirePage();
     if (!nPage) {
-        LOG_ASSERT(false, "PageManager ran out of space");
+        LOG_ERROR("PageManager ran out of space");
         return nullptr;
     }
 
