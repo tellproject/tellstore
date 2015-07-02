@@ -38,7 +38,7 @@ ServerConnection::~ServerConnection() {
     }
 }
 
-void ServerConnection::connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec) {
+void ServerConnection::connect(const crossbow::string& host, uint16_t port, uint64_t thread) {
     LOG_INFO("Connecting to TellStore server %1%:%2%", host, port);
 
     // Open socket

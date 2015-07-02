@@ -46,7 +46,9 @@ int main(int argc, const char** argv) {
 
     tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore server");
+    LOG_INFO("Starting TellStore server [memory = %1%GB, capacity = %2%, scan-threads = %3%]",
+            double(storageConfig.totalMemory) / double(1024 * 1024 * 1024), storageConfig.hashMapCapacity,
+            storageConfig.numScanThreads);
     tell::store::init();
 
     // Initialize storage

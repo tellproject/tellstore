@@ -17,7 +17,10 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'h'>("help", &help),
             crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'s'>("server", &clientConfig.server),
-            crossbow::program_options::value<'p'>("port", &clientConfig.port));
+            crossbow::program_options::value<'p'>("port", &clientConfig.port),
+            crossbow::program_options::value<'m'>("memory", &clientConfig.scanMemory),
+            crossbow::program_options::value<'n'>("tuple", &clientConfig.numTuple),
+            crossbow::program_options::value<'t'>("transactions", &clientConfig.numTransactions));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);
@@ -39,7 +42,9 @@ int main(int argc, const char** argv) {
 
     tell::store::logger->config.level = tell::store::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore client");
+    LOG_INFO("Starting TellStore client [memory = %1%GB, tuple = %2%, transactions = %3%]",
+            double(clientConfig.scanMemory) / double(1024 * 1024 * 1024), clientConfig.numTuple,
+            clientConfig.numTransactions);
     tell::store::init();
 
     // Initialize network stack

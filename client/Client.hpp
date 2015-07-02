@@ -35,9 +35,9 @@ private:
 
     const char* getTupleData(const char* data, Record& record, const crossbow::string& name);
 
-    crossbow::infinio::InfinibandService mService;
-
     ClientConfig mConfig;
+
+    crossbow::infinio::InfinibandService mService;
 
     TransactionManager mManager;
 

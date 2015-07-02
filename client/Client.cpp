@@ -25,12 +25,14 @@ crossbow::string gTupleText2 = crossbow::string("Chuck pork loin ham hock tri-ti
 } // anonymous namespace
 
 Client::Client(const ClientConfig& config)
-        : mService(config.infinibandLimits),
-          mConfig(config),
-          mManager(mService),
+        : mConfig(config),
+          mService(mConfig.infinibandLimits),
+          mManager(mService, mConfig),
           mTableId(0x0u),
           mActiveTransactions(0),
           mTupleSize(0) {
+    LOG_INFO("Initialized TellStore client");
+
     mSchema.addField(FieldType::INT, "number", true);
     mSchema.addField(FieldType::TEXT, "text1", true);
     mSchema.addField(FieldType::BIGINT, "largenumber", true);
@@ -49,13 +51,6 @@ Client::Client(const ClientConfig& config)
 }
 
 void Client::init() {
-    LOG_INFO("Initializing TellStore client");
-
-    std::error_code ec;
-    mManager.init(mConfig, ec);
-    if (ec) {
-        LOG_ERROR("Failure init [error = %1% %2%]", ec, ec.message());
-    }
     LOG_DEBUG("Start transaction");
     mManager.executeTransaction(std::bind(&Client::addTable, this, std::placeholders::_1));
     mService.run();
@@ -85,13 +80,12 @@ void Client::addTable(Transaction& transaction) {
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("TID %1%] Adding table took %2%ns", transaction.id(), duration.count());
 
-    size_t numTuple = 1000000ull;
-    size_t numTransactions = 10;
-
-    for (size_t i = 0; i < numTransactions; ++i) {
+    for (size_t i = 0; i < mConfig.numTransactions; ++i) {
+        auto startRange = i * mConfig.numTuple;
+        auto endRange = startRange + mConfig.numTuple;
         ++mActiveTransactions;
-        mManager.executeTransaction(std::bind(&Client::executeTransaction, this, std::placeholders::_1, i * numTuple,
-                (i + 1) * numTuple));
+        mManager.executeTransaction(std::bind(&Client::executeTransaction, this, std::placeholders::_1, startRange,
+                endRange));
     }
 }
 

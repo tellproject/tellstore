@@ -68,7 +68,7 @@ public:
         mSocket->execute(std::move(fun), ec);
     }
 
-    void connect(const crossbow::string& host, uint16_t port, uint64_t thread, std::error_code& ec);
+    void connect(const crossbow::string& host, uint16_t port, uint64_t thread);
 
     void shutdown();
 

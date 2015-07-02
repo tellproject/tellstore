@@ -15,6 +15,15 @@ struct ClientConfig {
     /// Port to connect to the server
     uint16_t port = 7241;
 
+    /// Size of memory region to reserve for scans
+    size_t scanMemory = 0x80000000ull;
+
+    /// Number of tuples to insert per transaction
+    size_t numTuple = 1000000ull;
+
+    /// Number of concurrent transactions to start
+    size_t numTransactions = 10;
+
     /// Configuration limits for the Infiniband device
     crossbow::infinio::InfinibandLimits infinibandLimits;
 };

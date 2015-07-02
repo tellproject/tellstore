@@ -114,24 +114,10 @@ private:
 
 class TransactionProcessor {
 public:
-    TransactionProcessor(TransactionManager& manager, crossbow::infinio::InfinibandService& service, uint64_t num)
-            : mManager(manager),
-              mProcessorNumber(num),
-              mConnection(service.createSocket(mProcessorNumber), *this),
-              mConnected(false),
-              mTransactionCount(0),
-              mTransactionId(0x0u),
-              mScanId(0x0u) {
-        mTransactions.set_empty_key(0x0u);
-        mTransactions.set_deleted_key(std::numeric_limits<uint64_t>::max());
-
-        mScans.set_empty_key(0x0u);
-        mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
-    }
+    TransactionProcessor(TransactionManager& manager, crossbow::infinio::InfinibandService& service,
+            const ClientConfig& config, uint64_t num);
 
     ~TransactionProcessor();
-
-    void init(const ClientConfig& config, std::error_code& ec);
 
     uint64_t transactionCount() const {
         return mTransactionCount;
@@ -174,7 +160,7 @@ private:
 
 class TransactionManager {
 public:
-    TransactionManager(crossbow::infinio::InfinibandService& service);
+    TransactionManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config);
 
     ~TransactionManager();
 

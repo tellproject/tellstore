@@ -15,11 +15,6 @@ void* stackFromTransaction(Transaction* transaction) {
     return reinterpret_cast<char*>(transaction) + Transaction::STACK_SIZE + sizeof(Transaction);
 }
 
-/**
- * @brief Memory reserved for scans
- */
-const size_t gScanTotalMemory = 0x80000000ull;
-
 } // anonymous namespace
 
 void Transaction::entry_fun(intptr_t p) {
@@ -268,12 +263,26 @@ void Transaction::addScanTuple(uint16_t count) {
     mTuplePending += count;
 }
 
-TransactionProcessor::~TransactionProcessor() {
-    // TODO Abort all transactions
+TransactionProcessor::TransactionProcessor(TransactionManager& manager, crossbow::infinio::InfinibandService& service,
+        const ClientConfig& config, uint64_t num)
+        : mManager(manager),
+          mProcessorNumber(num),
+          mConnection(service.createSocket(mProcessorNumber), *this),
+          mConnected(false),
+          mTransactionCount(0),
+          mTransactionId(0x0u),
+          mScanId(0x0u) {
+    mTransactions.set_empty_key(0x0u);
+    mTransactions.set_deleted_key(std::numeric_limits<uint64_t>::max());
+
+    mScans.set_empty_key(0x0u);
+    mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
+
+    mConnection.connect(config.server, config.port, mProcessorNumber);
 }
 
-void TransactionProcessor::init(const ClientConfig& config, std::error_code& ec) {
-    mConnection.connect(config.server, config.port, mProcessorNumber, ec);
+TransactionProcessor::~TransactionProcessor() {
+    // TODO Abort all transactions
 }
 
 void TransactionProcessor::executeTransaction(std::function<void(Transaction&)> fun) {
@@ -395,35 +404,26 @@ void TransactionProcessor::handleScanProgress(uint16_t id, uint16_t tupleCount) 
     transaction->resume();
 }
 
-TransactionManager::TransactionManager(crossbow::infinio::InfinibandService& service) {
-    auto data = mmap(nullptr, gScanTotalMemory, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+TransactionManager::TransactionManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
+    auto data = mmap(nullptr, config.scanMemory, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
     if (data == MAP_FAILED) {
         // TODO Error handling
         std::terminate();
     }
 
     int flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
-    mScanRegion = service.registerMemoryRegion(data, gScanTotalMemory, flags);
+    mScanRegion = service.registerMemoryRegion(data, config.scanMemory, flags);
 
     auto numThreads = service.limits().contextThreads;
     mProcessor.reserve(numThreads);
     for (auto i = 0; i < numThreads; ++i) {
-        mProcessor.emplace_back(new TransactionProcessor(*this, service, i));
+        mProcessor.emplace_back(new TransactionProcessor(*this, service, config, i));
     }
 }
 
 TransactionManager::~TransactionManager() {
     for (auto proc : mProcessor) {
         delete proc;
-    }
-}
-
-void TransactionManager::init(const ClientConfig& config, std::error_code& ec) {
-    for (auto proc : mProcessor) {
-        proc->init(config, ec);
-        if (ec) {
-            return;
-        }
     }
 }
 
