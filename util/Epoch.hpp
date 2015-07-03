@@ -6,6 +6,7 @@
 #include <utility>
 #include <functional>
 #include <mutex>
+#include <type_traits>
 
 namespace tell {
 namespace store {
@@ -32,15 +33,54 @@ public:
     static void free_in_order(void* ptr, std::function<void()> destruct = []() { });
 
     static void free_now(void* ptr);
-};
 
-template<typename T>
-static void mark_for_deletion(T* ptr) {
-    if (ptr)
-        allocator::free(ptr, [ptr]() {
+    static void invoke(std::function<void()> fun) {
+        allocator::free(allocator::malloc(0), std::move(fun));
+    }
+
+    template <typename T, typename... Args>
+    static typename std::enable_if<alignof(T) == alignof(void*), T*>::type construct(Args&&... args) {
+        return new (allocator::malloc(sizeof(T))) T(std::forward<Args>(args)...);
+    }
+
+    template <typename T, typename... Args>
+    static typename std::enable_if<(alignof(T) > alignof(void*)) && !(alignof(T) & (alignof(T) - 1)), T*>::type
+            construct(Args&&... args) {
+        return new (allocator::malloc(sizeof(T), alignof(T))) T(std::forward<Args>(args)...);
+    }
+
+    template <typename T>
+    static void destroy(T* ptr) {
+        if (!ptr) {
+            return;
+        }
+
+        allocator::free(ptr, [ptr] () {
             ptr->~T();
         });
-}
+    }
+
+    template <typename T>
+    static void destroy_in_order(T* ptr) {
+        if (!ptr) {
+            return;
+        }
+
+        allocator::free_in_order(ptr, [ptr] () {
+            ptr->~T();
+        });
+    }
+
+    template <typename T>
+    static void destroy_now(T* ptr) {
+        if (!ptr) {
+            return;
+        }
+
+        ptr->~T();
+        allocator::free_now(ptr);
+    }
+};
 
 } // namespace store
 } // namespace tell
