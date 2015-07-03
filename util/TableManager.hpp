@@ -15,7 +15,7 @@
 #include <vector>
 #include <atomic>
 
-#include <tbb/queuing_rw_mutex.h>
+#include <tbb/spin_rw_mutex.h>
 
 namespace tbb {
 inline size_t tbb_hasher(const crossbow::string& str)
@@ -47,7 +47,7 @@ private:
     CommitManager& mCommitManager;
     ScanThreads<Table> mScanThreads;
     std::atomic<bool> mShutDown;
-    mutable tbb::queuing_rw_mutex mTablesMutex;
+    mutable tbb::spin_rw_mutex mTablesMutex;
     tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
     tbb::concurrent_unordered_map<uint64_t, Table*> mTables;
     std::atomic<uint64_t> mLastTableIdx;
@@ -69,7 +69,7 @@ private:
             std::vector<Table*> tables;
             tables.reserve(mNames.size());
             {
-                tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+                typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
                 for (auto& p : mTables) {
                     tables.push_back(p.second);
                 }
@@ -108,7 +108,7 @@ public:
                      uint64_t& idx,
                      Args&&... args) {
         allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
         if (!res.second) {
@@ -122,7 +122,7 @@ public:
     }
 
     bool getTableId(const crossbow::string& name, uint64_t& id) {
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
+        typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         auto res = mNames.find(name);
         if (res == mNames.end()) return false;
         id = res->second;
@@ -136,9 +136,8 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId]->get(key, size, data, snapshot, isNewest);
+        allocator _;
+        return lookupTable(tableId)->get(key, size, data, snapshot, isNewest);
     }
 
     bool getNewest(uint64_t tableId,
@@ -147,9 +146,8 @@ public:
                    const char*& data,
                    uint64_t& version)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId]->getNewest(key, size, data, version);
+        allocator _;
+        return lookupTable(tableId)->getNewest(key, size, data, version);
     }
 
     bool update(uint64_t tableId,
@@ -158,9 +156,8 @@ public:
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId]->update(key, size, data, snapshot);
+        allocator _;
+        return lookupTable(tableId)->update(key, size, data, snapshot);
     }
 
 
@@ -171,9 +168,8 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        mTables[tableId]->insert(key, size, data, snapshot, succeeded);
+        allocator _;
+        lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
     }
 
     void insert(uint64_t tableId,
@@ -182,27 +178,24 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        mTables[tableId]->insert(key, tuple, snapshot, succeeded);
+        allocator _;
+        lookupTable(tableId)->insert(key, tuple, snapshot, succeeded);
     }
 
     bool remove(uint64_t tableId,
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId]->remove(key, snapshot);
+        allocator _;
+        return lookupTable(tableId)->remove(key, snapshot);
     }
 
     bool revert(uint64_t tableId,
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator __;
-        tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId]->revert(key, snapshot);
+        allocator _;
+        return lookupTable(tableId)->revert(key, snapshot);
     }
 
     int numScanThreads() const {
@@ -212,10 +205,7 @@ public:
     bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
         ScanRequest<Table> request;
         request.tableId = tableId;
-        {
-            tbb::queuing_rw_mutex::scoped_lock _(mTablesMutex, false);
-            request.table = mTables[tableId];
-        }
+        request.table = lookupTable(tableId);
         request.query = query;
         request.querySize = querySize;
         request.impls = impls;
@@ -225,6 +215,12 @@ public:
     void forceGC() {
         // Notifies the GC
         mStopCondition.notify_all();
+    }
+
+private:
+    Table* lookupTable(uint64_t tableId) {
+        typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
+        return mTables[tableId];
     }
 };
 
