@@ -75,6 +75,9 @@ public:
         }
     };
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
+
+    ~Table();
+
     bool get(uint64_t key,
              size_t& size,
              const char*& data,

@@ -13,16 +13,25 @@ using namespace tell::store;
 
 namespace {
 
-class LogPageTest : public ::testing::Test {
+class TestBase : public ::testing::Test {
 protected:
-    LogPageTest()
-            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE)),
-              mPage(nullptr) {
+    TestBase(size_t pageCount)
+            : mPageManager(allocator::construct<PageManager>(pageCount * TELL_PAGE_SIZE)) {
     }
 
-    virtual ~LogPageTest() {
-        auto p = mPageManager;
-        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+    virtual ~TestBase() {
+        allocator::destroy_in_order(mPageManager);
+    }
+
+    allocator mAlloc;
+    PageManager* mPageManager;
+};
+
+class LogPageTest : public TestBase {
+protected:
+    LogPageTest()
+            : TestBase(1),
+              mPage(nullptr) {
     }
 
     virtual void SetUp() {
@@ -32,9 +41,6 @@ protected:
     virtual void TearDown() {
         mPageManager->free(mPage);
     }
-
-    allocator mAlloc;
-    PageManager* mPageManager;
 
     LogPage* mPage;
 };
@@ -122,23 +128,14 @@ TEST_F(LogPageTest, entryIterator) {
  * @brief Test fixture for testing Log implementation classes
  */
 template <class Impl>
-class BaseLogTest : public ::testing::Test {
+class BaseLogTest : public TestBase {
 protected:
     BaseLogTest()
-            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 10)),
+            : TestBase(10),
               mLog(*mPageManager) {
     }
 
-    virtual ~BaseLogTest() {
-        auto p = mPageManager;
-        allocator::free_in_order(p, [p](){ p->~PageManager(); });
-    }
-
-    allocator mAlloc;
-    PageManager* mPageManager;
-
     Log<Impl> mLog;
-
 };
 
 using BaseLogTestImplementations = ::testing::Types<UnorderedLogImpl, OrderedLogImpl>;
@@ -615,22 +612,14 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
 #ifdef ENABLE_HEAVYWEIGHT_TESTS
 
 template <typename Impl>
-class LogTestThreaded : public ::testing::Test {
+class LogTestThreaded : public TestBase {
 protected:
     static constexpr int pageCount = 100; // Number of pages to reserve in the page manager - 100
 
     LogTestThreaded()
-            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 100)),
+            : TestBase(pageCount),
               mLog(*mPageManager) {
     }
-
-    virtual ~LogTestThreaded() {
-        auto p = mPageManager;
-        allocator::free_in_order(p, [p](){ p->~PageManager(); });
-    }
-
-    allocator mAlloc;
-    PageManager* mPageManager;
 
     Log<Impl> mLog;
 };

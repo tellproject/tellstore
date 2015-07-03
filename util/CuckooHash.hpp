@@ -56,6 +56,7 @@ public:
     void destroy();
 
     friend class Modifier;
+    friend class allocator;
 
 private:
     CuckooTable(PageManager& pageManager,
@@ -68,7 +69,7 @@ private:
 public:
     void* get(uint64_t key) const;
 
-    Modifier modifier(allocator& alloc);
+    Modifier modifier();
 
     size_t capacity() const;
 
@@ -78,13 +79,13 @@ private: // helper functions
 
 class Modifier {
     friend class CuckooTable;
+    friend class allocator;
 
     using PageT = typename CuckooTable::PageT;
     using EntryT = typename CuckooTable::EntryT;
     static constexpr size_t ENTRIES_PER_PAGE = CuckooTable::ENTRIES_PER_PAGE;
 private:
     CuckooTable& mTable;
-    allocator& alloc;
     std::vector<bool> pageWasModified;
     mutable std::vector<PageT> mPages;
     cuckoo_hash_function hash1;
@@ -93,9 +94,8 @@ private:
     size_t mSize;
     std::vector<PageT> mToDelete;
 private:
-    Modifier(CuckooTable& table, allocator& alloc)
+    Modifier(CuckooTable& table)
         : mTable(table),
-          alloc(alloc),
           pageWasModified(table.mPages.size(), false),
           mPages(table.mPages),
           hash1(table.hash1),

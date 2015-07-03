@@ -97,10 +97,7 @@ public:
         mStopCondition.notify_all();
         mGCThread.join();
         for (auto t : mTables) {
-            if (t.second) {
-                t.second->~Table();
-                allocator::free_now(t.second);
-            }
+            allocator::destroy_now(t.second);
         }
     }
 
@@ -118,9 +115,9 @@ public:
             return false;
         }
 
-        auto ptr = allocator::malloc(sizeof(Table), alignof(Table));
+        auto ptr = allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
         LOG_ASSERT(ptr, "Unable to allocate table");
-        mTables[idx] = new(ptr) Table(mPageManager, schema, idx, std::forward<Args>(args)...);
+        mTables[idx] = ptr;
         return true;
     }
 

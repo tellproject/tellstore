@@ -20,13 +20,6 @@ class Modifier;
 namespace deltamain {
 
 class Page {
-    /**
-     * This class is used to
-     * recycle pages in a save
-     * manner.
-     */
-    class DummyPage {
-    };
     PageManager& mPageManager;
     char* mData;
     uint64_t mStartOffset;
@@ -66,8 +59,7 @@ public:
     void markCurrentForDeletion() {
         auto oldPage = mData;
         auto& pageManager = mPageManager;
-        allocator::free(new (allocator::malloc(sizeof(DummyPage))) DummyPage(),
-                [oldPage, &pageManager]() { pageManager.free(oldPage); });
+        allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
     }
 
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);

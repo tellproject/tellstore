@@ -290,9 +290,7 @@ public:
 private:
     struct PageManagerDeleter {
         void operator()(PageManager* pageManager) {
-            allocator::free_in_order(pageManager, [pageManager] () {
-                pageManager->~PageManager();
-            });
+            allocator::destroy_in_order(pageManager);
         }
     };
 

@@ -87,9 +87,8 @@ void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
 }
 
 void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
-    auto ptr = allocator::malloc(0);
     auto& pageManager = mPageManager;
-    allocator::free(ptr, [begin, end, &pageManager]() {
+    allocator::invoke([begin, end, &pageManager]() {
         auto page = begin;
         while (page != end) {
             auto next = page->next().load();

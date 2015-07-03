@@ -22,7 +22,7 @@ namespace {
 class TableTest : public ::testing::Test {
 protected:
     TableTest()
-            : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(TELL_PAGE_SIZE * 4)),
+            : mPageManager(allocator::construct<PageManager>(4 * TELL_PAGE_SIZE)),
               mHashMap(1024),
               mTable(*mPageManager, mSchema, 1, mHashMap),
               mTx(mCommitManager.startTx()),
@@ -30,8 +30,7 @@ protected:
     }
 
     virtual ~TableTest() {
-        auto p = mPageManager;
-        allocator::free_in_order(p, [p](){ p->~PageManager(); });
+        allocator::destroy_in_order(mPageManager);
     }
 
     /**

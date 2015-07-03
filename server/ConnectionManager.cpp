@@ -37,6 +37,7 @@ void ConnectionManager::shutdown() {
 
     for (auto& con : mConnections) {
         con->shutdown();
+        allocator::destroy(con);
     }
 }
 
@@ -49,7 +50,7 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
 
     LOG_INFO("New incoming connection [address = %1%, thread = %2%]", socket->remoteAddress(), thread);
 
-    auto con = new (allocator::malloc(sizeof(ClientConnection))) ClientConnection(*this, mStorage, socket);
+    auto con = allocator::construct<ClientConnection>(*this, mStorage, socket);
 
     try {
         socket->accept(crossbow::string(), thread);
@@ -60,8 +61,7 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
         } catch (std::system_error& e2) {
             LOG_ERROR("Error closing failed connection [error = %1% %2%]", e2.code(), e2.what());
         }
-        con->~ClientConnection();
-        allocator::free_now(con);
+        allocator::destroy_now(con);
         return;
     }
 
@@ -77,9 +77,7 @@ void ConnectionManager::removeConnection(ClientConnection* con) {
         mConnections.unsafe_erase(con);
     }
 
-    allocator::free(con, [con] () {
-        con->~ClientConnection();
-    });
+    allocator::destroy(con);
 }
 
 } // namespace store

@@ -91,11 +91,19 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)
-    , mHashTable(new (allocator::malloc(sizeof(CuckooTable))) CuckooTable(pageManager))
+    , mHashTable(allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mPages(new (allocator::malloc(sizeof(std::vector<char*>))) std::vector<char*>())
+    , mPages(allocator::construct<PageList>())
 {}
+
+Table::~Table() {
+    allocator::destroy_now(mPages.load());
+
+    auto ht = mHashTable.load();
+    ht->destroy();
+    allocator::destroy_now(ht);
+}
 
 bool Table::get(uint64_t key,
                 size_t& size,
@@ -306,7 +314,7 @@ std::vector<Table::Iterator> Table::startScan(int numThreads) const
 
 void Table::runGC(uint64_t minVersion) {
     allocator _;
-    auto hashTable = mHashTable.load()->modifier(_);
+    auto hashTable = mHashTable.load()->modifier();
     // we need to process the insert-log first. There might be delted
     // records which have an insert
     auto insBegin = mInsertLog.begin();
@@ -322,7 +330,7 @@ void Table::runGC(uint64_t minVersion) {
         insertMap[InsertMapKey(k)].push_back(insIter->data());
     }
     auto& roPages = *mPages.load();
-    auto nPagesPtr = new (malloc(sizeof(PageList))) PageList(roPages);
+    auto nPagesPtr = allocator::construct<PageList>(roPages);
     auto& nPages = *nPagesPtr;
     auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
     PageList newPages;
@@ -351,11 +359,15 @@ void Table::runGC(uint64_t minVersion) {
         nPages.push_back(fillPage);
     }
     // The garbage collection is finished - we can now reset the read only table
-    mPages.store(nPagesPtr);
+    {
+        auto p = mPages.load();
+        mPages.store(nPagesPtr);
+        allocator::destroy(p);
+    }
     {
         auto ht = mHashTable.load();
         mHashTable.store(hashTable.done());
-        allocator::free(ht, [ht](){ ht->~CuckooTable(); });
+        allocator::destroy(ht);
     }
     while (!mInsertLog.truncateLog(insIter.page(), end.page()));
     while (!mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page())); 
@@ -371,13 +383,13 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    : mPageManager(allocator::construct<PageManager>(config.totalMemory), [](PageManager* p){ allocator::destroy_in_order(p); })
     , tableManager(*mPageManager, config, gc, commitManager)
 {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : mPageManager(new (allocator::malloc(sizeof(PageManager))) PageManager(config.totalMemory), [](PageManager* p){ allocator::free_in_order(p, [p](){p->~PageManager();}); })
+    : mPageManager(allocator::construct<PageManager>(totalMem), [](PageManager* p){ allocator::destroy_in_order(p); })
     , tableManager(*mPageManager, config, gc, commitManager)
 {
 }

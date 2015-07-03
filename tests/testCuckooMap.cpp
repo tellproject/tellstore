@@ -6,29 +6,27 @@
 
 using namespace tell::store;
 
-namespace {
-PageManager pageManager(100*TELL_PAGE_SIZE);
-std::atomic<CuckooTable*> table;
-}
-
 class CuckooTest : public ::testing::Test {
 protected:
     CuckooTest()
-    {
-        table.store(new (allocator::malloc(sizeof(CuckooTable))) CuckooTable(pageManager));
+            : pageManager(allocator::construct<PageManager>(20 * TELL_PAGE_SIZE)),
+              table(allocator::construct<CuckooTable>(*pageManager)) {
     }
+
     virtual ~CuckooTest() {
-        std::cerr.flush();
-        auto t = table.load();
-        t->destroy();
-        t->~CuckooTable();
-        allocator::free_now(t);
-        table.store(nullptr);
+        table->destroy();
+        allocator::destroy_now(table);
+
+        allocator::destroy_in_order(pageManager);
     }
+
+    PageManager* pageManager;
+
+    CuckooTable* table;
 };
 
 TEST_F(CuckooTest, GetOnEmpty) {
-    CuckooTable& currTable = *table.load();
+    CuckooTable& currTable = *table;
     // we check for 1000 random values, that get fails
     constexpr int num_tests = 1000;
     std::random_device rnd;
@@ -41,17 +39,17 @@ TEST_F(CuckooTest, GetOnEmpty) {
 
 TEST_F(CuckooTest, SimpleInsert) {
     allocator alloc;
-    CuckooTable& currTable = *table.load();
+    CuckooTable& currTable = *table;
     uint64_t key = 1937;
     std::unique_ptr<int> value(new int(8713));
-    auto modifier = currTable.modifier(alloc);
+    auto modifier = currTable.modifier();
     ASSERT_TRUE(modifier.insert(key, value.get(), false)) << "Insertion of inexistent value not succeeded";
-    auto oldTable = table.load();
-    table.store(modifier.done());
-    ASSERT_NE(table.load(), nullptr) << "Modifier done returned nullptr";
-    ASSERT_NE(table.load(), oldTable) << "After modification, the table must change";
-    allocator::free(oldTable, [oldTable](){oldTable->~CuckooTable();});
-    CuckooTable& nTable = *table.load();
+    auto oldTable = table;
+    table = modifier.done();
+    ASSERT_NE(table, nullptr) << "Modifier done returned nullptr";
+    ASSERT_NE(table, oldTable) << "After modification, the table must change";
+    allocator::destroy_now(oldTable);
+    CuckooTable& nTable = *table;
     int* ptr = reinterpret_cast<int*>(nTable.get(key));
     ASSERT_EQ(ptr, value.get()) << "Table get returned wrong value";
     ASSERT_EQ(*ptr, 8713) << "Value changed";
@@ -75,18 +73,18 @@ protected:
     virtual ~CuckooTestFilled() {}
     virtual void SetUp() {
         allocator alloc;
-        auto m = table.load()->modifier(alloc);
+        auto m = table->modifier();
         for (auto e : entries) {
             m.insert(e, &value, false);
         }
-        auto old = table.load();
-        table.store(m.done());
-        allocator::free_now(old);
+        auto old = table;
+        table = m.done();
+        allocator::destroy_now(old);
     }
 };
 
 TEST_F(CuckooTestFilled, AllExist) {
-    CuckooTable& t = *table.load();
+    CuckooTable& t = *table;
     for (auto e : entries) {
         auto ptr = t.get(e);
         ASSERT_NE(ptr, nullptr);
@@ -96,7 +94,7 @@ TEST_F(CuckooTestFilled, AllExist) {
 
 TEST_F(CuckooTestFilled, DoesNotReplace) {
     allocator alloc;
-    Modifier m = table.load()->modifier(alloc);
+    Modifier m = table->modifier();
     for (auto e : entries) {
         ASSERT_FALSE(m.insert(e, nullptr, false)) << "Replaced value for " << e;
     }
@@ -105,7 +103,7 @@ TEST_F(CuckooTestFilled, DoesNotReplace) {
 TEST_F(CuckooTestFilled, TestResize) {
     allocator alloc;
     int oVal = 2;
-    Modifier m = table.load()->modifier(alloc);
+    Modifier m = table->modifier();
     size_t oldCapacity = m.capacity();
     decltype(entries) newEntries;
     std::mt19937 rnd(10);
@@ -120,11 +118,10 @@ TEST_F(CuckooTestFilled, TestResize) {
         ASSERT_TRUE(m.insert(nVal, &oVal, false));
     }
     ASSERT_NE(oldCapacity, m.capacity());
-    auto oldTable = table.load();
-    table.store(m.done());
-    oldTable->~CuckooTable();
-    allocator::free_now(oldTable);
-    auto& t = *table.load();
+    auto oldTable = table;
+    table = m.done();
+    allocator::destroy_now(oldTable);
+    auto& t = *table;
     for (auto e : entries) {
         auto ptr = reinterpret_cast<int*>(t.get(e));
         ASSERT_EQ(ptr, &value);

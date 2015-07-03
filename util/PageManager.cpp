@@ -5,6 +5,8 @@
 #include <iostream>
 #include <new>
 
+#include "Logging.hpp"
+
 namespace tell {
 namespace store {
 
