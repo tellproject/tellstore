@@ -51,7 +51,7 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data, void*
     checkDataPtr(data);
 
     auto hash = calculateHash(table, key);
-    for (auto pos = hash;; ++pos) {
+    for (auto pos = hash; pos < (hash + mCapacity); ++pos) {
         auto& entry = mBuckets[pos % mCapacity];
         auto ptr = entry.ptr.load();
 
@@ -93,6 +93,9 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data, void*
 
         return true;
     }
+
+    LOG_ASSERT(false, "Hash table is full");
+    return false;
 }
 
 bool OpenAddressingTable::update(uint64_t table, uint64_t key, const void* oldData, void* newData,
@@ -180,7 +183,7 @@ uint64_t OpenAddressingTable::calculateHash(uint64_t table, uint64_t key) const 
 bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint64_t table, uint64_t key,
         void** actualData) {
     auto pos = hash;
-    while (true) {
+    while (pos < (hash + mCapacity)) {
         // Skip our own entry
         if (pos == insertPos) {
             ++pos;
@@ -269,12 +272,15 @@ bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint6
 
         // The pointer changed completely - Recheck the current bucket
     }
+
+    return false;
 }
 
 template <typename T, typename F>
 T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F fun) const {
-    auto pos = calculateHash(table, key);
-    while (true) {
+    auto hash = calculateHash(table, key);
+    auto pos = hash;
+    while (pos < (hash + mCapacity)) {
         auto& entry = mBuckets[pos % mCapacity];
         auto ptr = entry.ptr.load();
 
@@ -309,6 +315,8 @@ T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F
         // Element found
         return fun(entry, reinterpret_cast<const void*>(ptr));
     }
+
+    return notFound;
 }
 
 template <typename T, typename F>
