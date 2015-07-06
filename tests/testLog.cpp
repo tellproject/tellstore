@@ -52,8 +52,8 @@ protected:
 TEST_F(LogPageTest, entrySize) {
     auto entry = mPage->append(31);
     EXPECT_EQ(31, entry->size()) << "Size is not the same as in append";
-    EXPECT_EQ(40, entry->entrySize()) << "Entry size is not 8 byte padded";
-    EXPECT_EQ(0, (reinterpret_cast<uintptr_t>(entry->data()) % 8)) << "Entry data is not 8 byte aligned";
+    EXPECT_EQ(48, entry->entrySize()) << "Entry size is not 16 byte padded";
+    EXPECT_EQ(0, (reinterpret_cast<uintptr_t>(entry->data()) % 16)) << "Entry data is not 16 byte aligned";
 }
 
 /**

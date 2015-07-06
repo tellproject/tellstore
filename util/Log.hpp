@@ -41,12 +41,13 @@ public:
     /**
      * @brief Calculates the entry size in the log from the data payload size
      *
-     * Adds the LogEntry class size and adds padding so the size is 8 byte aligned
+     * Adds the LogEntry class size and adds padding so the size is 16 byte aligned
      */
     static uint32_t entrySizeFromSize(uint32_t size) {
+        // TODO Make alignment configurable
         size += LOG_ENTRY_SIZE;
-        size += ((size % 8 != 0) ? (8 - (size % 8)) : 0);
-        LOG_ASSERT(size % 8 == 0, "Final LogEntry size must be 8 byte padded");
+        size += ((size % 16 != 0) ? (16 - (size % 16)) : 0);
+        LOG_ASSERT(size % 16 == 0, "Final LogEntry size must be 16 byte padded");
         return size;
     }
 
@@ -72,7 +73,7 @@ public:
     /**
      * @brief The size of the entry in the log
      *
-     * @note This is not the size of the pure data payload but the size of the whole (8 byte padded) log entry.
+     * @note This is not the size of the pure data payload but the size of the whole (16 byte padded) log entry.
      */
     uint32_t entrySize() const {
         return entrySizeFromSize(size());
@@ -138,24 +139,24 @@ private:
  *
  * A Log-Page has the following form:
  *
- * ---------------------------------------------------------------------------------------------------
- * | next (8 bytes) | offset (4 bytes) | context (4 bytes) | entry | entry | ... | padding (4 bytes) |
- * ---------------------------------------------------------------------------------------------------
+ * ---------------------------------------------------------------------------------------------------------------
+ * | next (8 bytes) | offset (4 bytes) | context (4 bytes) | padding (8 bytes) | entry | ... | padding (8 bytes) |
+ * ---------------------------------------------------------------------------------------------------------------
  *
- * Entries require 4 bytes of space followed by the associated data segment. To keep this data segment 8 byte aligned
- * the log pads the entries to a multiple of 8 bytes and writes the LogEntries at offset 4. Any subsequent entries are
- * aligned with offset 4 due to the padding.
+ * Entries require 8 bytes of space followed by the associated data segment. To keep this data segment 16 byte aligned
+ * the log pads the entries to a multiple of 16 bytes and writes the LogEntries at offset 8. Any subsequent entries are
+ * aligned with offset 8 due to the padding.
  */
 class LogPage : NonCopyable, NonMovable {
 public:
     /// Size of the LogPage data structure
-    static constexpr size_t LOG_HEADER_SIZE = 16;
+    static constexpr size_t LOG_HEADER_SIZE = 24;
 
     /// Maximum size of a log entry
     static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
 
     /// Maximum size of a log entries data payload
-    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE;
+    static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - (LogEntry::LOG_ENTRY_SIZE + 8);
 
     /**
      * @brief Iterator for iterating over all entries in a page
@@ -242,7 +243,7 @@ public:
      * @brief Appends a new entry to this log page
      *
      * @param size Size of the data payload of the new entry
-     * @param entrySize Complete 8 byte padded size of the new entry
+     * @param entrySize Complete 16 byte padded size of the new entry
      * @param type User specified type of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */

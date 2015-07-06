@@ -51,7 +51,7 @@ LogEntry* LogPage::appendEntry(uint32_t size, uint32_t entrySize, uint32_t type)
 
         // Try to acquire the space for the new entry
         auto entry = reinterpret_cast<LogEntry*>(this->data() + position);
-        LOG_ASSERT((reinterpret_cast<uintptr_t>(entry) % 8) == 0 , "Position is not 8 byte aligned");
+        LOG_ASSERT((reinterpret_cast<uintptr_t>(entry) % 16) == 8 , "Position is not 16 byte aligned with offset 8");
 
         auto res = entry->tryAcquire(size, type);
         if (res != 0) {
