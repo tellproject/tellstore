@@ -5,11 +5,12 @@
 
 #include <config.h>
 #include <util/PageManager.hpp>
-#include <util/Epoch.hpp>
 #include <util/Scan.hpp>
 
 #include "Record.hpp"
 #include "InsertMap.hpp"
+
+#include <crossbow/allocator.hpp>
 
 namespace tell {
 namespace store {
@@ -59,7 +60,7 @@ public:
     void markCurrentForDeletion() {
         auto oldPage = mData;
         auto& pageManager = mPageManager;
-        allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
+        crossbow::allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
     }
 
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);

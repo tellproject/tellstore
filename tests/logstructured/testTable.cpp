@@ -3,10 +3,11 @@
 #include <logstructured/Table.hpp>
 
 #include <util/CommitManager.hpp>
-#include <util/Epoch.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/Record.hpp>
+
+#include <crossbow/allocator.hpp>
 
 #include <gtest/gtest.h>
 
@@ -22,15 +23,11 @@ namespace {
 class TableTest : public ::testing::Test {
 protected:
     TableTest()
-            : mPageManager(allocator::construct<PageManager>(4 * TELL_PAGE_SIZE)),
+            : mPageManager(PageManager::construct(4 * TELL_PAGE_SIZE)),
               mHashMap(1024),
               mTable(*mPageManager, mSchema, 1, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
-    }
-
-    virtual ~TableTest() {
-        allocator::destroy_in_order(mPageManager);
     }
 
     /**
@@ -50,8 +47,8 @@ protected:
         EXPECT_EQ(expectedNewest, isNewest);
     }
 
-    allocator mAlloc;
-    PageManager* mPageManager;
+    crossbow::allocator mAlloc;
+    PageManager::Ptr mPageManager;
     Table::HashTable mHashMap;
     Schema mSchema;
 

@@ -28,7 +28,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
 
 # Find dependencies
 find_package(Boost COMPONENTS context REQUIRED)
-find_package(Crossbow COMPONENTS InfinIO REQUIRED)
+find_package(Crossbow COMPONENTS Allocator InfinIO REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 
@@ -97,5 +97,13 @@ target_link_libraries(tests PRIVATE TellStore)
 # Link test against GTest
 target_include_directories(tests PRIVATE ${gtest_SOURCE_DIR}/include)
 target_link_libraries(tests PRIVATE gtest gtest_main)
+
+# Link against Crossbow
+target_include_directories(tests PRIVATE ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(tests PRIVATE crossbow_allocator)
+
+# Link against Jemalloc
+target_include_directories(tests PRIVATE ${Jemalloc_INCLUDE_DIRS})
+target_link_libraries(tests PRIVATE ${Jemalloc_LIBRARIES})
 
 add_test(tests tests)

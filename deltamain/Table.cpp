@@ -11,7 +11,7 @@ namespace deltamain {
 
 
 Table::Iterator::Iterator(
-        const std::shared_ptr<allocator>& alloc,
+        const std::shared_ptr<crossbow::allocator>& alloc,
         const PageList* pages,
         size_t pageIdx,
         size_t pageEndIdx,
@@ -91,18 +91,18 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mSchema(schema)
     , mRecord(schema)
-    , mHashTable(allocator::construct<CuckooTable>(pageManager))
+    , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mPages(allocator::construct<PageList>())
+    , mPages(crossbow::allocator::construct<PageList>())
 {}
 
 Table::~Table() {
-    allocator::destroy_now(mPages.load());
+    crossbow::allocator::destroy_now(mPages.load());
 
     auto ht = mHashTable.load();
     ht->destroy();
-    allocator::destroy_now(ht);
+    crossbow::allocator::destroy_now(ht);
 }
 
 bool Table::get(uint64_t key,
@@ -294,7 +294,7 @@ bool Table::genericUpdate(const Fun& appendFun,
 
 std::vector<Table::Iterator> Table::startScan(int numThreads) const
 {
-    auto alloc = std::make_shared<allocator>();
+    auto alloc = std::make_shared<crossbow::allocator>();
     auto insIter = mInsertLog.begin();
     auto endIns = mInsertLog.end();
     const auto* pages = mPages.load();
@@ -313,7 +313,7 @@ std::vector<Table::Iterator> Table::startScan(int numThreads) const
 }
 
 void Table::runGC(uint64_t minVersion) {
-    allocator _;
+    crossbow::allocator _;
     auto hashTable = mHashTable.load()->modifier();
     // we need to process the insert-log first. There might be delted
     // records which have an insert
@@ -330,7 +330,7 @@ void Table::runGC(uint64_t minVersion) {
         insertMap[InsertMapKey(k)].push_back(insIter->data());
     }
     auto& roPages = *mPages.load();
-    auto nPagesPtr = allocator::construct<PageList>(roPages);
+    auto nPagesPtr = crossbow::allocator::construct<PageList>(roPages);
     auto& nPages = *nPagesPtr;
     auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
     PageList newPages;
@@ -362,12 +362,12 @@ void Table::runGC(uint64_t minVersion) {
     {
         auto p = mPages.load();
         mPages.store(nPagesPtr);
-        allocator::destroy(p);
+        crossbow::allocator::destroy(p);
     }
     {
         auto ht = mHashTable.load();
         mHashTable.store(hashTable.done());
-        allocator::destroy(ht);
+        crossbow::allocator::destroy(ht);
     }
     while (!mInsertLog.truncateLog(insIter.page(), end.page()));
     while (!mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page())); 
@@ -383,13 +383,13 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
-    : mPageManager(allocator::construct<PageManager>(config.totalMemory), [](PageManager* p){ allocator::destroy_in_order(p); })
+    : mPageManager(PageManager::construct(config.totalMemory))
     , tableManager(*mPageManager, config, gc, commitManager)
 {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
-    : mPageManager(allocator::construct<PageManager>(totalMem), [](PageManager* p){ allocator::destroy_in_order(p); })
+    : mPageManager(PageManager::construct(totalMem))
     , tableManager(*mPageManager, config, gc, commitManager)
 {
 }

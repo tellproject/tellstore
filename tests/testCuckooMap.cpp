@@ -9,18 +9,16 @@ using namespace tell::store;
 class CuckooTest : public ::testing::Test {
 protected:
     CuckooTest()
-            : pageManager(allocator::construct<PageManager>(20 * TELL_PAGE_SIZE)),
-              table(allocator::construct<CuckooTable>(*pageManager)) {
+            : pageManager(PageManager::construct(20 * TELL_PAGE_SIZE)),
+              table(crossbow::allocator::construct<CuckooTable>(*pageManager)) {
     }
 
     virtual ~CuckooTest() {
         table->destroy();
-        allocator::destroy_now(table);
-
-        allocator::destroy_in_order(pageManager);
+        crossbow::allocator::destroy_now(table);
     }
 
-    PageManager* pageManager;
+    PageManager::Ptr pageManager;
 
     CuckooTable* table;
 };
@@ -38,7 +36,7 @@ TEST_F(CuckooTest, GetOnEmpty) {
 }
 
 TEST_F(CuckooTest, SimpleInsert) {
-    allocator alloc;
+    crossbow::allocator alloc;
     CuckooTable& currTable = *table;
     uint64_t key = 1937;
     std::unique_ptr<int> value(new int(8713));
@@ -48,7 +46,7 @@ TEST_F(CuckooTest, SimpleInsert) {
     table = modifier.done();
     ASSERT_NE(table, nullptr) << "Modifier done returned nullptr";
     ASSERT_NE(table, oldTable) << "After modification, the table must change";
-    allocator::destroy_now(oldTable);
+    crossbow::allocator::destroy_now(oldTable);
     CuckooTable& nTable = *table;
     int* ptr = reinterpret_cast<int*>(nTable.get(key));
     ASSERT_EQ(ptr, value.get()) << "Table get returned wrong value";
@@ -72,14 +70,14 @@ protected:
     }
     virtual ~CuckooTestFilled() {}
     virtual void SetUp() {
-        allocator alloc;
+        crossbow::allocator alloc;
         auto m = table->modifier();
         for (auto e : entries) {
             m.insert(e, &value, false);
         }
         auto old = table;
         table = m.done();
-        allocator::destroy_now(old);
+        crossbow::allocator::destroy_now(old);
     }
 };
 
@@ -93,7 +91,7 @@ TEST_F(CuckooTestFilled, AllExist) {
 }
 
 TEST_F(CuckooTestFilled, DoesNotReplace) {
-    allocator alloc;
+    crossbow::allocator alloc;
     Modifier m = table->modifier();
     for (auto e : entries) {
         ASSERT_FALSE(m.insert(e, nullptr, false)) << "Replaced value for " << e;
@@ -101,7 +99,7 @@ TEST_F(CuckooTestFilled, DoesNotReplace) {
 }
 
 TEST_F(CuckooTestFilled, TestResize) {
-    allocator alloc;
+    crossbow::allocator alloc;
     int oVal = 2;
     Modifier m = table->modifier();
     size_t oldCapacity = m.capacity();
@@ -120,7 +118,7 @@ TEST_F(CuckooTestFilled, TestResize) {
     ASSERT_NE(oldCapacity, m.capacity());
     auto oldTable = table;
     table = m.done();
-    allocator::destroy_now(oldTable);
+    crossbow::allocator::destroy_now(oldTable);
     auto& t = *table;
     for (auto e : entries) {
         auto ptr = reinterpret_cast<int*>(t.get(e));

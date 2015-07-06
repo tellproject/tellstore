@@ -3,7 +3,6 @@
 #include "ConnectionManager.hpp"
 
 #include <network/ErrorCode.hpp>
-#include <util/Epoch.hpp>
 #include <util/helper.hpp>
 #include <util/Logging.hpp>
 

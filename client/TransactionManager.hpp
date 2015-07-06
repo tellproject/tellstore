@@ -35,13 +35,13 @@ public:
     static constexpr size_t STACK_SIZE = 0x800000;
 
     static Transaction* allocate(TransactionProcessor& processor, uint64_t id, std::function<void(Transaction&)> fun) {
-        void* data = je_malloc(STACK_SIZE + sizeof(Transaction));
+        void* data = ::malloc(STACK_SIZE + sizeof(Transaction));
         return new (data) Transaction(processor, id, std::move(fun));
     }
 
     static void destroy(Transaction* transaction) {
         transaction->~Transaction();
-        je_free(transaction);
+        ::free(transaction);
     }
 
     Transaction(TransactionProcessor& processor, uint64_t id, std::function<void(Transaction&)> fun);

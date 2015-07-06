@@ -1,9 +1,9 @@
 #include "Client.hpp"
 #include "ClientConfig.hpp"
 
-#include <util/Epoch.hpp>
 #include <util/Logging.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
@@ -45,7 +45,9 @@ int main(int argc, const char** argv) {
     LOG_INFO("Starting TellStore client [memory = %1%GB, tuple = %2%, transactions = %3%]",
             double(clientConfig.scanMemory) / double(1024 * 1024 * 1024), clientConfig.numTuple,
             clientConfig.numTransactions);
-    tell::store::init();
+
+    // Initialize allocator
+    crossbow::allocator::init();
 
     // Initialize network stack
     tell::store::Client client(clientConfig);

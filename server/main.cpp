@@ -2,10 +2,10 @@
 #include "ConnectionManager.hpp"
 
 #include <tellstore.hpp>
-#include <util/Epoch.hpp>
 #include <util/Logging.hpp>
 #include <util/StorageConfig.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
@@ -49,7 +49,9 @@ int main(int argc, const char** argv) {
     LOG_INFO("Starting TellStore server [memory = %1%GB, capacity = %2%, scan-threads = %3%]",
             double(storageConfig.totalMemory) / double(1024 * 1024 * 1024), storageConfig.hashMapCapacity,
             storageConfig.numScanThreads);
-    tell::store::init();
+
+    // Initialize allocator
+    crossbow::allocator::init();
 
     // Initialize storage
     tell::store::Storage storage(storageConfig);

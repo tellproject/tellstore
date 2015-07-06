@@ -1,6 +1,8 @@
 #include <config.h>
 #include <util/Log.hpp>
-#include <util/Epoch.hpp>
+#include <util/PageManager.hpp>
+
+#include <crossbow/allocator.hpp>
 
 #include <gtest/gtest.h>
 
@@ -16,15 +18,11 @@ namespace {
 class TestBase : public ::testing::Test {
 protected:
     TestBase(size_t pageCount)
-            : mPageManager(allocator::construct<PageManager>(pageCount * TELL_PAGE_SIZE)) {
+            : mPageManager(PageManager::construct(pageCount * TELL_PAGE_SIZE)) {
     }
 
-    virtual ~TestBase() {
-        allocator::destroy_in_order(mPageManager);
-    }
-
-    allocator mAlloc;
-    PageManager* mPageManager;
+    crossbow::allocator mAlloc;
+    PageManager::Ptr mPageManager;
 };
 
 class LogPageTest : public TestBase {

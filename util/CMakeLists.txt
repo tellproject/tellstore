@@ -17,8 +17,6 @@ set(UTIL_SRCS
     CuckooHash.cpp
     CuckooHash.hpp
     FixedSizeStack.hpp
-    Epoch.cpp
-    Epoch.hpp
     TableManager.hpp
     Record.hpp
     Record.cpp
@@ -51,12 +49,8 @@ target_include_directories(TellStoreUtil PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(TellStoreUtil PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(TellStoreUtil PUBLIC crossbow_allocator)
 
 # Link against TBB
 target_include_directories(TellStoreUtil PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(TellStoreUtil PUBLIC ${TBB_LIBRARIES})
-
-# Link against Jemalloc
-target_include_directories(TellStoreUtil PUBLIC ${Jemalloc_INCLUDE_DIRS})
-target_link_libraries(TellStoreUtil PUBLIC ${Jemalloc_LIBRARIES})
-target_compile_definitions(TellStoreUtil PUBLIC JEMALLOC_NO_DEMANGLE)

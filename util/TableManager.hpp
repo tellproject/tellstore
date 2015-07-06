@@ -1,13 +1,14 @@
 #pragma once
 
 #include "StorageConfig.hpp"
-#include "Epoch.hpp"
 #include "Record.hpp"
 #include "CommitManager.hpp"
 #include "Scan.hpp"
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/concurrent_map.hpp>
 #include <crossbow/string.hpp>
+
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -97,7 +98,7 @@ public:
         mStopCondition.notify_all();
         mGCThread.join();
         for (auto t : mTables) {
-            allocator::destroy_now(t.second);
+            crossbow::allocator::destroy_now(t.second);
         }
     }
 
@@ -107,7 +108,7 @@ public:
                      const Schema& schema,
                      uint64_t& idx,
                      Args&&... args) {
-        allocator __;
+        crossbow::allocator __;
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         auto res = mNames.insert(std::make_pair(name, idx));
@@ -115,7 +116,7 @@ public:
             return false;
         }
 
-        auto ptr = allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
+        auto ptr = crossbow::allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
         LOG_ASSERT(ptr, "Unable to allocate table");
         mTables[idx] = ptr;
         return true;
@@ -136,7 +137,7 @@ public:
              const SnapshotDescriptor& snapshot,
              bool& isNewest)
     {
-        allocator _;
+        crossbow::allocator _;
         return lookupTable(tableId)->get(key, size, data, snapshot, isNewest);
     }
 
@@ -146,7 +147,7 @@ public:
                    const char*& data,
                    uint64_t& version)
     {
-        allocator _;
+        crossbow::allocator _;
         return lookupTable(tableId)->getNewest(key, size, data, version);
     }
 
@@ -156,7 +157,7 @@ public:
                 const char* const data,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator _;
+        crossbow::allocator _;
         return lookupTable(tableId)->update(key, size, data, snapshot);
     }
 
@@ -168,7 +169,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        allocator _;
+        crossbow::allocator _;
         lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
     }
 
@@ -178,7 +179,7 @@ public:
                 const SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
-        allocator _;
+        crossbow::allocator _;
         lookupTable(tableId)->insert(key, tuple, snapshot, succeeded);
     }
 
@@ -186,7 +187,7 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator _;
+        crossbow::allocator _;
         return lookupTable(tableId)->remove(key, snapshot);
     }
 
@@ -194,7 +195,7 @@ public:
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
     {
-        allocator _;
+        crossbow::allocator _;
         return lookupTable(tableId)->revert(key, snapshot);
     }
 

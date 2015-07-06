@@ -2,11 +2,11 @@
 
 #include "ClientConnection.hpp"
 
-#include <crossbow/infinio/Endpoint.hpp>
-
-#include <util/Epoch.hpp>
 #include <util/Logging.hpp>
 #include <util/PageManager.hpp>
+
+#include <crossbow/allocator.hpp>
+#include <crossbow/infinio/Endpoint.hpp>
 
 namespace tell {
 namespace store {
@@ -37,7 +37,7 @@ void ConnectionManager::shutdown() {
 
     for (auto& con : mConnections) {
         con->shutdown();
-        allocator::destroy(con);
+        crossbow::allocator::destroy(con);
     }
 }
 
@@ -50,7 +50,7 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
 
     LOG_INFO("New incoming connection [address = %1%, thread = %2%]", socket->remoteAddress(), thread);
 
-    auto con = allocator::construct<ClientConnection>(*this, mStorage, socket);
+    auto con = crossbow::allocator::construct<ClientConnection>(*this, mStorage, socket);
 
     try {
         socket->accept(crossbow::string(), thread);
@@ -61,7 +61,7 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
         } catch (std::system_error& e2) {
             LOG_ERROR("Error closing failed connection [error = %1% %2%]", e2.code(), e2.what());
         }
-        allocator::destroy_now(con);
+        crossbow::allocator::destroy_now(con);
         return;
     }
 
@@ -77,7 +77,7 @@ void ConnectionManager::removeConnection(ClientConnection* con) {
         mConnections.unsafe_erase(con);
     }
 
-    allocator::destroy(con);
+    crossbow::allocator::destroy(con);
 }
 
 } // namespace store

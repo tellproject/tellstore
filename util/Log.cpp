@@ -1,6 +1,6 @@
 #include "Log.hpp"
 
-#include "Epoch.hpp"
+#include <crossbow/allocator.hpp>
 
 namespace tell {
 namespace store {
@@ -89,7 +89,7 @@ void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
 
 void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
     auto& pageManager = mPageManager;
-    allocator::invoke([begin, end, &pageManager]() {
+    crossbow::allocator::invoke([begin, end, &pageManager]() {
         auto page = begin;
         while (page != end) {
             auto next = page->next().load();

@@ -1,12 +1,24 @@
 #pragma once
 
 #include <config.h>
-#include <cstddef>
 #include "FixedSizeStack.hpp"
 #include "NonCopyable.hpp"
 
+#include <crossbow/allocator.hpp>
+
+#include <cstddef>
+#include <memory>
+
 namespace tell {
 namespace store {
+
+class PageManager;
+
+struct PageManagerDeleter {
+    void operator()(PageManager* pageManager) {
+        crossbow::allocator::destroy_in_order(pageManager);
+    }
+};
 
 /**
 * This class purpose is to store all pages
@@ -20,6 +32,17 @@ private:
     size_t mSize;
     FixedSizeStack<void*> mPages;
 public:
+    using Ptr = std::unique_ptr<PageManager, PageManagerDeleter>;
+
+    /**
+     * @brief Constructs a new page manager pointer
+     *
+     * The resulting page manager is allocated and destroyed within the epoch.
+     */
+    static PageManager::Ptr construct(size_t size) {
+        return PageManager::Ptr(crossbow::allocator::construct<PageManager>(size));
+    }
+
     /**
     * This class must not instantiated more than once!
     *

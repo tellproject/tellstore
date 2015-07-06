@@ -304,7 +304,7 @@ void TransactionProcessor::executeTransaction(std::function<void(Transaction&)> 
     if (ec) {
         LOG_ERROR("Proc %1% TID %2%] Failure starting transaction [error = %3% %4%]", mProcessorNumber, id, ec,
                 ec.message());
-        je_free(transaction);
+        ::free(transaction);
     }
 }
 
@@ -327,7 +327,7 @@ void TransactionProcessor::endTransaction(uint64_t id) {
     std::error_code ec;
     mConnection.execute([transaction] () {
         transaction->~Transaction();
-        je_free(transaction);
+        ::free(transaction);
     }, ec);
     if (ec) {
         LOG_ERROR("Proc %1% TID %2%] Failure releasing transaction [error = %3% %4%]", mProcessorNumber, id, ec,

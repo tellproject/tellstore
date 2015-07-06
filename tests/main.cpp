@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
-#include <util/Epoch.hpp>
+
+#include <crossbow/allocator.hpp>
 
 int main(int argc, char** argv) {
-    tell::store::init();
+    crossbow::allocator::init();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

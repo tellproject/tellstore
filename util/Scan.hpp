@@ -3,16 +3,17 @@
 #include "ScanQuery.hpp"
 #include "Record.hpp"
 #include <config.h>
-#include <util/Epoch.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/singleconsumerqueue.hpp>
+
 #include <vector>
 #include <unordered_map>
 #include <tuple>
 #include <memory>
 #include <atomic>
 #include <thread>
-#include <memory.h>
+#include <cstring>
 
 namespace tell {
 namespace store {
@@ -169,7 +170,7 @@ private:
                 }
             }
 
-            allocator _;
+            crossbow::allocator _;
 
             // now we generated the QBuffer - we now give it to all the scan threads
             auto iterators = std::get<0>(q.second)->startScan(mNumThreads);
@@ -196,9 +197,6 @@ private:
             }
         }
         return true;
-    }
-
-    void slaveThread() {
     }
 };
 

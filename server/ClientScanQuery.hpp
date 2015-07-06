@@ -1,9 +1,9 @@
 #pragma once
 
-#include <util/Epoch.hpp>
 #include <util/ScanQuery.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 
@@ -148,7 +148,7 @@ private:
     crossbow::infinio::InfinibandSocket mSocket;
 
     /// Allocator to protect pages from recycling while the scan has outstanding writes
-    allocator mAllocator;
+    crossbow::allocator mAllocator;
 
     /// Mutex used to serialize writes over the connection
     tbb::spin_mutex mSendMutex;

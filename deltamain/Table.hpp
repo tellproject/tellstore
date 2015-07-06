@@ -10,12 +10,14 @@
 #include <util/Record.hpp>
 #include <util/IteratorEntry.hpp>
 
+#include <crossbow/allocator.hpp>
+#include <crossbow/string.hpp>
+
 #include <memory>
 #include <vector>
 #include <limits>
 #include <atomic>
 #include <functional>
-#include <crossbow/string.hpp>
 
 #include "Page.hpp"
 
@@ -40,7 +42,7 @@ public:
         friend class Table;
         using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     private: // assigned members
-        std::shared_ptr<allocator> mAllocator;
+        std::shared_ptr<crossbow::allocator> mAllocator;
         const PageList* pages;
         size_t pageIdx;
         size_t pageEndIdx;
@@ -55,7 +57,7 @@ public:
         Page::Iterator pageEnd;
         CDMRecord::VersionIterator currVersionIter;
     public:
-        Iterator(const std::shared_ptr<allocator>& alloc,
+        Iterator(const std::shared_ptr<crossbow::allocator>& alloc,
                  const PageList* pages,
                  size_t pageIdx,
                  size_t pageEndIdx,
@@ -133,7 +135,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using GC = deltamain::GarbageCollector;
     using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
     using Transaction = TransactionImpl<StorageType>;
-    std::unique_ptr<PageManager, std::function<void(PageManager*)>> mPageManager;
+    PageManager::Ptr mPageManager;
     GC gc;
     CommitManager commitManager;
     TableManager<Table, GC> tableManager;

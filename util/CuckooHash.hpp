@@ -6,8 +6,9 @@
 #include <random>
 #include <memory.h>
 #include "PageManager.hpp"
-#include "Epoch.hpp"
 #include "functional.hpp"
+
+#include <crossbow/allocator.hpp>
 
 namespace tell {
 namespace store {
@@ -56,7 +57,7 @@ public:
     void destroy();
 
     friend class Modifier;
-    friend class allocator;
+    friend class crossbow::allocator;
 
 private:
     CuckooTable(PageManager& pageManager,
@@ -79,7 +80,7 @@ private: // helper functions
 
 class Modifier {
     friend class CuckooTable;
-    friend class allocator;
+    friend class crossbow::allocator;
 
     using PageT = typename CuckooTable::PageT;
     using EntryT = typename CuckooTable::EntryT;

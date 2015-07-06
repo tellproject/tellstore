@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <tellstore.hpp>
-#include <util/Epoch.hpp>
+
+#include <crossbow/allocator.hpp>
 
 using namespace tell::store;
 
@@ -28,7 +29,7 @@ TEST(simple, insert_and_get)
     uint64_t tId;
     crossbow::string tableName = "testTable";
     {
-        tell::store::allocator _; // needed to free memory
+        crossbow::allocator _; // needed to free memory
         auto res = storage.createTable(tableName, schema, tId);
         ASSERT_TRUE(res) << "creating table failed";
         EXPECT_TRUE(correctTableId(tableName, tId, storage));
@@ -48,7 +49,7 @@ TEST(simple, insert_and_get)
         storage.forceGC();
     }
     {
-        tell::store::allocator _;
+        crossbow::allocator _;
         uint64_t sTid;
         ASSERT_TRUE(storage.getTableId(tableName, sTid)) << "This table exists";
         ASSERT_EQ(sTid, tId) << "Table Id did change";

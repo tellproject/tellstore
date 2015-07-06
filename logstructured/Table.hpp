@@ -343,13 +343,7 @@ public:
     }
 
 private:
-    struct PageManagerDeleter {
-        void operator()(PageManager* pageManager) {
-            allocator::destroy_in_order(pageManager);
-        }
-    };
-
-    std::unique_ptr<PageManager, PageManagerDeleter> mPageManager;
+    PageManager::Ptr mPageManager;
     GC mGc;
     CommitManager mCommitManager;
     TableManager<Table, GC> mTableManager;
