@@ -10,7 +10,7 @@ static_assert(sizeof(LogPage*) == sizeof(std::atomic<LogPage*>), "Atomics won't 
 static_assert(sizeof(LogPage) <= LogPage::LOG_HEADER_SIZE, "LOG_HEADER_SIZE must be larger or equal than LogPage");
 static_assert(sizeof(LogEntry) <= LogEntry::LOG_ENTRY_SIZE, "LOG_ENTRY_SIZE must be larger or equal than LogEntry");
 
-uint32_t LogEntry::tryAcquire(uint32_t size) {
+uint32_t LogEntry::tryAcquire(uint32_t size, uint32_t type) {
     LOG_ASSERT(size != 0x0u, "Size has to be greater than zero");
     LOG_ASSERT((size >> 31) == 0, "MSB has to be zero");
 
@@ -19,19 +19,20 @@ uint32_t LogEntry::tryAcquire(uint32_t size) {
     if (!mSize.compare_exchange_strong(exp, s)) {
         return entrySizeFromSize(exp >> 1);
     }
+    mType = type;
     return 0x0u;
 }
 
-LogEntry* LogPage::append(uint32_t size) {
+LogEntry* LogPage::append(uint32_t size, uint32_t type /* = 0x0u */) {
     auto entrySize = LogEntry::entrySizeFromSize(size);
     if (entrySize > LogPage::MAX_ENTRY_SIZE) {
         LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
         return nullptr;
     }
-    return appendEntry(size, entrySize);
+    return appendEntry(size, entrySize, type);
 }
 
-LogEntry* LogPage::appendEntry(uint32_t size, uint32_t entrySize) {
+LogEntry* LogPage::appendEntry(uint32_t size, uint32_t entrySize, uint32_t type) {
     auto offset = mOffset.load();
 
     // Check if page is already sealed
@@ -50,9 +51,9 @@ LogEntry* LogPage::appendEntry(uint32_t size, uint32_t entrySize) {
 
         // Try to acquire the space for the new entry
         auto entry = reinterpret_cast<LogEntry*>(this->data() + position);
-        LOG_ASSERT((reinterpret_cast<uintptr_t>(entry) % 8) == 4 , "Position is not 8 byte aligned with offset 4");
+        LOG_ASSERT((reinterpret_cast<uintptr_t>(entry) % 8) == 0 , "Position is not 8 byte aligned");
 
-        auto res = entry->tryAcquire(size);
+        auto res = entry->tryAcquire(size, type);
         if (res != 0) {
             position += res;
             continue;
@@ -158,11 +159,11 @@ void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
     freePage(next, end);
 }
 
-LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
+LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize, uint32_t type) {
     auto head = mHead.load();
     while (head.writeHead) {
         // Try to append a new log entry to the page
-        auto entry = head.writeHead->appendEntry(size, entrySize);
+        auto entry = head.writeHead->appendEntry(size, entrySize, type);
         if (entry != nullptr) {
             return entry;
         }
@@ -240,11 +241,11 @@ bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
     return true;
 }
 
-LogEntry* OrderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize) {
+LogEntry* OrderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize, uint32_t type) {
     auto head = mHead.load();
     while (head) {
         // Try to append a new log entry to the page
-        auto entry = head->appendEntry(size, entrySize);
+        auto entry = head->appendEntry(size, entrySize, type);
         if (entry != nullptr) {
             return entry;
         }
@@ -307,14 +308,14 @@ Log<Impl>::~Log() {
 }
 
 template <class Impl>
-LogEntry* Log<Impl>::append(uint32_t size) {
+LogEntry* Log<Impl>::append(uint32_t size, uint32_t type /* = 0x0u */) {
     auto entrySize = LogEntry::entrySizeFromSize(size);
     if (entrySize > LogPage::MAX_ENTRY_SIZE) {
         LOG_ASSERT(false, "Tried to append %d bytes but %d bytes is max", entrySize, LogPage::MAX_ENTRY_SIZE);
         return nullptr;
     }
 
-    return Impl::appendEntry(size, entrySize);
+    return Impl::appendEntry(size, entrySize, type);
 }
 
 template class Log<UnorderedLogImpl>;

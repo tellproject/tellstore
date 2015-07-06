@@ -19,7 +19,7 @@ namespace store {
 class LogEntry : NonCopyable, NonMovable {
 public:
     /// Size of the LogEntry data structure
-    static constexpr size_t LOG_ENTRY_SIZE = 4;
+    static constexpr size_t LOG_ENTRY_SIZE = 8;
 
     /**
      * @brief Returns the LogEntry struct associated with a given data pointer
@@ -77,6 +77,10 @@ public:
         return entrySizeFromSize(size());
     }
 
+    uint32_t type() const {
+        return mType;
+    }
+
     char* data() {
         return const_cast<char*>(const_cast<const LogEntry*>(this)->data());
     }
@@ -115,13 +119,17 @@ private:
      * written to it yet.
      *
      * @param size Size of the data payload the entry contains
+     * @param type User specified type of the new entry
      * @return 0 if the log entry was successfully acquired else the complete entry size of this log entry
      */
-    uint32_t tryAcquire(uint32_t size);
+    uint32_t tryAcquire(uint32_t size, uint32_t type);
 
     /// Size of the data payload this entry contains shifted to bits 1-31, bit 0 indicates if the entry was sealed
     /// (if 0) or not (if 1)
     std::atomic<uint32_t> mSize;
+
+    /// The type of data this entry contains (this value is user specific)
+    uint32_t mType;
 };
 
 /**
@@ -130,7 +138,7 @@ private:
  * A Log-Page has the following form:
  *
  * ---------------------------------------------------------------------------------------------------
- * | next (8 bytes) | offset (4 bytes) | padding (8 bytes) | entry | entry | ... | padding (4 bytes) |
+ * | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... | padding (4 bytes) |
  * ---------------------------------------------------------------------------------------------------
  *
  * Entries require 4 bytes of space followed by the associated data segment. To keep this data segment 8 byte aligned
@@ -140,10 +148,10 @@ private:
 class LogPage : NonCopyable, NonMovable {
 public:
     /// Size of the LogPage data structure
-    static constexpr size_t LOG_HEADER_SIZE = 20;
+    static constexpr size_t LOG_HEADER_SIZE = 16;
 
     /// Maximum size of a log entry
-    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - (LogPage::LOG_HEADER_SIZE + 4);
+    static constexpr uint32_t MAX_ENTRY_SIZE = TELL_PAGE_SIZE - LogPage::LOG_HEADER_SIZE;
 
     /// Maximum size of a log entries data payload
     static constexpr uint32_t MAX_DATA_SIZE = MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE;
@@ -223,18 +231,20 @@ public:
      * @brief Appends a new entry to this log page
      *
      * @param size Size of the data payload of the new entry
+     * @param type User specified type of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */
-    LogEntry* append(uint32_t size);
+    LogEntry* append(uint32_t size, uint32_t type = 0x0u);
 
     /**
      * @brief Appends a new entry to this log page
      *
      * @param size Size of the data payload of the new entry
      * @param entrySize Complete 8 byte padded size of the new entry
+     * @param type User specified type of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry in this page
      */
-    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize, uint32_t type);
 
     /**
      * @brief Page preceeding the current page in the log
@@ -555,7 +565,7 @@ public:
 protected:
     UnorderedLogImpl(PageManager& pageManager);
 
-    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize, uint32_t type);
 
     /**
      * @brief Page iteration starts from the head
@@ -770,7 +780,7 @@ public:
 protected:
     OrderedLogImpl(PageManager& pageManager);
 
-    LogEntry* appendEntry(uint32_t size, uint32_t entrySize);
+    LogEntry* appendEntry(uint32_t size, uint32_t entrySize, uint32_t type);
 
     /**
      * @brief Page iteration starts from the tail
@@ -889,9 +899,10 @@ public:
      * @brief Appends a new entry to the log
      *
      * @param size Size of the data payload of the new entry
+     * @param type User specified type of the new entry
      * @return Pointer to allocated LogEntry or nullptr if unable to allocate the entry
      */
-    LogEntry* append(uint32_t size);
+    LogEntry* append(uint32_t size, uint32_t type = 0x0u);
 
     PageIterator pageBegin() {
         return PageIterator(Impl::pageBegin());
