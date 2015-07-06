@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstddef>
 #include <iterator>
+#include <tuple>
 
 namespace tell {
 namespace store {
@@ -267,9 +268,9 @@ public:
     /**
      * @brief Atomically retrieves the offset and whether the page is sealed
      */
-    std::pair<uint32_t, bool> offsetAndSealed() const {
+    std::tuple<uint32_t, bool> offsetAndSealed() const {
         auto offset = mOffset.load();
-        return std::make_pair(offset >> 1, (offset & 0x1u) == 0);
+        return std::make_tuple(offset >> 1, (offset & 0x1u) == 0);
     }
 
     EntryIterator begin() {
@@ -374,10 +375,10 @@ public:
          * @return True if the pointer was successfully advanced, false if we already reached the end
          */
         bool advanceEntry() {
-            LOG_ASSERT(mPos <= mCachedOffset.first, "Current position is larger than the page offset");
+            LOG_ASSERT(mPos <= std::get<0>(mCachedOffset), "Current position is larger than the page offset");
 
             // Check if we already point past the last element
-            if (mPos == mCachedOffset.first) {
+            if (mPos == std::get<0>(mCachedOffset)) {
                 return false;
             }
 
@@ -416,7 +417,7 @@ public:
 
         /// Cached offset and sealed state of the page - by caching this value we don't have to read the offset from the
         /// page - with a potential cache miss - everytime we increment the iterator.
-        std::pair<uint32_t, bool> mCachedOffset;
+        std::tuple<uint32_t, bool> mCachedOffset;
 
         /// Current offset the iterator is pointing to
         uint32_t mPos;
@@ -484,7 +485,7 @@ public:
         UnorderedLogIteratorImpl(EntryType page, uint32_t pos)
                 : Base(page, pos) {
             // Skip empty pages
-            while (Base::mCachedOffset.first == 0 && Base::advancePage()) {}
+            while (std::get<0>(Base::mCachedOffset) == 0 && Base::advancePage()) {}
         }
 
         UnorderedLogIteratorImpl(EntryType page)
@@ -500,7 +501,7 @@ public:
 
             // Advance to the next page if the iterator points to a invalid positon (i.e. pos == offset) while skipping
             // any empty pages (pos == offset == 0)
-            while (Base::mPos == Base::mCachedOffset.first && Base::advancePage()) {}
+            while (Base::mPos == std::get<0>(Base::mCachedOffset) && Base::advancePage()) {}
 
             return *this;
         }
@@ -738,14 +739,14 @@ public:
     private:
         void maybeUpdateCachedOffset() {
             // Only update the cached offset if it is not yet sealed and we reached the end of the page
-            if (!Base::mCachedOffset.second && Base::mPos == Base::mCachedOffset.first) {
+            if (!std::get<1>(Base::mCachedOffset) && Base::mPos == std::get<0>(Base::mCachedOffset)) {
                 Base::mCachedOffset = Base::mPage->offsetAndSealed();
             }
         }
 
         void maybeAdvancePage() {
             // We only advance to the next page if the page is sealed and we reached the end of the page
-            if (!Base::mCachedOffset.second || Base::mPos != Base::mCachedOffset.first) {
+            if (!std::get<1>(Base::mCachedOffset) || Base::mPos != std::get<0>(Base::mCachedOffset)) {
                 return;
             }
 
