@@ -7,6 +7,7 @@
 #include <util/Log.hpp>
 #include <util/NonCopyable.hpp>
 #include <util/OpenAddressingHash.hpp>
+#include <util/PageManager.hpp>
 #include <util/Record.hpp>
 #include <util/TableManager.hpp>
 #include <util/TransactionImpl.hpp>
@@ -18,51 +19,112 @@ namespace store {
 namespace logstructured {
 
 class ChainedVersionRecord;
+class Table;
+class VersionRecordIterator;
+
+using LogImpl = Log<UnorderedLogImpl>;
+
+/**
+ * @brief Scan iterator for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
+ */
+class GcScanIterator : NonCopyable {
+public:
+    using IteratorEntry = BaseIteratorEntry;
+
+    GcScanIterator(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
+            uint64_t minVersion, const Record* record);
+
+    ~GcScanIterator();
+
+    GcScanIterator(GcScanIterator&& other);
+
+    void next();
+
+    bool done() {
+        return (mPageIt == mPageEnd && mEntryIt == mEntryEnd);
+    }
+
+    const IteratorEntry& value() const {
+        return mCurrentEntry;
+    }
+
+private:
+    /**
+     * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
+     *
+     * The iterator must not be at the end when calling this function.
+     */
+    bool advanceEntry();
+
+    /**
+     * @brief Initializes the iterator with the current element or the next valid element
+     *
+     * Performs garbage collection while scanning over a page.
+     */
+    void setCurrentEntry();
+
+    /**
+     * @brief Recycle the given element
+     *
+     * Copies the element to a recycling page and replaces the old element in the version list with the new element.
+     *
+     * @param oldElement The element to recycle
+     * @param size Size of the old element
+     * @param type Type of the old element
+     */
+    void recycleEntry(ChainedVersionRecord* oldElement, uint32_t size, uint32_t type);
+
+    /**
+     * @brief Replaces the given old element with the given new element in the version list of the record
+     *
+     * The two elements must belong to the same record.
+     *
+     * @param oldElement Old element to remove from the version list
+     * @param newElement New element to replace the old element with
+     * @return Whether the replacement was successful
+     */
+    bool replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement);
+
+    Table& mTable;
+    uint64_t mMinVersion;
+
+    LogImpl::PageIterator mPagePrev;
+    LogImpl::PageIterator mPageIt;
+    LogImpl::PageIterator mPageEnd;
+
+    LogPage::EntryIterator mEntryIt;
+    LogPage::EntryIterator mEntryEnd;
+
+    LogPage* mRecyclingHead;
+    LogPage* mRecyclingTail;
+
+    /// Amount of garbage in the current page
+    uint32_t mGarbage;
+
+    /// Whether all entries in the current page were sealed
+    bool mSealed;
+
+    /// Whether the current page is being recycled
+    /// Initialized to false to prevent the first page from being garbage collected
+    bool mRecycle;
+
+    IteratorEntry mCurrentEntry;
+};
 
 /**
  * @brief A table using a Log-Structured Memory approach as its data store
  */
 class Table : NonCopyable, NonMovable {
 public:
-    using LogImpl = Log<UnorderedLogImpl>;
     using HashTable = OpenAddressingTable;
 
-    class Iterator {
-    public:
-        using IteratorEntry = BaseIteratorEntry;
-
-        Iterator(const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end, const Record* record);
-
-        void next();
-
-        bool done() {
-            return (mPageIt == mPageEnd && mEntryIt == mEntryEnd);
-        }
-
-        const IteratorEntry& value() const {
-            return mCurrentEntry;
-        }
-
-    private:
-        /**
-         * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
-         *
-         * The iterator must not be at the end when calling this function.
-         */
-        bool advanceEntry();
-
-        void setCurrentEntry();
-
-        LogImpl::PageIterator mPageIt;
-        LogImpl::PageIterator mPageEnd;
-
-        LogPage::EntryIterator mEntryIt;
-        LogPage::EntryIterator mEntryEnd;
-
-        IteratorEntry mCurrentEntry;
-    };
+    using Iterator = GcScanIterator;
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap);
+
+    uint64_t id() const {
+        return mTableId;
+    }
 
     /**
      * @brief Reads a tuple from the table
@@ -74,7 +136,7 @@ public:
      * @param isNewest Whether the returned tuple contains the newest version written
      * @return Whether the tuple was found
      */
-    bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest) const;
+    bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest);
 
     /**
      * @brief Reads the newest tuple from the table
@@ -85,7 +147,7 @@ public:
      * @param version Reference to the tuple's version
      * @return Whether the tuple was found
      */
-    bool getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) const;
+    bool getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version);
 
     /**
      * @brief Inserts a tuple into the table
@@ -156,37 +218,30 @@ public:
     void runGC(uint64_t minVersion);
 
 private:
+    friend class GcScanIterator;
+    friend class LazyRecordWriter;
+    friend class VersionRecordIterator;
+
     /**
-     * @brief Helper function to write a entry
+     * @brief Helper function to write a update or a deletion entry
      *
-     * Writes the data to the log and updates the hash table. If the prev pointer is null the function tries to insert
-     * the new entry into the hash table else the hash table is updated from the prev pointer to the new pointer.
-     *
-     * @param key Key of the entry to insert
-     * @param version Version of the entry to insert
-     * @param prev Pointer to previous version of the same key or null if no previous version exists
+     * @param key Key of the entry to write
      * @param size Size of the data to write
      * @param data Pointer to the data to write
+     * @param snapshot Descriptor containing the version to write
      * @param deleted Whether the entry marks a deletion
      * @return Whether the entry was successfully written
      */
-    bool writeEntry(uint64_t key, uint64_t version, ChainedVersionRecord* prev, size_t size, const char* data,
-            bool deleted);
-
-    /**
-     * @brief Marks the tuple as invalid in the log
-     *
-     * Invalid elements have no other elements or the hash map pointing to it and can be safely thrown away by the
-     * garbage collector.
-     */
-    void invalidateTuple(ChainedVersionRecord* versionRecord);
+    bool internalUpdate(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot, bool deletion);
 
     PageManager& mPageManager;
     HashTable& mHashMap;
     Record mRecord;
-    uint64_t mTableId;
+    const uint64_t mTableId;
 
     LogImpl mLog;
+
+    std::atomic<uint64_t> mMinVersion;
 };
 
 /**

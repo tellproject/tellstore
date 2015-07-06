@@ -22,7 +22,7 @@ const size_t gMaxBufferTuple = 32;
 } // anonymous namespace
 
 bool ClientScanQueryData::checkTuple(uint64_t validFrom, uint64_t validTo) const {
-    return (mSnapshot.inReadSet(validFrom) && (validTo == 0 || !mSnapshot.inReadSet(validTo)));
+    return (mSnapshot.inReadSet(validFrom) && !mSnapshot.inReadSet(validTo));
 }
 
 void ClientScanQueryData::write(crossbow::infinio::ScatterGatherBuffer& buffer, std::error_code& ec) {
