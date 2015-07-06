@@ -69,41 +69,10 @@ add_subdirectory(network)
 add_subdirectory(server)
 add_subdirectory(client)
 
-
 ###################
 # GTEST
 ###################
 add_subdirectory(externals/gtest)
+
 enable_testing()
-
-
-###################
-# Unit tests
-###################
-set(TEST_SRCS
-    tests/testCuckooMap.cpp
-    tests/testCommitManager.cpp
-    tests/testLog.cpp
-    tests/testOpenAddressingHash.cpp
-    tests/testScanQuery.cpp
-    tests/simpleTests.cpp
-    tests/logstructured/testTable.cpp)
-
-# Add test executable
-add_executable(tests tests/main.cpp ${TEST_SRCS})
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(tests PRIVATE TellStore)
-
-# Link test against GTest
-target_include_directories(tests PRIVATE ${gtest_SOURCE_DIR}/include)
-target_link_libraries(tests PRIVATE gtest gtest_main)
-
-# Link against Crossbow
-target_include_directories(tests PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tests PRIVATE crossbow_allocator)
-
-# Link against Jemalloc
-target_include_directories(tests PRIVATE ${Jemalloc_INCLUDE_DIRS})
-target_link_libraries(tests PRIVATE ${Jemalloc_LIBRARIES})
-
-add_test(tests tests)
+add_subdirectory(tests)
