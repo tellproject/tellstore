@@ -24,7 +24,6 @@ set(UTIL_SRCS
     Logging.cpp
     StorageConfig.hpp
     SnapshotDescriptor.hpp
-    Request.hpp
     Scan.hpp
     ScanQuery.hpp
     IteratorEntry.hpp
