@@ -139,7 +139,7 @@ private:
  * A Log-Page has the following form:
  *
  * ---------------------------------------------------------------------------------------------------
- * | next (8 bytes) | offset (4 bytes) | padding (4 bytes) | entry | entry | ... | padding (4 bytes) |
+ * | next (8 bytes) | offset (4 bytes) | context (4 bytes) | entry | entry | ... | padding (4 bytes) |
  * ---------------------------------------------------------------------------------------------------
  *
  * Entries require 4 bytes of space followed by the associated data segment. To keep this data segment 8 byte aligned
@@ -217,7 +217,8 @@ public:
     };
 
     LogPage()
-            : mOffset(0x1u) {
+            : mOffset(0x1u),
+              mContext(0x0u) {
     }
 
     char* data() {
@@ -256,6 +257,14 @@ public:
 
     const std::atomic<LogPage*>& next() const {
         return mNext;
+    }
+
+    std::atomic<uint32_t>& context() {
+        return mContext;
+    }
+
+    const std::atomic<uint32_t>& context() const {
+        return mContext;
     }
 
     /**
@@ -320,6 +329,7 @@ public:
 private:
     std::atomic<LogPage*> mNext;
     std::atomic<uint32_t> mOffset;
+    std::atomic<uint32_t> mContext;
 };
 
 /**
