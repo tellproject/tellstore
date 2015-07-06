@@ -1,15 +1,17 @@
 #pragma once
 
+#include "GenericTuple.hpp"
+#include "SnapshotDescriptor.hpp"
+
+#include <crossbow/logger.hpp>
+#include <crossbow/string.hpp>
+
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
-#include <crossbow/string.hpp>
 #include <vector>
 #include <unordered_map>
-#include "Logging.hpp"
-#include "SnapshotDescriptor.hpp"
-#include "GenericTuple.hpp"
 
 namespace tell {
 namespace store {

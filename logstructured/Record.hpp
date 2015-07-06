@@ -1,6 +1,6 @@
 #pragma once
 
-#include <util/Logging.hpp>
+#include <crossbow/logger.hpp>
 
 #include <atomic>
 #include <cstdint>

@@ -3,8 +3,9 @@
 #include <network/MessageSocket.hpp>
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
-#include <util/Logging.hpp>
 #include <util/helper.hpp>
+
+#include <crossbow/logger.hpp>
 
 #include <chrono>
 #include <functional>

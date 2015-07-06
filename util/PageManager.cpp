@@ -5,7 +5,7 @@
 #include <iostream>
 #include <new>
 
-#include "Logging.hpp"
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {

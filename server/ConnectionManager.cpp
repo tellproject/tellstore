@@ -2,11 +2,11 @@
 
 #include "ClientConnection.hpp"
 
-#include <util/Logging.hpp>
 #include <util/PageManager.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/Endpoint.hpp>
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {

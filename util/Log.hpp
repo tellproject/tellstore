@@ -2,9 +2,10 @@
 
 #include <config.h>
 
-#include "Logging.hpp"
 #include "NonCopyable.hpp"
 #include "PageManager.hpp"
+
+#include <crossbow/logger.hpp>
 
 #include <atomic>
 #include <cstddef>

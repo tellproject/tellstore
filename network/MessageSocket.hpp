@@ -2,11 +2,11 @@
 
 #include <network/ErrorCode.hpp>
 #include <network/MessageTypes.hpp>
-#include <util/Logging.hpp>
 
 #include <crossbow/infinio/ErrorCode.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
+#include <crossbow/logger.hpp>
 
 #include <cstddef>
 #include <cstdint>

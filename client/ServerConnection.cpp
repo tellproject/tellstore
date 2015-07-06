@@ -4,12 +4,12 @@
 
 #include <network/ErrorCode.hpp>
 #include <util/helper.hpp>
-#include <util/Logging.hpp>
 #include <util/Record.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
 #include <crossbow/infinio/Endpoint.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {

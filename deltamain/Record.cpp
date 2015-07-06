@@ -2,7 +2,8 @@
 
 #include <util/SnapshotDescriptor.hpp>
 #include <util/Log.hpp>
-#include <util/Logging.hpp>
+
+#include <crossbow/logger.hpp>
 
 #include <memory.h>
 #include <map>

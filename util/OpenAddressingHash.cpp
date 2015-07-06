@@ -1,7 +1,8 @@
 #include "OpenAddressingHash.hpp"
 
 #include "helper.hpp"
-#include "Logging.hpp"
+
+#include <crossbow/logger.hpp>
 
 #include <boost/functional/hash.hpp>
 

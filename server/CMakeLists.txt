@@ -22,7 +22,7 @@ target_include_directories(tellstored PRIVATE ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(tellstored PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstored PRIVATE crossbow_allocator crossbow_infinio)
+target_link_libraries(tellstored PRIVATE crossbow_allocator crossbow_infinio crossbow_logger)
 
 # Link against Jemalloc
 target_include_directories(tellstored PRIVATE ${Jemalloc_INCLUDE_DIRS})

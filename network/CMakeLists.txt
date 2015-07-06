@@ -16,4 +16,4 @@ target_link_libraries(TellStoreNetwork PUBLIC TellStoreUtil)
 
 # Link against Crossbow
 target_include_directories(TellStoreNetwork PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(TellStoreNetwork PUBLIC crossbow_infinio)
+target_link_libraries(TellStoreNetwork PUBLIC crossbow_infinio crossbow_logger)

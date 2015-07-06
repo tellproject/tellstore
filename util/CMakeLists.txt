@@ -20,8 +20,6 @@ set(UTIL_SRCS
     TableManager.hpp
     Record.hpp
     Record.cpp
-    Logging.hpp
-    Logging.cpp
     StorageConfig.hpp
     SnapshotDescriptor.hpp
     Scan.hpp
@@ -48,7 +46,7 @@ target_include_directories(TellStoreUtil PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(TellStoreUtil PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(TellStoreUtil PUBLIC crossbow_allocator)
+target_link_libraries(TellStoreUtil PUBLIC crossbow_allocator crossbow_logger)
 
 # Link against TBB
 target_include_directories(TellStoreUtil PUBLIC ${TBB_INCLUDE_DIRS})

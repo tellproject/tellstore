@@ -2,7 +2,7 @@
 
 #include "ClientConfig.hpp"
 
-#include <util/Logging.hpp>
+#include <crossbow/logger.hpp>
 
 #include <sys/mman.h>
 

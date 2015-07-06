@@ -4,9 +4,9 @@
 
 #include <network/ErrorCode.hpp>
 #include <util/helper.hpp>
-#include <util/Logging.hpp>
 
 #include <crossbow/infinio/InfinibandBuffer.hpp>
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {

@@ -23,7 +23,7 @@ target_link_libraries(tellstore-client PRIVATE ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE crossbow_allocator crossbow_infinio)
+target_link_libraries(tellstore-client PRIVATE crossbow_allocator crossbow_infinio crossbow_logger)
 
 # Link against Jemalloc
 target_include_directories(tellstore-client PRIVATE ${Jemalloc_INCLUDE_DIRS})

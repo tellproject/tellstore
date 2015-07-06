@@ -28,7 +28,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
 
 # Find dependencies
 find_package(Boost COMPONENTS context REQUIRED)
-find_package(Crossbow COMPONENTS Allocator InfinIO REQUIRED)
+find_package(Crossbow COMPONENTS Allocator InfinIO Logger REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 

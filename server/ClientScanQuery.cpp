@@ -1,6 +1,6 @@
 #include "ClientScanQuery.hpp"
 
-#include <util/Logging.hpp>
+#include <crossbow/logger.hpp>
 
 #include <thread>
 
