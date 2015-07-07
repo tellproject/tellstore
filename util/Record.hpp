@@ -1,7 +1,6 @@
 #pragma once
 
 #include "GenericTuple.hpp"
-#include "SnapshotDescriptor.hpp"
 
 #include <crossbow/logger.hpp>
 #include <crossbow/string.hpp>
@@ -372,43 +371,6 @@ public:
     }
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
-};
-
-/**
-* This can be used for storages, where the versions used for snapshot isolation
-* are kept together. The format of a record is like follows:
-*
-* - 4 bytes: size of the tuples (including this field, headers, all versions etc)
-* - 4 bytes: number of versions
-* - An array of 8 byte integers of all version numbers
-* - An array of 4 byte integers, where integer at offset i is the offset to
-*   record with version[i]. If the value is 0, it means that the record got deleted
-*   in this version.
-* - A 4 byte padding if |version| % 8 != 0
-*
-* The versions are ordered decremental - the means the newest version comes first
-*/
-struct MultiVersionRecord {
-    static const char* getRecord(const SnapshotDescriptor& desc, const char* record, bool& isNewest);
-    static uint64_t getSmallestVersion(const char* record);
-    static uint64_t getBiggestVersion(const char* record);
-    static uint32_t getNumberOfVersions(const char* data) {
-        return *reinterpret_cast<const uint32_t*>(data + 4);
-    }
-
-    static uint32_t getSize(const char* data) {
-        return *reinterpret_cast<const uint32_t*>(data);
-    }
-
-    /**
-    * Removed all versions < minVersion from the set. This will return the old
-    * size of the record.
-    * If the 0 is returned, it means that the function did not change the record,
-    * but it can be completely removed. This is the case, iff:
-    *  (i)  All versions are smaller than minVersion
-    *  (ii) The newest version was a deletion
-    */
-    static uint32_t compact(char* record, uint64_t minVersion);
 };
 
 } // namespace store
