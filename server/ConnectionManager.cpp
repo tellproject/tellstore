@@ -56,11 +56,6 @@ void ConnectionManager::onConnection(crossbow::infinio::InfinibandSocket socket,
         socket->accept(crossbow::string(), thread);
     } catch (std::system_error& e) {
         LOG_ERROR("Error accepting connection [error = %1% %2%]", e.code(), e.what());
-        try {
-            socket->close();
-        } catch (std::system_error& e2) {
-            LOG_ERROR("Error closing failed connection [error = %1% %2%]", e2.code(), e2.what());
-        }
         crossbow::allocator::destroy_now(con);
         return;
     }
