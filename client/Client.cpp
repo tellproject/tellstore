@@ -1,10 +1,10 @@
 #include "Client.hpp"
 
-#include <network/MessageSocket.hpp>
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
 #include <util/helper.hpp>
 
+#include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/logger.hpp>
 
 #include <chrono>
@@ -199,7 +199,7 @@ void Client::doScan(Transaction& transaction, Record& record, float selectivity,
     uint32_t querySize = 24;
     std::unique_ptr<char[]> query(new char[querySize]);
 
-    BufferWriter queryWriter(query.get(), querySize);
+    crossbow::infinio::BufferWriter queryWriter(query.get(), querySize);
     queryWriter.write<uint64_t>(0x1u);
     queryWriter.write<uint16_t>(recordField);
     queryWriter.write<uint16_t>(0x1u);

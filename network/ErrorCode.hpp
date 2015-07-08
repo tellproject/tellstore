@@ -12,11 +12,8 @@ namespace error {
  * @brief Network errors related to actions on the network
  */
 enum network_errors {
-    /// Received message was invalid.
-    invalid_message = 1,
-
     /// The tuple was invalid.
-    invalid_tuple = 2,
+    invalid_tuple = 1,
 };
 
 /**
@@ -30,9 +27,6 @@ public:
 
     std::string message(int value) const {
         switch (value) {
-        case error::invalid_message:
-            return "Received message was invalid";
-
         case error::invalid_tuple:
             return "The tuple was invalid";
 

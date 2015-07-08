@@ -16,7 +16,7 @@ namespace {
 /**
  * @brief Reads the snapshot descriptor from the message
  */
-SnapshotDescriptor readSnapshot(uint64_t version, BufferReader& request) {
+SnapshotDescriptor readSnapshot(uint64_t version, crossbow::infinio::BufferReader& request) {
     request.align(sizeof(uint32_t));
     auto descriptorLength = request.read<uint32_t>();
     auto descriptorData = request.read(descriptorLength);
@@ -47,7 +47,8 @@ void ClientConnection::onConnected(const crossbow::string& data, const std::erro
     }
 }
 
-void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType, BufferReader request) {
+void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
+        crossbow::infinio::BufferReader& request) {
     LOG_TRACE("TID %1%] Handling request of type %2%", transactionId, messageType);
     auto startTime = std::chrono::steady_clock::now();
 
@@ -482,7 +483,7 @@ void ClientConnection::onDisconnected() {
 }
 
 template <typename Fun>
-void ClientConnection::handleSnapshot(uint64_t transactionId, BufferReader& request, Fun f) {
+void ClientConnection::handleSnapshot(uint64_t transactionId, crossbow::infinio::BufferReader& request, Fun f) {
     /**
      * The snapshot descriptor has the following format:
      * - 8 bytes: The version of the snapshot

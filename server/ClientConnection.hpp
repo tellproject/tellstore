@@ -4,11 +4,12 @@
 #include "ClientScanQuery.hpp"
 
 #include <tellstore.hpp>
-#include <network/MessageSocket.hpp>
+#include <network/ErrorCode.hpp>
 #include <network/MessageTypes.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
-#include <crossbow/infinio/InfinibandSocket.hpp>
+#include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/infinio/BatchingMessageSocket.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -26,10 +27,10 @@ class ConnectionManager;
  *
  * Listens for incoming RPC requests, performs the desired action and sends the response back to the client.
  */
-class ClientConnection : private MessageSocket<ClientConnection> {
+class ClientConnection : private crossbow::infinio::BatchingMessageSocket<ClientConnection> {
 public:
     ClientConnection(ConnectionManager& manager, Storage& storage, crossbow::infinio::InfinibandSocket socket)
-            : MessageSocket(std::move(socket)),
+            : crossbow::infinio::BatchingMessageSocket<ClientConnection>(std::move(socket)),
               mManager(manager),
               mStorage(storage) {
     }
@@ -39,11 +40,11 @@ public:
     void shutdown();
 
 private:
-    friend class MessageSocket;
+    friend class crossbow::infinio::BatchingMessageSocket<ClientConnection>;
 
     virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
-    void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
+    void onMessage(uint64_t transactionId, uint32_t messageType, crossbow::infinio::BufferReader& message);
 
     void onSocketError(const std::error_code& ec);
 
@@ -73,14 +74,15 @@ private:
      * @param f Function with the signature (const SnapshotDescriptor&)
      */
     template <typename Fun>
-    void handleSnapshot(uint64_t transactionId, BufferReader& request, Fun f);
+    void handleSnapshot(uint64_t transactionId, crossbow::infinio::BufferReader& request, Fun f);
 
     /**
      * @brief Removes the snapshot from the cache
      */
     void removeSnapshot(uint64_t version);
 
-    BufferWriter writeResponse(uint64_t transactionId, ResponseType response, size_t length, std::error_code& ec) {
+    crossbow::infinio::BufferWriter writeResponse(uint64_t transactionId, ResponseType response, size_t length,
+            std::error_code& ec) {
         return writeMessage(transactionId, static_cast<uint32_t>(response), length, ec);
     }
 

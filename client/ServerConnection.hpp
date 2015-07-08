@@ -1,10 +1,10 @@
 #pragma once
 
-#include <network/MessageSocket.hpp>
 #include <network/MessageTypes.hpp>
 #include <util/GenericTuple.hpp>
 
-#include <crossbow/infinio/InfinibandSocket.hpp>
+#include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/infinio/BatchingMessageSocket.hpp>
 #include <crossbow/string.hpp>
 
 #include <cstdint>
@@ -20,7 +20,7 @@ class Schema;
 class SnapshotDescriptor;
 class TransactionProcessor;
 
-class ServerConnection : private MessageSocket<ServerConnection> {
+class ServerConnection : private crossbow::infinio::BatchingMessageSocket<ServerConnection> {
 public:
     class Response {
     public:
@@ -29,7 +29,7 @@ public:
                   mMessage(nullptr) {
         }
 
-        Response(ResponseType type, BufferReader* message)
+        Response(ResponseType type, crossbow::infinio::BufferReader* message)
                 : mType(type),
                   mMessage(message) {
         }
@@ -54,11 +54,11 @@ public:
         bool checkMessage(ResponseType type, std::error_code& ec);
 
         ResponseType mType;
-        BufferReader* mMessage;
+        crossbow::infinio::BufferReader* mMessage;
     };
 
     ServerConnection(crossbow::infinio::InfinibandSocket socket, TransactionProcessor& processor)
-            : MessageSocket(std::move(socket)),
+            : crossbow::infinio::BatchingMessageSocket<ServerConnection>(std::move(socket)),
               mProcessor(processor) {
     }
 
@@ -104,7 +104,7 @@ public:
             const SnapshotDescriptor& snapshot, std::error_code& ec);
 
 private:
-    friend class MessageSocket;
+    friend class crossbow::infinio::BatchingMessageSocket<ServerConnection>;
 
     template <typename Fun>
     void doUpdate(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size,
@@ -116,7 +116,7 @@ private:
 
     virtual void onConnected(const crossbow::string& data, const std::error_code& ec) final override;
 
-    void onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message);
+    void onMessage(uint64_t transactionId, uint32_t messageType, crossbow::infinio::BufferReader& message);
 
     void onSocketError(const std::error_code& ec);
 
@@ -126,7 +126,8 @@ private:
 
     virtual void onDisconnected() final override;
 
-    BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length, std::error_code& ec) {
+    crossbow::infinio::BufferWriter writeRequest(uint64_t transactionId, RequestType request, size_t length,
+            std::error_code& ec) {
         return writeMessage(transactionId, static_cast<uint32_t>(request), length, ec);
     }
 

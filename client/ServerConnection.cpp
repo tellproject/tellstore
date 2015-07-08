@@ -16,7 +16,7 @@ namespace store {
 
 namespace {
 
-void writeSnapshot(BufferWriter& message, const SnapshotDescriptor& snapshot) {
+void writeSnapshot(crossbow::infinio::BufferWriter& message, const SnapshotDescriptor& snapshot) {
     message.write<uint64_t>(snapshot.version());
     // TODO Implement snapshot caching
     message.write<uint8_t>(0x0u); // Cached
@@ -115,7 +115,8 @@ void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint6
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record,
         const GenericTuple& tuple, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto size = record.sizeOfTuple(tuple);
-    doUpdate(transactionId, tableId, key, size, snapshot, [size, &record, &tuple] (BufferWriter& request) {
+    doUpdate(transactionId, tableId, key, size, snapshot,
+            [size, &record, &tuple] (crossbow::infinio::BufferWriter& request) {
         if (!record.create(request.data(), tuple, size)) {
             return false;
         }
@@ -126,7 +127,7 @@ void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t
 
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, std::error_code& ec) {
-    doUpdate(transactionId, tableId, key, size, snapshot, [size, data] (BufferWriter& request) {
+    doUpdate(transactionId, tableId, key, size, snapshot, [size, data] (crossbow::infinio::BufferWriter& request) {
         request.write(data, size);
         return true;
     }, ec);
@@ -135,7 +136,8 @@ void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record,
         const GenericTuple& tuple, const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec) {
     auto size = record.sizeOfTuple(tuple);
-    doInsert(transactionId, tableId, key, size, snapshot, succeeded, [size, &record, &tuple] (BufferWriter& request) {
+    doInsert(transactionId, tableId, key, size, snapshot, succeeded,
+            [size, &record, &tuple] (crossbow::infinio::BufferWriter& request) {
         if (!record.create(request.data(), tuple, size)) {
             return false;
         }
@@ -146,7 +148,8 @@ void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t
 
 void ServerConnection::insert(uint64_t transactionId, uint64_t tableId, uint64_t key, size_t size, const char* data,
         const SnapshotDescriptor& snapshot, bool succeeded, std::error_code& ec) {
-    doInsert(transactionId, tableId, key, size, snapshot, succeeded, [size, data] (BufferWriter& request) {
+    doInsert(transactionId, tableId, key, size, snapshot, succeeded,
+            [size, data] (crossbow::infinio::BufferWriter& request) {
         request.write(data, size);
         return true;
     }, ec);
@@ -212,7 +215,8 @@ void ServerConnection::onConnected(const crossbow::string& data, const std::erro
     mProcessor.onConnected(ec);
 }
 
-void ServerConnection::onMessage(uint64_t transactionId, uint32_t messageType, BufferReader message) {
+void ServerConnection::onMessage(uint64_t transactionId, uint32_t messageType,
+        crossbow::infinio::BufferReader& message) {
     if (messageType > to_underlying(ResponseType::LAST)) {
         messageType = to_underlying(ResponseType::UNKOWN);
     }
