@@ -1,5 +1,6 @@
 #include "Record.hpp"
-#include "helper.hpp"
+
+#include <crossbow/enum_underlying.hpp>
 
 namespace tell {
 namespace store {
@@ -127,7 +128,7 @@ size_t Schema::schemaSize() const {
 namespace {
 
 inline char* serialize_field(const Field& field, char* ptr) {
-    uint16_t fieldType = to_underlying(field.type());
+    uint16_t fieldType = crossbow::to_underlying(field.type());
     memcpy(ptr, &fieldType, sizeof(fieldType));
     ptr += sizeof(fieldType);
     bool isNotNull = field.isNotNull();

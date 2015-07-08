@@ -3,8 +3,8 @@
 #include "ConnectionManager.hpp"
 
 #include <network/ErrorCode.hpp>
-#include <util/helper.hpp>
 
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
 
@@ -52,11 +52,11 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
     LOG_TRACE("TID %1%] Handling request of type %2%", transactionId, messageType);
     auto startTime = std::chrono::steady_clock::now();
 
-    if (messageType > to_underlying(RequestType::LAST)) {
-        messageType = to_underlying(RequestType::UNKOWN);
+    if (messageType > crossbow::to_underlying(RequestType::LAST)) {
+        messageType = crossbow::to_underlying(RequestType::UNKOWN);
     }
 
-    switch (from_underlying<RequestType>(messageType)) {
+    switch (crossbow::from_underlying<RequestType>(messageType)) {
 
     /**
      * The create table request has the following format:
@@ -434,12 +434,12 @@ void ClientConnection::onWrite(uint32_t userId, uint16_t bufferId, const std::er
         return;
     }
 
-    if (userId == 0x0u || userId > to_underlying(ClientScanQueryData::ScanStatus::LAST)) {
+    if (userId == 0x0u || userId > crossbow::to_underlying(ClientScanQueryData::ScanStatus::LAST)) {
         LOG_ERROR("Scan progress with invalid userid");
         return;
     }
 
-    switch (from_underlying<ClientScanQueryData::ScanStatus>(userId)) {
+    switch (crossbow::from_underlying<ClientScanQueryData::ScanStatus>(userId)) {
 
     case ClientScanQueryData::ScanStatus::ONGOING: {
         // Nothing to do

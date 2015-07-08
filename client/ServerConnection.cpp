@@ -3,10 +3,10 @@
 #include "TransactionManager.hpp"
 
 #include <network/ErrorCode.hpp>
-#include <util/helper.hpp>
 #include <util/Record.hpp>
 #include <util/SnapshotDescriptor.hpp>
 
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/Endpoint.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
@@ -217,12 +217,12 @@ void ServerConnection::onConnected(const crossbow::string& data, const std::erro
 
 void ServerConnection::onMessage(uint64_t transactionId, uint32_t messageType,
         crossbow::infinio::BufferReader& message) {
-    if (messageType > to_underlying(ResponseType::LAST)) {
-        messageType = to_underlying(ResponseType::UNKOWN);
+    if (messageType > crossbow::to_underlying(ResponseType::LAST)) {
+        messageType = crossbow::to_underlying(ResponseType::UNKOWN);
     }
 
     LOG_TRACE("T %1%] Handling response of type %2%", transactionId, messageType);
-    mProcessor.handleResponse(transactionId, Response(from_underlying<ResponseType>(messageType), &message));
+    mProcessor.handleResponse(transactionId, Response(crossbow::from_underlying<ResponseType>(messageType), &message));
 }
 
 void ServerConnection::onSocketError(const std::error_code& ec) {

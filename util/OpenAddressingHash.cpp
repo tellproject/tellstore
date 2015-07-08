@@ -1,7 +1,6 @@
 #include "OpenAddressingHash.hpp"
 
-#include "helper.hpp"
-
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/logger.hpp>
 
 #include <boost/functional/hash.hpp>
@@ -58,13 +57,14 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data, void*
 
         // Check if pointer is already acquired (i.e. not a deletion and not free) - Skip bucket if it is
         // There is no need to check if the insertion will conflict as this will be resolved at a later time.
-        if ((ptr != (to_underlying(EntryMarker::DELETED)) && (ptr != to_underlying(EntryMarker::FREE)))) {
+        if ((ptr != (crossbow::to_underlying(EntryMarker::DELETED))
+                && (ptr != crossbow::to_underlying(EntryMarker::FREE)))) {
             continue;
         }
 
         // Try to claim this bucket by setting the pointer to inserting
         // If this fails somebody else claimed the bucket in the mean time
-        auto insertPtr = (reinterpret_cast<uintptr_t>(data) | to_underlying(EntryMarker::INSERTING));
+        auto insertPtr = (reinterpret_cast<uintptr_t>(data) | crossbow::to_underlying(EntryMarker::INSERTING));
         if (!entry.ptr.compare_exchange_strong(ptr, insertPtr)) {
             continue;
         }
@@ -78,7 +78,7 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data, void*
         // If this fails somebody else is inserting or has already inserted the same key, set pointer to invalid and
         // free bucket.
         if (hasInsertConflict(hash, pos, table, key, actualData)) {
-            entry.ptr.store(to_underlying(EntryMarker::INVALID));
+            entry.ptr.store(crossbow::to_underlying(EntryMarker::INVALID));
             deleteEntry(entry);
             return false;
         }
@@ -122,7 +122,7 @@ bool OpenAddressingTable::erase(uint64_t table, uint64_t key, const void* oldDat
 
     return execOnElement(table, key, true, [table, key, oldData, actualData] (Entry& entry, const void* /* ptr */) {
         auto expected = reinterpret_cast<uintptr_t>(oldData);
-        if (entry.ptr.compare_exchange_strong(expected, to_underlying(EntryMarker::INVALID))) {
+        if (entry.ptr.compare_exchange_strong(expected, crossbow::to_underlying(EntryMarker::INVALID))) {
             deleteEntry(entry);
             return true;
         }
@@ -135,7 +135,7 @@ bool OpenAddressingTable::erase(uint64_t table, uint64_t key, const void* oldDat
 void OpenAddressingTable::deleteEntry(Entry& entry) {
     entry.tableId.store(0x0u);
     entry.keyId.store(0x0u);
-    entry.ptr.store(to_underlying(EntryMarker::DELETED));
+    entry.ptr.store(crossbow::to_underlying(EntryMarker::DELETED));
 }
 
 void OpenAddressingTable::setActualData(uint64_t table, uint64_t key, void** actualData, const Entry& entry,
@@ -195,13 +195,14 @@ bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint6
         auto ptr = entry.ptr.load();
 
         // Check if we reached the end of the overflow bucket
-        if (ptr == to_underlying(EntryMarker::FREE)) {
+        if (ptr == crossbow::to_underlying(EntryMarker::FREE)) {
             LOG_ASSERT(pos > insertPos, "Reached end of overflow before reaching insert element");
             return false;
         }
 
         // Check if pointer is invalid or deleted - Skip bucket if it is
-        if ((ptr & (to_underlying(EntryMarker::DELETED) | to_underlying(EntryMarker::INVALID))) != 0x0u) {
+        if ((ptr & (crossbow::to_underlying(EntryMarker::DELETED) | crossbow::to_underlying(EntryMarker::INVALID)))
+                != 0x0u) {
             ++pos;
             continue;
         }
@@ -236,7 +237,7 @@ bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint6
 
         // Check whether the pointer is already set (i.e. has no inserting marker) or marks a concurrent insert and the
         // element of the other thread is located in a bucket before our own insert bucket
-        if ((ptr & to_underlying(EntryMarker::INSERTING)) == 0x0u) {
+        if ((ptr & crossbow::to_underlying(EntryMarker::INSERTING)) == 0x0u) {
             // No concurrent insert, no deletion, no invalid, no free element as such the pointer has to be valid
             // Abort as another thread already completed the insert
             if (actualData) *actualData = reinterpret_cast<void*>(ptr);
@@ -254,13 +255,14 @@ bool OpenAddressingTable::hasInsertConflict(size_t hash, size_t insertPos, uint6
         // table accesses elements only through the epoch the element's memory will only be reused after this thread
         // exits.
         auto expected = ptr;
-        if (entry.ptr.compare_exchange_strong(expected, to_underlying(EntryMarker::INVALID))) {
+        if (entry.ptr.compare_exchange_strong(expected, crossbow::to_underlying(EntryMarker::INVALID))) {
             ++pos;
             continue;
         }
 
         // Check if pointer is invalid or deleted, skip bucket if it is
-        if ((expected & (to_underlying(EntryMarker::DELETED) | to_underlying(EntryMarker::INVALID))) != 0x0u) {
+        if ((expected & (crossbow::to_underlying(EntryMarker::DELETED) | crossbow::to_underlying(EntryMarker::INVALID)))
+                != 0x0u) {
             ++pos;
             continue;
         }
@@ -286,13 +288,13 @@ T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F
         auto ptr = entry.ptr.load();
 
         // Check if pointer is marked as deleted, inserting or invalid - Skip bucket if it is
-        if ((ptr & MARKER_MASK) != to_underlying(EntryMarker::FREE)) {
+        if ((ptr & MARKER_MASK) != crossbow::to_underlying(EntryMarker::FREE)) {
             ++pos;
             continue;
         }
 
         // Check if this bucket marks the end of the overflow bucket - Return not-found if it is
-        if (ptr == to_underlying(EntryMarker::FREE)) {
+        if (ptr == crossbow::to_underlying(EntryMarker::FREE)) {
             return notFound;
         }
 

@@ -113,7 +113,7 @@ TEST_F(ScanQueryTest, singlePredicate) {
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
     *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
 
@@ -140,12 +140,12 @@ TEST_F(ScanQueryTest, andPredicate) {
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
     *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 24) = largenumberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 26) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x1u;
     *reinterpret_cast<int64_t*>(qbuffer.get() + 40) = gTupleLargenumber;
 
@@ -173,12 +173,12 @@ TEST_F(ScanQueryTest, orPredicate) {
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
     *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 24) = textField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 26) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x0u;
     *reinterpret_cast<uint32_t*>(qbuffer.get() + 40) = gTuple2Text.length();
     memcpy(qbuffer.get() + 44, gTuple2Text.data(), gTuple2Text.length());
@@ -204,10 +204,10 @@ TEST_F(ScanQueryTest, sameColumnPredicate) {
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x2u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
     *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 28) = gTuple2Number;
 

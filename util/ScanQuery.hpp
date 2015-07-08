@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Record.hpp"
-#include "helper.hpp"
+
+#include <crossbow/enum_underlying.hpp>
 
 #include <vector>
 #include <cstdint>
@@ -64,7 +65,7 @@ struct ScanQuery {
     }
 
     PredicateType getTypeOfPredicate(off_t offset) const {
-        return from_underlying<PredicateType>(*reinterpret_cast<const uint8_t*>(query + offset));
+        return crossbow::from_underlying<PredicateType>(*reinterpret_cast<const uint8_t*>(query + offset));
     }
 
     uint8_t posInQuery(off_t offset) const {

@@ -5,9 +5,10 @@
 #include <atomic>
 
 #include <util/IteratorEntry.hpp>
-#include <util/helper.hpp>
 
 #include "InsertMap.hpp"
+
+#include <crossbow/enum_underlying.hpp>
 
 namespace tell {
 namespace store {
@@ -96,7 +97,7 @@ public:
     DMRecordImplBase(T data) : mData(data) {}
 
     RecordType type() const {
-        return from_underlying<Type>(*mData);
+        return crossbow::from_underlying<Type>(*mData);
     }
 
     uint64_t key() const {
@@ -191,7 +192,7 @@ public:
     DMRecordImpl(char* data) : DMRecordImplBase<char*>(data) {}
 public: // writing functinality
     void setType(Type type) {
-        this->mData[0] = to_underlying(type);
+        this->mData[0] = crossbow::to_underlying(type);
     }
     /**
      * This can be called on all types

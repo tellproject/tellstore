@@ -116,7 +116,7 @@ void Page::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, c
 {
     auto fillOffset = *reinterpret_cast<uint64_t*>(fillPage);
     char dummyRecord[40];
-    dummyRecord[0] = to_underlying(RecordType::MULTI_VERSION_RECORD);
+    dummyRecord[0] = crossbow::to_underlying(RecordType::MULTI_VERSION_RECORD);
     // there are 0 number of versions
     *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 1;
     *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr;

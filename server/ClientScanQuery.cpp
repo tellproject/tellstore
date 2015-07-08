@@ -42,7 +42,7 @@ void ClientScanQueryData::done(crossbow::infinio::ScatterGatherBuffer& buffer, s
 
 void ClientScanQueryData::writeUnsignaled(crossbow::infinio::ScatterGatherBuffer& buffer, std::error_code& ec) {
     while (true) {
-        mSocket->writeUnsignaled(buffer, mDestRegion, mOffset, to_underlying(ScanStatus::ONGOING), ec);
+        mSocket->writeUnsignaled(buffer, mDestRegion, mOffset, crossbow::to_underlying(ScanStatus::ONGOING), ec);
         if (ec) {
             // When we get a no memory error we overran the work queue because we are sending too fast
             if (ec.value() == ENOMEM && ec.category() == std::system_category()) {
@@ -63,7 +63,7 @@ void ClientScanQueryData::writeSignaled(crossbow::infinio::ScatterGatherBuffer& 
     uint32_t data = (static_cast<uint32_t>(buffer.id()) << 16)
             | static_cast<uint32_t>(mUnsignaledCount + buffer.count());
     while (true) {
-        mSocket->write(buffer, mDestRegion, mOffset, to_underlying(status), data, ec);
+        mSocket->write(buffer, mDestRegion, mOffset, crossbow::to_underlying(status), data, ec);
         if (ec) {
             // When we get a no memory error we overran the work queue because we are sending too fast
             if (ec.value() == ENOMEM && ec.category() == std::system_category()) {

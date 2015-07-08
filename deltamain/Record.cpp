@@ -45,7 +45,7 @@ public:
     LogOp(T data) : mData(data) {}
 
     RecordType type() const {
-        return from_underlying<RecordType>(*mData);
+        return crossbow::from_underlying<RecordType>(*mData);
     }
 
     uint64_t version() const {
@@ -895,7 +895,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
             success = false;
             return 0;
         }
-        dest[0] = to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
+        dest[0] = crossbow::to_underlying(DMRecord::Type::MULTI_VERSION_RECORD);
         // now we can write the new version
         MVRecord<char*> newRec(dest);
         newRec.writeKey(key);

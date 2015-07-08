@@ -1,10 +1,10 @@
 #include "LogOperations.hpp"
 
 #include <util/Record.hpp>
-#include <util/helper.hpp>
 
 #include "Log.hpp"
 
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/logger.hpp>
 
 namespace tell {
@@ -12,7 +12,7 @@ namespace store {
 namespace dmrewrite {
 
 char* LoggedOperation::serialize(char* destination) const {
-    auto op = to_underlying(operation);
+    auto op = crossbow::to_underlying(operation);
     memcpy(destination, &op, sizeof(op));
     destination += sizeof(op);
     destination += 3;
@@ -44,7 +44,7 @@ char* LoggedOperation::serialize(char* destination) const {
 
 size_t LoggedOperation::serializedSize() const {
     auto tupleSize = *reinterpret_cast<const uint32_t*>(tuple);
-    tupleSize += sizeof(to_underlying(operation));
+    tupleSize += sizeof(crossbow::to_underlying(operation));
     tupleSize += sizeof(key);
     tupleSize += sizeof(version);
     tupleSize += sizeof(previous);
@@ -58,7 +58,7 @@ uint64_t LoggedOperation::getVersion(const char* data) {
 
 const char* LoggedOperation::getRecord(const char* data) {
     auto underlyingOp = *reinterpret_cast<const typename std::underlying_type<LogOperation>::type*>(data);
-    LogOperation op = from_underlying<LogOperation>(underlyingOp);
+    LogOperation op = crossbow::from_underlying<LogOperation>(underlyingOp);
     data += 20;
     switch (op) {
         case LogOperation::DELETE:
@@ -82,7 +82,7 @@ const char* LoggedOperation::getNewest(const char* data) {
 }
 
 uint64_t LoggedOperation::getKey(const char* data) {
-    assert(from_underlying<LogOperation>(data[0]) != LogOperation::INVALID);
+    assert(crossbow::from_underlying<LogOperation>(data[0]) != LogOperation::INVALID);
     return *reinterpret_cast<const uint64_t*>(data + 4);
 }
 
@@ -92,7 +92,7 @@ const DMLogEntry* LoggedOperation::loggedOperationFromTuple(char const* tuple) {
 
 LogOperation LoggedOperation::getType(const char* data) {
     auto res = *reinterpret_cast<const LogOperation_t*>(data);
-    return from_underlying<LogOperation>(res);
+    return crossbow::from_underlying<LogOperation>(res);
 }
 
 } // namespace dmrewrite

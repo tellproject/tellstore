@@ -2,7 +2,7 @@
 
 #include "Record.hpp"
 
-#include <util/helper.hpp>
+#include <crossbow/enum_underlying.hpp>
 
 #include <tuple>
 
@@ -78,7 +78,7 @@ ChainedVersionRecord* LazyRecordWriter::record() {
         return mRecord;
     }
 
-    auto entry = mTable.mLog.append(mSize + sizeof(ChainedVersionRecord), to_underlying(mType));
+    auto entry = mTable.mLog.append(mSize + sizeof(ChainedVersionRecord), crossbow::to_underlying(mType));
     if (!entry) {
         LOG_FATAL("Failed to append to log");
         return nullptr;
@@ -605,7 +605,7 @@ void GcScanIterator::setCurrentEntry() {
             continue;
         }
 
-        auto type = from_underlying<VersionRecordType>(mEntryIt->type());
+        auto type = crossbow::from_underlying<VersionRecordType>(mEntryIt->type());
         if (context.validTo() < mMinVersion) {
             // No version can read the current element - Mark it as invalid and increase the garbage counter
 #ifdef NDEBUG
@@ -735,7 +735,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
         isNewest = recIter.isNewest();
 
         // Check if the entry marks a deletion
-        if (from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
+        if (crossbow::from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
             return false;
         }
 
@@ -764,7 +764,7 @@ bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& v
     version = recIter->validFrom();
 
     // Check if the entry marks a deletion
-    if (from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
+    if (crossbow::from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
         return false;
     }
 
@@ -801,7 +801,7 @@ void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDe
             auto oldEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
 
             // Check if the entry marks a data tuple
-            if (from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DATA) {
+            if (crossbow::from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DATA) {
                 break;
             }
 
@@ -933,7 +933,7 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data, const Sn
         auto oldEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
 
         // Check if the entry marks a deletion
-        if (from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DELETION) {
+        if (crossbow::from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DELETION) {
             break;
         }
 

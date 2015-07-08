@@ -2,8 +2,8 @@
 
 #include <util/CommitManager.hpp>
 #include <util/Record.hpp>
-#include <util/helper.hpp>
 
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/logger.hpp>
 
@@ -204,7 +204,7 @@ void Client::doScan(Transaction& transaction, Record& record, float selectivity,
     queryWriter.write<uint16_t>(recordField);
     queryWriter.write<uint16_t>(0x1u);
     queryWriter.align(sizeof(uint64_t));
-    queryWriter.write<uint8_t>(to_underlying(PredicateType::GREATER_EQUAL));
+    queryWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
     queryWriter.write<uint8_t>(0x0u);
     queryWriter.align(sizeof(uint32_t));
     queryWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
