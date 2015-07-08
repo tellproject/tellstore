@@ -5,12 +5,13 @@
 #include <util/CommitManager.hpp>
 #include <util/IteratorEntry.hpp>
 #include <util/Log.hpp>
-#include <util/NonCopyable.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/Record.hpp>
 #include <util/TableManager.hpp>
 #include <util/TransactionImpl.hpp>
+
+#include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
 
@@ -27,7 +28,7 @@ using LogImpl = Log<UnorderedLogImpl>;
 /**
  * @brief Scan iterator for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
  */
-class GcScanIterator : NonCopyable {
+class GcScanIterator : crossbow::non_copyable {
 public:
     using IteratorEntry = BaseIteratorEntry;
 
@@ -114,7 +115,7 @@ private:
 /**
  * @brief A table using a Log-Structured Memory approach as its data store
  */
-class Table : NonCopyable, NonMovable {
+class Table : crossbow::non_copyable, crossbow::non_movable {
 public:
     using HashTable = OpenAddressingTable;
 
@@ -258,7 +259,7 @@ public:
  * @brief A Storage implementation using a Log-Structured Memory approach as its data store
  */
 template<>
-struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : NonCopyable, NonMovable {
+struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : crossbow::non_copyable, crossbow::non_movable {
 public:
     using Table = logstructured::Table;
     using GC = logstructured::GarbageCollector;

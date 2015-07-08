@@ -2,9 +2,9 @@
 
 #include <config.h>
 #include "FixedSizeStack.hpp"
-#include "NonCopyable.hpp"
 
 #include <crossbow/allocator.hpp>
+#include <crossbow/non_copyable.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -26,7 +26,7 @@ struct PageManagerDeleter {
 * free pages. All page allocations need to
 * be made through this class.
 */
-class PageManager: NonCopyable {
+class PageManager: crossbow::non_copyable, crossbow::non_movable {
 private:
     void* mData;
     size_t mSize;

@@ -2,11 +2,11 @@
 
 #include "ServerConnection.hpp"
 
-#include <util/NonCopyable.hpp>
 #include <util/GenericTuple.hpp>
 #include <util/sparsehash/dense_hash_map>
 
 #include <crossbow/infinio/InfinibandService.hpp>
+#include <crossbow/non_copyable.hpp>
 #include <crossbow/string.hpp>
 
 #include <boost/context/fcontext.hpp>
@@ -28,7 +28,7 @@ class ClientConfig;
 class Record;
 class TransactionManager;
 
-class Transaction : NonCopyable, NonMovable {
+class Transaction : crossbow::non_copyable, crossbow::non_movable {
 public:
     // TODO Overload new and delete?
 

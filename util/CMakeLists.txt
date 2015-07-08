@@ -6,7 +6,6 @@ set(UTIL_SRCS
     OpenAddressingHash.cpp
     LogOperations.hpp
     LogOperations.cpp
-    NonCopyable.hpp
     Log.hpp
     Log.cpp
     TransactionImpl.hpp

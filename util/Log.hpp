@@ -2,10 +2,10 @@
 
 #include <config.h>
 
-#include "NonCopyable.hpp"
 #include "PageManager.hpp"
 
 #include <crossbow/logger.hpp>
+#include <crossbow/non_copyable.hpp>
 
 #include <atomic>
 #include <cstddef>
@@ -18,7 +18,7 @@ namespace store {
 /**
  * @brief A single entry in the log able to store any arbitrary data
  */
-class LogEntry : NonCopyable, NonMovable {
+class LogEntry : crossbow::non_copyable, crossbow::non_movable {
 public:
     /// Size of the LogEntry data structure
     static constexpr size_t LOG_ENTRY_SIZE = 8;
@@ -148,7 +148,7 @@ private:
  * the log pads the entries to a multiple of 16 bytes and writes the LogEntries at offset 8. Any subsequent entries are
  * aligned with offset 8 due to the padding.
  */
-class LogPage : NonCopyable, NonMovable {
+class LogPage : crossbow::non_copyable, crossbow::non_movable {
 public:
     /// Size of the LogPage data structure
     static constexpr size_t LOG_HEADER_SIZE = 24;
@@ -853,7 +853,7 @@ private:
  * @brief The Log class
  */
 template <class Impl>
-class Log : public Impl, NonCopyable {
+class Log : public Impl, crossbow::non_copyable, crossbow::non_movable {
 public:
     /**
      * @brief Iterator for iterating over all pages in the log
