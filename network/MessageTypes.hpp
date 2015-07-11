@@ -13,7 +13,6 @@ enum class RequestType : uint32_t {
     CREATE_TABLE,
     GET_TABLEID,
     GET,
-    GET_NEWEST,
     UPDATE,
     INSERT,
     REMOVE,

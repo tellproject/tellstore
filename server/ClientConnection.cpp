@@ -129,7 +129,7 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
      * - x bytes: Snapshot descriptor
      *
      * The response consists of the following format:
-     * - 8 bytes: The version of the tuple (0 in this case, ony used for get newest)
+     * - 8 bytes: The version of the tuple
      * - 1 byte:  Whether the tuple is the newest one
      * - 1 byte:  Whether the tuple was found
      * If the tuple was found:
@@ -144,8 +144,9 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
                 [this, &transactionId, &tableId, &key] (const SnapshotDescriptor& snapshot) {
             size_t size = 0;
             const char* data = nullptr;
+            uint64_t version = 0x0u;
             bool isNewest = false;
-            auto success = mStorage.get(tableId, key, size, data, snapshot, isNewest);
+            auto success = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
 
             // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
             size_t messageSize = 2 * sizeof(uint64_t) + size;
@@ -155,7 +156,7 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
                 LOG_ERROR("Error while handling get request [error = %1% %2%]", ec, ec.message());
                 return;
             }
-            response.write<uint64_t>(0x0u);
+            response.write<uint64_t>(version);
             response.write<uint8_t>(isNewest ? 0x1u : 0x0u);
             response.write<uint8_t>(success ? 0x1u : 0x0u);
             if (success) {
@@ -164,47 +165,6 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
                 response.write(data, size);
             }
         });
-    } break;
-
-    /**
-     * The get newest request has the following format:
-     * - 8 bytes: The table ID of the requested tuple
-     * - 8 bytes: The key of the requested tuple
-     *
-     * The response consists of the following format:
-     * - 8 bytes: The version of the tuple
-     * - 1 byte:  Whether the tuple is the newest one (always true in the case of get newest)
-     * - 1 byte:  Whether the tuple was found
-     * If the tuple was found:
-     * - 2 bytes: Padding
-     * - 4 bytes: Length of the tuple's data field
-     * - x bytes: The tuple's data
-     */
-    case RequestType::GET_NEWEST: {
-        auto tableId = request.read<uint64_t>();
-        auto key = request.read<uint64_t>();
-
-        size_t size = 0;
-        const char* data = nullptr;
-        uint64_t version = 0x0u;
-        auto success = mStorage.getNewest(tableId, key, size, data, version);
-
-        // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
-        size_t messageSize = 2 * sizeof(uint64_t) + size;
-        std::error_code ec;
-        auto response = writeResponse(transactionId, ResponseType::GET, messageSize, ec);
-        if (ec) {
-            LOG_ERROR("Error while handling get newest request [error = %1% %2%]", ec, ec.message());
-            break;
-        }
-        response.write<uint64_t>(version);
-        response.write<uint8_t>(0x1u); // isNewest
-        response.write<uint8_t>(success ? 0x1u : 0x0u);
-        if (success) {
-            response.align(sizeof(uint32_t));
-            response.write<uint32_t>(size);
-            response.write(data, size);
-        }
     } break;
 
     /**

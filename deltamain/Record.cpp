@@ -168,6 +168,7 @@ public:
 
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
+                     uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
                      bool* wasDeleted) const {
@@ -184,7 +185,7 @@ public:
             // read set (there can be wholes in the read set).
             bool b = false;
             DMRecordImplBase<T> rec(next);
-            auto res = rec.data(snapshot, size, isNewest, isValid, &b);
+            auto res = rec.data(snapshot, size, version, isNewest, isValid, &b);
             if (isValid && (b || res)) {
                 if (wasDeleted) *wasDeleted = b;
                 return res;
@@ -195,6 +196,7 @@ public:
         }
         isValid = true;
         if (snapshot.inReadSet(v)) {
+            version = v;
             if (wasDeleted) *wasDeleted = false;
             if (next == nullptr) isNewest = true;
             auto entry = LogEntry::entryFromData(this->mData);
@@ -293,6 +295,7 @@ public:
 
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
+                     uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
                      bool* wasDeleted) const {
@@ -303,6 +306,7 @@ public:
         isValid = true;
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
+            version = v;
             if (wasDeleted) *wasDeleted = false;
             auto entry = LogEntry::entryFromData(this->mData);
             size = size_t(entry->size());
@@ -312,7 +316,7 @@ public:
             isNewest = false;
             if (prev) {
                 DMRecordImplBase<T> rec(prev);
-                return rec.data(snapshot, size, isNewest, isValid, wasDeleted);
+                return rec.data(snapshot, size, version, isNewest, isValid, wasDeleted);
             }
             if (wasDeleted) *wasDeleted = false;
             return nullptr;
@@ -394,6 +398,7 @@ public:
 
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
+                     uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
                      bool* wasDeleted) const {
@@ -404,6 +409,7 @@ public:
         isValid = true;
         auto v = this->version();
         if (snapshot.inReadSet(v)) {
+            version = v;
             if (wasDeleted) *wasDeleted = true;
             size = 0;
             return nullptr;
@@ -411,7 +417,7 @@ public:
             auto prev = this->getPrevious();
             if (prev) {
                 DMRecordImplBase<T> rec(prev);
-                auto res = rec.data(snapshot, size, isNewest, isValid, wasDeleted);
+                auto res = rec.data(snapshot, size, version, isNewest, isValid, wasDeleted);
                 isNewest = false;
                 return res;
             }
@@ -616,6 +622,7 @@ public:
 
     const char* data(const SnapshotDescriptor& snapshot,
                      size_t& size,
+                     uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
                      bool* wasDeleted) const {
@@ -626,7 +633,7 @@ public:
             DMRecordImplBase<T> rec(newest);
             bool b;
             size_t s;
-            auto res = rec.data(snapshot, s, isNewest, isValid, &b);
+            auto res = rec.data(snapshot, s, version, isNewest, isValid, &b);
             if (isValid) {
                 if (b || res) {
                     if (wasDeleted) *wasDeleted = b;
@@ -643,6 +650,7 @@ public:
             if (off[idx] < 0) continue;
             isValid = true;
             if (snapshot.inReadSet(v[idx])) {
+                version = v[idx];
                 break;
             }
             isNewest = false;
@@ -1112,12 +1120,13 @@ auto DMRecordImplBase<T>::getVersionIterator(const Record* record) const -> Vers
 template<class T>
 const char* DMRecordImplBase<T>::data(const SnapshotDescriptor& snapshot,
                                   size_t& size,
+                                  uint64_t& version,
                                   bool& isNewest,
                                   bool& isValid,
                                   bool *wasDeleted /* = nullptr */) const {
     // we have to execute this at a readable version
     isNewest = true;
-    DISPATCH_METHODT(data, snapshot, size, isNewest, isValid, wasDeleted);
+    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted);
     return nullptr;
 }
 

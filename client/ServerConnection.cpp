@@ -101,17 +101,6 @@ void ServerConnection::get(uint64_t transactionId, uint64_t tableId, uint64_t ke
     writeSnapshot(request, snapshot);
 }
 
-void ServerConnection::getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec) {
-    auto messageSize = 2 * sizeof(uint64_t);
-
-    auto request = writeRequest(transactionId, RequestType::GET_NEWEST, messageSize, ec);
-    if (ec) {
-        return;
-    }
-    request.write<uint64_t>(tableId);
-    request.write<uint64_t>(key);
-}
-
 void ServerConnection::update(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record,
         const GenericTuple& tuple, const SnapshotDescriptor& snapshot, std::error_code& ec) {
     auto size = record.sizeOfTuple(tuple);

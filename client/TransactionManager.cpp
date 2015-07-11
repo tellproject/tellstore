@@ -65,7 +65,7 @@ bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, st
 }
 
 bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-        const SnapshotDescriptor& snapshot, bool& isNewest, std::error_code& ec) {
+        const SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
     mResponse.reset();
@@ -76,23 +76,6 @@ bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*&
     }
     wait();
 
-    uint64_t version = 0;
-    return mResponse.get(size, data, version, isNewest, ec);
-}
-
-bool Transaction::getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
-        std::error_code& ec) {
-    auto& con = mProcessor.mConnection;
-
-    mResponse.reset();
-    ++mOutstanding;
-    con.getNewest(mId, tableId, key, ec);
-    if (ec) {
-        return false;
-    }
-    wait();
-
-    bool isNewest = false;
     return mResponse.get(size, data, version, isNewest, ec);
 }
 

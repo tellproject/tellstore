@@ -134,21 +134,12 @@ public:
      * @param size Reference to the tuple's size
      * @param data Reference to the tuple's data pointer
      * @param snapshot Descriptor containing the versions allowed to read
+     * @param version Reference to the tuple's version
      * @param isNewest Whether the returned tuple contains the newest version written
      * @return Whether the tuple was found
      */
-    bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest);
-
-    /**
-     * @brief Reads the newest tuple from the table
-     *
-     * @param key Key of the tuple to retrieve
-     * @param size Reference to the tuple's size
-     * @param data Reference to the tuple's data pointer
-     * @param version Reference to the tuple's version
-     * @return Whether the tuple was found
-     */
-    bool getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version);
+    bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, uint64_t& version,
+            bool& isNewest);
 
     /**
      * @brief Inserts a tuple into the table
@@ -285,12 +276,8 @@ public:
     }
 
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
-            bool& isNewest) {
-        return mTableManager.get(tableId, key, size, data, snapshot, isNewest);
-    }
-
-    bool getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version) {
-        return mTableManager.getNewest(tableId, key, size, data, version);
+            uint64_t& version, bool& isNewest) {
+        return mTableManager.get(tableId, key, size, data, snapshot, version, isNewest);
     }
 
     bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot) {

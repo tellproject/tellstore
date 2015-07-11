@@ -55,10 +55,7 @@ public:
     bool getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec);
 
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
-            bool& isNewest, std::error_code& ec);
-
-    bool getNewest(uint64_t tableId, uint64_t key, size_t& size, const char*& data, uint64_t& version,
-            std::error_code& ec);
+            uint64_t& version, bool& isNewest, std::error_code& ec);
 
     bool update(uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
             const SnapshotDescriptor& snapshot, std::error_code& ec);

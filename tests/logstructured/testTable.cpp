@@ -36,15 +36,23 @@ protected:
      * @param key Key of the tuple to check
      * @param tx Snapshot descriptor of the current transaction
      * @param expected Expected value of the tuple
+     * @param expectedVersion Expected version of the element
      * @param expectedNewest Expected the newest element
      */
-    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected, bool expectedNewest) {
+    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected,
+            uint64_t expectedVersion, bool expectedNewest) {
         std::size_t size = 0;
         const char* ptr = nullptr;
+        uint64_t version = 0x0u;
         bool isNewest = false;
-        EXPECT_TRUE(mTable.get(key, size, ptr, tx, isNewest));
+        EXPECT_TRUE(mTable.get(key, size, ptr, tx, version, isNewest));
         EXPECT_EQ(expected, std::string(ptr, size));
+        EXPECT_EQ(expectedVersion, version);
         EXPECT_EQ(expectedNewest, isNewest);
+    }
+
+    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected, bool expectedNewest) {
+        assertElement(key, tx, expected, tx.version(), expectedNewest);
     }
 
     crossbow::allocator mAlloc;
@@ -111,9 +119,9 @@ TEST_F(TableTest, insertUpdateGet) {
 
 /**
  * @class Table
- * @test Check if an insert followed by a remove returns no element
+ * @test Check if an insert followed by a remove returns no element in the same transaction
  */
-TEST_F(TableTest, insertRemoveGet) {
+TEST_F(TableTest, insertRemoveGetSameTransaction) {
     bool succeeded = false;
     mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
     EXPECT_TRUE(succeeded);
@@ -122,8 +130,37 @@ TEST_F(TableTest, insertRemoveGet) {
 
     std::size_t size = 0;
     const char* ptr = nullptr;
+    uint64_t version = 0x0u;
     bool isNewest = false;
-    EXPECT_FALSE(mTable.get(1, size, ptr, mTx, isNewest));
+    EXPECT_FALSE(mTable.get(1, size, ptr, mTx, version, isNewest));
+    EXPECT_EQ(0x0u, version);
+    EXPECT_TRUE(isNewest);
+}
+
+/**
+ * @class Table
+ * @test Check if an insert followed by a remove returns no element
+ */
+TEST_F(TableTest, insertRemoveGet) {
+    bool succeeded = false;
+    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    EXPECT_TRUE(succeeded);
+
+    // Commit insert transaction
+    mCommitManager.commitTx(mTx);
+
+    // Begin remove transaction
+    auto tx2 = mCommitManager.startTx();
+
+    // Remove element
+    EXPECT_TRUE(mTable.remove(1, tx2));
+
+    std::size_t size = 0;
+    const char* ptr = nullptr;
+    uint64_t version = 0x0u;
+    bool isNewest = false;
+    EXPECT_FALSE(mTable.get(1, size, ptr, tx2, version, isNewest));
+    EXPECT_EQ(tx2.version(), version);
     EXPECT_TRUE(isNewest);
 }
 
@@ -145,57 +182,6 @@ TEST_F(TableTest, insertRemoveInsertGet) {
     EXPECT_TRUE(succeeded);
 
     assertElement(1, mTx, field2, true);
-}
-
-/**
- * @class Table
- * @test Check if getNewest on a nonexisting key returns the version 0
- */
-TEST_F(TableTest, emptyGetNewest) {
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    uint64_t version = std::numeric_limits<uint64_t>::max();
-    EXPECT_FALSE(mTable.getNewest(1, size, ptr, version));
-    EXPECT_EQ(0, version);
-}
-
-/**
- * @class Table
- * @test Check if getNewest returns the recently inserted key
- */
-TEST_F(TableTest, insertGetNewest) {
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
-
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    uint64_t version = 0;
-    EXPECT_TRUE(mTable.getNewest(1, size, ptr, version));
-    EXPECT_EQ(mField, std::string(ptr, size));
-    EXPECT_EQ(2, version);
-}
-
-/**
- * @class Table
- * @test Check if getNewest on a removed key returns false with the correct version
- */
-TEST_F(TableTest, insertRemoveGetNewest) {
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
-
-    mCommitManager.commitTx(mTx);
-
-    auto tx2 = mCommitManager.startTx();
-
-    EXPECT_TRUE(mTable.remove(1, tx2));
-
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    uint64_t version = 0;
-    EXPECT_FALSE(mTable.getNewest(1, size, ptr, version));
-    EXPECT_EQ(tx2.version(), version);
 }
 
 /**
@@ -222,7 +208,7 @@ TEST_F(TableTest, insertUpdateRevert) {
 
     // Revert element
     EXPECT_TRUE(mTable.revert(1, tx2));
-    assertElement(1, tx2, mField, true);
+    assertElement(1, tx2, mField, mTx.version(), true);
 }
 
 }

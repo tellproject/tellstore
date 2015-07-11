@@ -117,6 +117,7 @@ public:
     const char* data(
             const SnapshotDescriptor& snapshot,
             size_t& size,
+            uint64_t& version,
             bool& isNewest,
             bool& isValid,
             bool* wasDeleted = nullptr) const;

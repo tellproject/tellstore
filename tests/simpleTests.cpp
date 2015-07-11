@@ -41,10 +41,12 @@ TEST(simple, insert_and_get)
         storage.insert(tId, 1, GenericTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)}), tx, &res);
         ASSERT_TRUE(res) << "This insert must not fail!";
         bool isNewest = false;
+        uint64_t version = 0x0u;
         const char* rec;
         size_t s;
-        res = storage.get(tId, 1, s, rec, tx, isNewest);
+        res = storage.get(tId, 1, s, rec, tx, version, isNewest);
         ASSERT_TRUE(res) << "Tuple not found";
+        ASSERT_EQ(tx.descriptor().version(), version) << "Tuple has not the version of the snapshot descriptor";
         ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
         storage.forceGC();
     }

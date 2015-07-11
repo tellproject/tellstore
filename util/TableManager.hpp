@@ -135,20 +135,11 @@ public:
              size_t& size,
              const char*& data,
              const SnapshotDescriptor& snapshot,
+             uint64_t& version,
              bool& isNewest)
     {
         crossbow::allocator _;
-        return lookupTable(tableId)->get(key, size, data, snapshot, isNewest);
-    }
-
-    bool getNewest(uint64_t tableId,
-                   uint64_t key,
-                   size_t& size,
-                   const char*& data,
-                   uint64_t& version)
-    {
-        crossbow::allocator _;
-        return lookupTable(tableId)->getNewest(key, size, data, version);
+        return lookupTable(tableId)->get(key, size, data, snapshot, version, isNewest);
     }
 
     bool update(uint64_t tableId,

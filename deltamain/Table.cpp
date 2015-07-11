@@ -109,13 +109,14 @@ bool Table::get(uint64_t key,
                 size_t& size,
                 const char*& data,
                 const SnapshotDescriptor& snapshot,
+                uint64_t& version,
                 bool& isNewest) const {
     auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
         bool isValid;
-        data = rec.data(snapshot, size, isNewest, isValid, &wasDeleted);
+        data = rec.data(snapshot, size, version, isNewest, isValid, &wasDeleted);
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
         if (isValid && !(wasDeleted && isNewest)) {
@@ -131,7 +132,7 @@ bool Table::get(uint64_t key,
         if (rec.isValidDataRecord() && rec.key() == key) {
             bool wasDeleted;
             bool isValid;
-            data = rec.data(snapshot, size, isNewest, isValid, &wasDeleted);
+            data = rec.data(snapshot, size, version, isNewest, isValid, &wasDeleted);
             if (isNewest && wasDeleted) {
                 // same as above, it could be that the record was inserted and
                 // then updated - in this case we to continue scanning
@@ -141,14 +142,6 @@ bool Table::get(uint64_t key,
         }
     }
     // in this case the tuple does not exist
-    return false;
-}
-
-bool Table::getNewest(uint64_t key,
-                      size_t& size,
-                      const char*& data,
-                      uint64_t& version) const {
-    // TODO Implement
     return false;
 }
 
@@ -165,10 +158,11 @@ void Table::insert(uint64_t key,
     if (ptr) {
         // the key exists... but it could be, that it got deleted
         CDMRecord rec(reinterpret_cast<const char*>(ptr));
+        uint64_t version;
         bool wasDeleted, isNewest;
         size_t s;
         bool isValid;
-        rec.data(snapshot, s, isNewest, isValid, &wasDeleted);
+        rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted);
         if (isValid && !(wasDeleted && isNewest)) {
             if (succeeded) *succeeded = false;
             return;

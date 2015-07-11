@@ -79,8 +79,6 @@ public:
     void get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
             std::error_code& ec);
 
-    void getNewest(uint64_t transactionId, uint64_t tableId, uint64_t key, std::error_code& ec);
-
     void update(uint64_t transactionId, uint64_t tableId, uint64_t key, const Record& record, const GenericTuple& tuple,
             const SnapshotDescriptor& snapshot, std::error_code& ec);
 

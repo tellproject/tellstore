@@ -723,7 +723,8 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, H
           mMinVersion(0x1u) {
 }
 
-bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, bool& isNewest) {
+bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, uint64_t& version,
+        bool& isNewest) {
     VersionRecordIterator recIter(*this, mMinVersion.load(), key);
     for (; !recIter.done(); recIter.next()) {
         if (!snapshot.inReadSet(recIter->validFrom())) {
@@ -731,7 +732,8 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
         }
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
 
-        // Set the isNewest field
+        // Set the version and isNewest field
+        version = recIter->validFrom();
         isNewest = recIter.isNewest();
 
         // Check if the entry marks a deletion
@@ -748,30 +750,6 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
     // Element not found
     isNewest = recIter.isNewest();
     return false;
-}
-
-bool Table::getNewest(uint64_t key, size_t& size, const char*& data, uint64_t& version) {
-    VersionRecordIterator recIter(*this, mMinVersion.load(), key);
-
-    // Element not found
-    if (recIter.done()) {
-        version = 0x0u;
-        return false;
-    }
-    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
-
-    // Set the version field
-    version = recIter->validFrom();
-
-    // Check if the entry marks a deletion
-    if (crossbow::from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
-        return false;
-    }
-
-    // Set the data pointer and size field
-    data = recIter->data();
-    size = entry->size() - sizeof(ChainedVersionRecord);
-    return true;
 }
 
 void Table::insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,

@@ -122,9 +122,10 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         LOG_TRACE("Get tuple");
         size_t getSize;
         const char* getData;
+        uint64_t version = 0x0u;
         bool isNewest = false;
         auto getStartTime = std::chrono::steady_clock::now();
-        succeeded = transaction.get(mTableId, key, getSize, getData, snapshot, isNewest, ec);
+        succeeded = transaction.get(mTableId, key, getSize, getData, snapshot, version, isNewest, ec);
         auto getEndTime = std::chrono::steady_clock::now();
         if (ec) {
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
@@ -132,6 +133,10 @@ void Client::executeTransaction(Transaction& transaction, uint64_t startKey, uin
         }
         if (!succeeded) {
             LOG_ERROR("Tuple not found");
+            return;
+        }
+        if (version != snapshot.version()) {
+            LOG_ERROR("Tuple not in the version written");
             return;
         }
         if (!isNewest) {
