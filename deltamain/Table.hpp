@@ -88,10 +88,6 @@ public:
              bool& isNewest) const;
 
     void insert(uint64_t key,
-                const GenericTuple& tuple,
-                const SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr);
-    void insert(uint64_t key,
                 size_t size,
                 const char* const data,
                 const SnapshotDescriptor& snapshot,
@@ -188,15 +184,6 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 bool* succeeded = nullptr)
     {
         tableManager.insert(tableId, key, size, data, snapshot, succeeded);
-    }
-
-    void insert(uint64_t tableId,
-                uint64_t key,
-                const GenericTuple& tuple,
-                const SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr)
-    {
-        tableManager.insert(tableId, key, tuple, snapshot, succeeded);
     }
 
     bool remove(uint64_t tableId,

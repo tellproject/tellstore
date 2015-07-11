@@ -145,16 +145,6 @@ public:
      * @brief Inserts a tuple into the table
      *
      * @param key Key of the tuple to insert
-     * @param tuple The tuple to insert
-     * @param snapshot Descriptor containing the version to write
-     * @param succeeded Whether the tuple was inserted successfully
-     */
-    void insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot, bool* succeeded = nullptr);
-
-    /**
-     * @brief Inserts a tuple into the table
-     *
-     * @param key Key of the tuple to insert
      * @param size Size of the tuple to insert
      * @param data Pointer to the data of the tuple to insert
      * @param snapshot Descriptor containing the version to write
@@ -287,11 +277,6 @@ public:
     void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
             bool* succeeded = nullptr) {
         mTableManager.insert(tableId, key, size, data, snapshot, succeeded);
-    }
-
-    void insert(uint64_t tableId, uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
-            bool* succeeded = nullptr) {
-        mTableManager.insert(tableId, key, tuple, snapshot, succeeded);
     }
 
     bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {

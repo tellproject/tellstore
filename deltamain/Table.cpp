@@ -205,16 +205,6 @@ void Table::insert(uint64_t key,
     LOG_ASSERT(false, "We should never reach this point");
 }
 
-void Table::insert(uint64_t key,
-                   const GenericTuple& tuple,
-                   const SnapshotDescriptor& snapshot,
-                   bool* succeeded /*= nullptr*/)
-{
-    size_t size;
-    std::unique_ptr<char[]> rec(mRecord.create(tuple, size));
-    insert(key, size, rec.get(), snapshot, succeeded);
-}
-
 bool Table::update(uint64_t key,
                    size_t size,
                    const char* const data,

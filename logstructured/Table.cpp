@@ -752,14 +752,6 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
     return false;
 }
 
-void Table::insert(uint64_t key, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
-        bool* succeeded /* = nullptr */) {
-    size_t size;
-    std::unique_ptr<char[]> rec(mRecord.create(tuple, size));
-    insert(key, size, rec.get(), snapshot, succeeded);
-    // TODO This can be implemented faster by directly serializing the tuple to the log
-}
-
 void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());

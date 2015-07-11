@@ -26,6 +26,7 @@ TEST(simple, insert_and_get)
     Storage storage(config);
     Schema schema;
     schema.addField(FieldType::INT, "foo", true);
+    Record record(schema);
     uint64_t tId;
     crossbow::string tableName = "testTable";
     {
@@ -38,16 +39,24 @@ TEST(simple, insert_and_get)
         // correctly, but at least it must not segfault
         storage.forceGC();
         auto tx = storage.startTx();
-        storage.insert(tId, 1, GenericTuple({std::make_pair<crossbow::string, boost::any>("foo", 12)}), tx, &res);
-        ASSERT_TRUE(res) << "This insert must not fail!";
-        bool isNewest = false;
-        uint64_t version = 0x0u;
-        const char* rec;
-        size_t s;
-        res = storage.get(tId, 1, s, rec, tx, version, isNewest);
-        ASSERT_TRUE(res) << "Tuple not found";
-        ASSERT_EQ(tx.descriptor().version(), version) << "Tuple has not the version of the snapshot descriptor";
-        ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
+        {
+            size_t size;
+            std::unique_ptr<char[]> rec(record.create(GenericTuple({
+                    std::make_pair<crossbow::string, boost::any>("foo", 12)
+            }), size));
+            storage.insert(tId, 1, size, rec.get(), tx, &res);
+            ASSERT_TRUE(res) << "This insert must not fail!";
+        }
+        {
+            bool isNewest = false;
+            uint64_t version = 0x0u;
+            const char* rec;
+            size_t s;
+            res = storage.get(tId, 1, s, rec, tx, version, isNewest);
+            ASSERT_TRUE(res) << "Tuple not found";
+            ASSERT_EQ(tx.descriptor().version(), version) << "Tuple has not the version of the snapshot descriptor";
+            ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
+        }
         storage.forceGC();
     }
     {

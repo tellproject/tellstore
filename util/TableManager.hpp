@@ -164,16 +164,6 @@ public:
         lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
     }
 
-    void insert(uint64_t tableId,
-                uint64_t key,
-                const GenericTuple& tuple,
-                const SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr)
-    {
-        crossbow::allocator _;
-        lookupTable(tableId)->insert(key, tuple, snapshot, succeeded);
-    }
-
     bool remove(uint64_t tableId,
                 uint64_t key,
                 const SnapshotDescriptor& snapshot)
