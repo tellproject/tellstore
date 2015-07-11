@@ -127,6 +127,10 @@ public:
         return mTableId;
     }
 
+    const Schema& schema() const {
+        return mSchema;
+    }
+
     /**
      * @brief Reads a tuple from the table
      *
@@ -272,8 +276,8 @@ public:
         return mTableManager.createTable(name, schema, idx, mHashMap);
     }
 
-    bool getTableId(const crossbow::string& name, uint64_t& id) {
-        return mTableManager.getTableId(name, id);
+    const Table* getTable(const crossbow::string& name, uint64_t& id) const {
+        return mTableManager.getTable(name, id);
     }
 
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,

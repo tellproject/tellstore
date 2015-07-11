@@ -54,16 +54,19 @@ enum server_errors {
     unkown_request = 1,
 
     /// Client received an unkown response type.
-    unkown_response = 2,
+    unkown_response,
+
+    /// Table does not exist.
+    invalid_table,
 
     /// Snapshot sent to the server was invalid.
-    invalid_snapshot = 3,
+    invalid_snapshot,
 
     /// ID sent to the server was invalid.
-    invalid_id = 4,
+    invalid_id,
 
     /// Operation failed due to server overload.
-    server_overlad = 5,
+    server_overlad,
 };
 
 /**
@@ -82,6 +85,9 @@ public:
 
         case error::unkown_response:
             return "Client received an unkown response type";
+
+        case error::invalid_table:
+            return "Table does not exist";
 
         case error::invalid_snapshot:
             return "Snapshot sent to the server was invalid";

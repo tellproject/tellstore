@@ -10,7 +10,7 @@ namespace {
 ::testing::AssertionResult correctTableId(const crossbow::string& name, uint64_t tId, Storage& storage)
 {
     uint64_t id;
-    if (!storage.getTableId(name, id))
+    if (!storage.getTable(name, id))
         return ::testing::AssertionFailure() << "Table does not exist";
     else if (tId == id)
         return ::testing::AssertionSuccess();
@@ -62,7 +62,7 @@ TEST(simple, insert_and_get)
     {
         crossbow::allocator _;
         uint64_t sTid;
-        ASSERT_TRUE(storage.getTableId(tableName, sTid)) << "This table exists";
+        ASSERT_TRUE(storage.getTable(tableName, sTid) != nullptr) << "This table exists";
         ASSERT_EQ(sTid, tId) << "Table Id did change";
     }
 }

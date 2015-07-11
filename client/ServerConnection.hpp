@@ -42,7 +42,7 @@ public:
 
         bool createTable(uint64_t& tableId, std::error_code& ec);
 
-        bool getTableId(uint64_t& tableId, std::error_code& ec);
+        bool getTable(uint64_t& tableId, Schema& schema, std::error_code& ec);
 
         bool get(size_t& size, const char*& data, uint64_t& version, bool& isNewest, std::error_code& ec);
 
@@ -74,7 +74,7 @@ public:
 
     void createTable(uint64_t transactionId, const crossbow::string& name, const Schema& schema, std::error_code& ec);
 
-    void getTableId(uint64_t transactionId, const crossbow::string& name, std::error_code& ec);
+    void getTable(uint64_t transactionId, const crossbow::string& name, std::error_code& ec);
 
     void get(uint64_t transactionId, uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot,
             std::error_code& ec);

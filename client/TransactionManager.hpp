@@ -52,7 +52,7 @@ public:
 
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& tableId, std::error_code& ec);
 
-    bool getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec);
+    bool getTable(const crossbow::string& name, uint64_t& tableId, Schema& schema, std::error_code& ec);
 
     bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
             uint64_t& version, bool& isNewest, std::error_code& ec);

@@ -11,7 +11,7 @@ namespace store {
 enum class RequestType : uint32_t {
     UNKOWN = 0x0u,
     CREATE_TABLE,
-    GET_TABLEID,
+    GET_TABLE,
     GET,
     UPDATE,
     INSERT,
@@ -31,7 +31,7 @@ enum class ResponseType : uint32_t {
     UNKOWN = 0x0u,
     ERROR,
     CREATE_TABLE,
-    GET_TABLEID,
+    GET_TABLE,
     GET,
     MODIFICATION,
     SCAN,

@@ -80,6 +80,10 @@ public:
 
     ~Table();
 
+    const Schema& schema() const {
+        return mSchema;
+    }
+
     TableType type() const {
         return mSchema.type();
     }
@@ -156,8 +160,8 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return tableManager.createTable(name, schema, idx);
     }
 
-    bool getTableId(const crossbow::string&name, uint64_t& id) {
-        return tableManager.getTableId(name, id);
+    const Table* getTable(const crossbow::string& name, uint64_t& id) const {
+        return tableManager.getTable(name, id);
     }
 
     bool get(uint64_t tableId,

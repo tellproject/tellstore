@@ -76,11 +76,11 @@ void ServerConnection::createTable(uint64_t transactionId, const crossbow::strin
     request.advance(schemaSize);
 }
 
-void ServerConnection::getTableId(uint64_t transactionId, const crossbow::string& name, std::error_code& ec) {
+void ServerConnection::getTable(uint64_t transactionId, const crossbow::string& name, std::error_code& ec) {
     auto nameSize = name.size();
     auto messageSize = sizeof(uint16_t) + nameSize;
 
-    auto request = writeRequest(transactionId, RequestType::GET_TABLEID, messageSize, ec);
+    auto request = writeRequest(transactionId, RequestType::GET_TABLE, messageSize, ec);
     if (ec) {
         return;
     }
@@ -248,13 +248,20 @@ bool ServerConnection::Response::createTable(uint64_t& tableId, std::error_code&
     return (tableId != 0x0u);
 }
 
-bool ServerConnection::Response::getTableId(uint64_t& tableId, std::error_code& ec) {
-    if (!checkMessage(ResponseType::GET_TABLEID, ec)) {
+bool ServerConnection::Response::getTable(uint64_t& tableId, Schema& schema, std::error_code& ec) {
+    if (!checkMessage(ResponseType::GET_TABLE, ec)) {
         return false;
     }
 
     tableId = mMessage->read<uint64_t>();
-    return (tableId != 0x0u);
+
+    // TODO Refactor schema serialization
+    auto schemaData = mMessage->data();
+    auto schemaSize = mMessage->read<uint32_t>();
+    schema = Schema(schemaData);
+    mMessage->advance(schemaSize - sizeof(uint32_t));
+
+    return true;
 }
 
 bool ServerConnection::Response::get(size_t& size, const char*& data, uint64_t& version, bool& isNewest,

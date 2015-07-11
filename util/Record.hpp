@@ -16,6 +16,7 @@ namespace tell {
 namespace store {
 
 enum class TableType : uint8_t {
+    UNKNOWN,
     TRANSACTIONAL,
     NON_TRANSACTIONAL,
 };
@@ -303,11 +304,13 @@ public:
 */
 class Schema {
 private:
-    TableType mType;
+    TableType mType = TableType::UNKNOWN;
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
 public:
+    Schema() = default;
+
     Schema(TableType type)
             : mType(type) {
     }

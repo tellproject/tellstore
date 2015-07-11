@@ -50,18 +50,18 @@ bool Transaction::createTable(const crossbow::string& name, const Schema& schema
     return mResponse.createTable(tableId, ec);
 }
 
-bool Transaction::getTableId(const crossbow::string& name, uint64_t& tableId, std::error_code& ec) {
+bool Transaction::getTable(const crossbow::string& name, uint64_t& tableId, Schema& schema, std::error_code& ec) {
     auto& con = mProcessor.mConnection;
 
     mResponse.reset();
     ++mOutstanding;
-    con.getTableId(mId, name, ec);
+    con.getTable(mId, name, ec);
     if (ec) {
         return false;
     }
     wait();
 
-    return mResponse.getTableId(tableId, ec);
+    return mResponse.getTable(tableId, schema, ec);
 }
 
 bool Transaction::get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,

@@ -108,6 +108,10 @@ public:
                      const Schema& schema,
                      uint64_t& idx,
                      Args&&... args) {
+        if (schema.type() == TableType::UNKNOWN) {
+            return false;
+        }
+
         crossbow::allocator __;
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
@@ -122,12 +126,12 @@ public:
         return true;
     }
 
-    bool getTableId(const crossbow::string& name, uint64_t& id) {
+    const Table* getTable(const crossbow::string& name, uint64_t& id) const {
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         auto res = mNames.find(name);
-        if (res == mNames.end()) return false;
+        if (res == mNames.end()) return nullptr;
         id = res->second;
-        return true;
+        return lookupTable(res->second);
     }
 
     bool get(uint64_t tableId,
@@ -200,9 +204,14 @@ public:
     }
 
 private:
-    Table* lookupTable(uint64_t tableId) {
+    const Table* lookupTable(uint64_t tableId) const {
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
-        return mTables[tableId];
+        auto i = mTables.find(tableId);
+        return (i == mTables.end() ? nullptr : i->second);
+    }
+
+    Table* lookupTable(uint64_t tableId) {
+        return const_cast<Table*>(const_cast<const TableManager*>(this)->lookupTable(tableId));
     }
 };
 

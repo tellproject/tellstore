@@ -103,23 +103,32 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
      * The response consists of the following format:
      * - 8 bytes: The table ID of the table or 0 when the table does not exist
      */
-    case RequestType::GET_TABLEID: {
+    case RequestType::GET_TABLE: {
         auto tableNameSize = request.read<uint16_t>();
         auto tableNameData = request.read(tableNameSize);
         crossbow::string tableName(tableNameData, tableNameSize);
 
-        uint64_t tableId = 0;
-        auto succeeded = mStorage.getTableId(tableName, tableId);
-        LOG_ASSERT((tableId == 0) ^ succeeded, "Table ID of 0 does not denote failure");
+        uint64_t tableId = 0x0u;
+        auto table = mStorage.getTable(tableName, tableId);
 
-        size_t messageSize = sizeof(uint64_t);
+        if (!table) {
+            writeErrorResponse(transactionId, error::invalid_table);
+            return;
+        }
+
+        auto& schema = table->schema();
+        auto schemaSize = schema.schemaSize();
+
+        size_t messageSize = sizeof(uint64_t) + schemaSize;
         std::error_code ec;
-        auto response = writeResponse(transactionId, ResponseType::GET_TABLEID, messageSize, ec);
+        auto response = writeResponse(transactionId, ResponseType::GET_TABLE, messageSize, ec);
         if (ec) {
             LOG_ERROR("Error while handling get table ID request [error = %1% %2%]", ec, ec.message());
             break;
         }
         response.write<uint64_t>(tableId);
+        schema.serialize(response.data());
+        response.advance(schemaSize);
     } break;
 
     /**
