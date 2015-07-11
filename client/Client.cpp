@@ -29,6 +29,7 @@ Client::Client(const ClientConfig& config)
         : mConfig(config),
           mService(mConfig.infinibandLimits),
           mManager(mService, mConfig),
+          mSchema(TableType::TRANSACTIONAL),
           mTableId(0x0u),
           mActiveTransactions(0),
           mTupleSize(0) {

@@ -359,7 +359,11 @@ void Table::runGC(uint64_t minVersion) {
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
     for (auto table : tables) {
-        table->runGC(minVersion);
+        if (table->type() == TableType::NON_TRANSACTIONAL) {
+            table->runGC(std::numeric_limits<uint64_t>::max());
+        } else {
+            table->runGC(minVersion);
+        }
     }
 }
 

@@ -205,6 +205,18 @@ private:
     friend class VersionRecordIterator;
 
     /**
+     * @brief The lowest active version of the tuples in this table
+     */
+    uint64_t minVersion() const;
+
+    /**
+     * @brief Finds the key in the table
+     *
+     * @param key Key of the record to lookup
+     */
+    VersionRecordIterator find(uint64_t key);
+
+    /**
      * @brief Helper function to write a update or a deletion entry
      *
      * @param key Key of the entry to write
@@ -218,12 +230,11 @@ private:
 
     PageManager& mPageManager;
     HashTable& mHashMap;
+    Schema mSchema;
     Record mRecord;
     const uint64_t mTableId;
 
     LogImpl mLog;
-
-    std::atomic<uint64_t> mMinVersion;
 };
 
 /**

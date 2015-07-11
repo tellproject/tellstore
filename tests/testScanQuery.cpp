@@ -28,7 +28,8 @@ crossbow::string gTuple2Text = crossbow::string("t-bone chicken prosciutto");
  */
 class ScanQueryTest : public ::testing::Test {
 protected:
-    ScanQueryTest() {
+    ScanQueryTest()
+            : mSchema(TableType::TRANSACTIONAL) {
         mSchema.addField(FieldType::BIGINT, "largenumber", true);
         mSchema.addField(FieldType::INT, "number", true);
         mSchema.addField(FieldType::TEXT, "text", true);

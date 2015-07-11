@@ -80,6 +80,10 @@ public:
 
     ~Table();
 
+    TableType type() const {
+        return mSchema.type();
+    }
+
     bool get(uint64_t key,
              size_t& size,
              const char*& data,

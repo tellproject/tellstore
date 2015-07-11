@@ -25,6 +25,7 @@ protected:
     TableTest()
             : mPageManager(PageManager::construct(4 * TELL_PAGE_SIZE)),
               mHashMap(1024),
+              mSchema(TableType::TRANSACTIONAL),
               mTable(*mPageManager, mSchema, 1, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {

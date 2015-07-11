@@ -717,15 +717,15 @@ bool GcScanIterator::replaceElement(ChainedVersionRecord* oldElement, ChainedVer
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
         : mPageManager(pageManager),
           mHashMap(hashMap),
-          mRecord(schema),
+          mSchema(schema),
+          mRecord(mSchema),
           mTableId(tableId),
-          mLog(mPageManager),
-          mMinVersion(0x1u) {
+          mLog(mPageManager) {
 }
 
 bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, uint64_t& version,
         bool& isNewest) {
-    VersionRecordIterator recIter(*this, mMinVersion.load(), key);
+    auto recIter = find(key);
     for (; !recIter.done(); recIter.next()) {
         if (!snapshot.inReadSet(recIter->validFrom())) {
             continue;
@@ -755,7 +755,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
 void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
-    VersionRecordIterator recIter(*this, mMinVersion.load(), key);
+    auto recIter = find(key);
     LOG_ASSERT(snapshot.version() >= recIter.minVersion(), "Version of the snapshot already committed");
 
     while (true) {
@@ -818,7 +818,7 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
 }
 
 bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
-    VersionRecordIterator recIter(*this, mMinVersion.load(), key);
+    auto recIter = find(key);
     while (!recIter.done()) {
         // Cancel if the element in the hash map is of a different version
         if (recIter->validFrom() != snapshot.version()) {
@@ -852,13 +852,10 @@ bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
 }
 
 std::vector<Table::Iterator> Table::startScan(int numThreads) {
-    // TODO Update minversion
-
-    auto minVersion = mMinVersion.load();
-
     std::vector<Table::Iterator> result;
     result.reserve(numThreads);
 
+    auto version = minVersion();
     auto numPages = mLog.pages();
     auto begin = mLog.pageBegin();
     auto end = mLog.pageEnd();
@@ -871,12 +868,12 @@ std::vector<Table::Iterator> Table::startScan(int numThreads) {
         for (auto j = 0; j < step && iter != end; ++j, ++iter) {
         }
 
-        result.emplace_back(*this, begin, iter, minVersion, &mRecord);
+        result.emplace_back(*this, begin, iter, version, &mRecord);
         begin = iter;
     }
 
     // The last scan takes the remaining pages
-    result.emplace_back(*this, begin, end, minVersion, &mRecord);
+    result.emplace_back(*this, begin, end, version, &mRecord);
 
     return result;
 }
@@ -885,11 +882,24 @@ void Table::runGC(uint64_t minVersion) {
     // TODO Implement
 }
 
+uint64_t Table::minVersion() const {
+    if (mSchema.type() == TableType::NON_TRANSACTIONAL) {
+        return ChainedVersionRecord::ACTIVE_VERSION;
+    } else {
+        // TODO Get correct version from CommitManager
+        return 0x1u;
+    }
+}
+
+VersionRecordIterator Table::find(uint64_t key) {
+    return VersionRecordIterator(*this, minVersion(), key);
+}
+
 bool Table::internalUpdate(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-        bool deletion) {
+                           bool deletion) {
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
-    VersionRecordIterator recIter(*this, mMinVersion.load(), key);
+    auto recIter = find(key);
     LOG_ASSERT(snapshot.version() >= recIter.minVersion(), "Version of the snapshot already committed");
 
     while (!recIter.done()) {

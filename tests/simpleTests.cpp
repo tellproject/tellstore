@@ -24,7 +24,7 @@ TEST(simple, insert_and_get)
     config.totalMemory = 0x10000000ull;
     config.hashMapCapacity = 0x100000ull;
     Storage storage(config);
-    Schema schema;
+    Schema schema(TableType::TRANSACTIONAL);
     schema.addField(FieldType::INT, "foo", true);
     Record record(schema);
     uint64_t tId;

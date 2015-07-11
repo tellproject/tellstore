@@ -15,6 +15,11 @@
 namespace tell {
 namespace store {
 
+enum class TableType : uint8_t {
+    TRANSACTIONAL,
+    NON_TRANSACTIONAL,
+};
+
 enum class FieldType
     : uint16_t {
     NOTYPE = 0,
@@ -287,9 +292,9 @@ public:
 * The format is like follows:
 * - 4 bytes: size of schema data structure (including size)
 * - 2 bytes: number of columns
+* - 1 byte: Type of the table
 * - 1 byte: 1 if there are only columns which are declared NOT NULL,
 *           0 otherwise
-* - 1 bytes: padding
 * - For each column:
 *   - 2 bytes: type of column
 *   - The name of the column, which is a string formatted like this:
@@ -298,11 +303,13 @@ public:
 */
 class Schema {
 private:
+    TableType mType;
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
 public:
-    Schema() {
+    Schema(TableType type)
+            : mType(type) {
     }
 
     Schema(const char* ptr);
@@ -312,6 +319,10 @@ public:
     char* serialize(char* ptr) const;
 
     size_t schemaSize() const;
+
+    TableType type() const {
+        return mType;
+    }
 
     bool allNotNull() const {
         return mAllNotNull;

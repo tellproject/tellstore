@@ -152,9 +152,12 @@ char* Schema::serialize(char* ptr) const {
     uint16_t numColumns = uint16_t(mFixedSizeFields.size() + mVarSizeFields.size());
     memcpy(ptr, &numColumns, sizeof(numColumns));
     ptr += sizeof(numColumns);
+    uint8_t type = static_cast<uint8_t>(mType);
+    memcpy(ptr, &type, sizeof(type));
+    ptr += sizeof(type);
     uint8_t allNotNull = uint8_t(mAllNotNull ? 1 : 0);
     memcpy(ptr, &allNotNull, sizeof(allNotNull));
-    ptr += 2;
+    ptr += sizeof(allNotNull);
     for (auto& field : mFixedSizeFields) {
         ptr = serialize_field(field, ptr);
     }
@@ -169,9 +172,12 @@ Schema::Schema(const char* ptr) {
     ptr += sizeof(uint32_t);
     uint16_t numColumns = *reinterpret_cast<const uint16_t*>(ptr);
     ptr += sizeof(numColumns);
+    uint8_t type = *reinterpret_cast<const uint8_t*>(ptr);
+    mType = crossbow::from_underlying<TableType>(type);
+    ptr += sizeof(type);
     uint8_t allNotNull = *reinterpret_cast<const uint8_t*>(ptr);
     mAllNotNull = allNotNull > 0;
-    ptr += 2;
+    ptr += sizeof(allNotNull);
     for (uint16_t i = 0; i < numColumns; ++i) {
         FieldType type = *reinterpret_cast<const FieldType*>(ptr);
         ptr += sizeof(type);
