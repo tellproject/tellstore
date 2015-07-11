@@ -92,7 +92,7 @@ private:
      * @param transactionId The target transaction ID
      * @param error Error code to send
      */
-    void writeErrorResponse(uint64_t transactionId, error::server_errors error);
+    void writeErrorResponse(uint64_t transactionId, error::errors error);
 
     ConnectionManager& mManager;
     Storage& mStorage;

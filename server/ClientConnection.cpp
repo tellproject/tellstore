@@ -356,7 +356,7 @@ void ClientConnection::onMessage(uint64_t transactionId, uint32_t messageType,
             auto scanDataPtr = scanData.get();
             auto res = mScans.emplace(scanId, std::move(scanData));
             if (!res.second) {
-                writeErrorResponse(transactionId, error::invalid_id);
+                writeErrorResponse(transactionId, error::invalid_scan);
                 return;
             }
 
@@ -504,7 +504,7 @@ void ClientConnection::removeSnapshot(uint64_t version) {
     mSnapshots.erase(i);
 }
 
-void ClientConnection::writeErrorResponse(uint64_t transactionId, error::server_errors error) {
+void ClientConnection::writeErrorResponse(uint64_t transactionId, error::errors error) {
     std::error_code ec;
     auto message = writeResponse(transactionId, ResponseType::ERROR, sizeof(uint64_t), ec);
     if (ec) {

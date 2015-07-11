@@ -312,7 +312,7 @@ bool ServerConnection::Response::checkMessage(ResponseType type, std::error_code
     LOG_ASSERT(mMessage, "Message is null");
     if (mType == ResponseType::ERROR) {
         auto error = mMessage->read<uint64_t>();
-        ec = std::error_code(error, error::get_server_category());
+        ec = std::error_code(error, error::get_error_category());
         return false;
     }
     if (mType != type) {

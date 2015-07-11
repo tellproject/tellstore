@@ -9,47 +9,9 @@ namespace store {
 namespace error {
 
 /**
- * @brief Network errors related to actions on the network
+ * @brief TellStore errors triggered while executing an operation
  */
-enum network_errors {
-    /// The tuple was invalid.
-    invalid_tuple = 1,
-};
-
-/**
- * @brief Category for network errors
- */
-class network_category : public std::error_category {
-public:
-    const char* name() const noexcept {
-        return "tell.store.network";
-    }
-
-    std::string message(int value) const {
-        switch (value) {
-        case error::invalid_tuple:
-            return "The tuple was invalid";
-
-        default:
-            return "tell.store.network error";
-        }
-    }
-};
-
-inline const std::error_category& get_network_category() {
-    static network_category instance;
-    return instance;
-}
-
-inline std::error_code make_error_code(network_errors e) {
-    return std::error_code(static_cast<int>(e), get_network_category());
-}
-
-
-/**
- * @brief Server errors triggered while processing a request
- */
-enum server_errors {
+enum errors {
     /// Server received an unknown request type.
     unkown_request = 1,
 
@@ -59,23 +21,26 @@ enum server_errors {
     /// Table does not exist.
     invalid_table,
 
+    /// The tuple was invalid.
+    invalid_tuple,
+
     /// Snapshot sent to the server was invalid.
     invalid_snapshot,
 
     /// ID sent to the server was invalid.
-    invalid_id,
+    invalid_scan,
 
     /// Operation failed due to server overload.
     server_overlad,
 };
 
 /**
- * @brief Category for server errors
+ * @brief Category for TellStore errors
  */
-class server_category : public std::error_category {
+class error_category : public std::error_category {
 public:
     const char* name() const noexcept {
-        return "tell.store.server";
+        return "tell.store";
     }
 
     std::string message(int value) const {
@@ -87,13 +52,16 @@ public:
             return "Client received an unkown response type";
 
         case error::invalid_table:
-            return "Table does not exist";
+            return "Table was invalid";
+
+        case error::invalid_tuple:
+            return "Tuple was invalid";
 
         case error::invalid_snapshot:
-            return "Snapshot sent to the server was invalid";
+            return "Snapshot was invalid";
 
-        case error::invalid_id:
-            return "ID sent to the server was invalid";
+        case error::invalid_scan:
+            return "Scan ID was invalid";
 
         case error::server_overlad:
             return "Operation failed due to server overload";
@@ -104,13 +72,13 @@ public:
     }
 };
 
-inline const std::error_category& get_server_category() {
-    static server_category instance;
+inline const std::error_category& get_error_category() {
+    static error_category instance;
     return instance;
 }
 
-inline std::error_code make_error_code(error::server_errors e) {
-    return std::error_code(static_cast<int>(e), get_server_category());
+inline std::error_code make_error_code(error::errors e) {
+    return std::error_code(static_cast<int>(e), get_error_category());
 }
 
 } // namespace error
@@ -120,11 +88,7 @@ inline std::error_code make_error_code(error::server_errors e) {
 namespace std {
 
 template<>
-struct is_error_code_enum<tell::store::error::network_errors> : public std::true_type {
-};
-
-template<>
-struct is_error_code_enum<tell::store::error::server_errors> : public std::true_type {
+struct is_error_code_enum<tell::store::error::errors> : public std::true_type {
 };
 
 } // namespace std
