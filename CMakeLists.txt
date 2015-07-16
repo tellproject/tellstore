@@ -5,7 +5,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
 # Declare build options
 option(USE_ASAN "Use the address sanitizer" OFF)
-option(ENABLE_HEAVYWEIGHT_TESTS "Build ressource intensive or long running unit tests" OFF)
 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
@@ -18,9 +17,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 if ( USE_ASAN )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls -fsanitize=address")
-endif()
-if ( ENABLE_HEAVYWEIGHT_TESTS )
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_HEAVYWEIGHT_TESTS")
 endif()
 
 # The cx16 flag is required for GCC to enable 128 bit atomics

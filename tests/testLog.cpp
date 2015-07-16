@@ -6,10 +6,11 @@
 
 #include <gtest/gtest.h>
 
+#include <boost/dynamic_bitset.hpp>
+
 #include <array>
 #include <chrono>
 #include <thread>
-#include <unordered_set>
 
 using namespace tell::store;
 
@@ -607,8 +608,6 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
     EXPECT_FALSE(mLog.truncateLog(begin.page(), j.page()));
 }
 
-#ifdef ENABLE_HEAVYWEIGHT_TESTS
-
 template <typename Impl>
 class LogTestThreaded : public TestBase {
 protected:
@@ -617,6 +616,20 @@ protected:
     LogTestThreaded()
             : TestBase(pageCount),
               mLog(*mPageManager) {
+    }
+
+    void assertWritten(size_t count) {
+        // Iterate over log and add the value in the entry to the expected values set
+        boost::dynamic_bitset<> valueSet(count);
+        auto end = mLog.end();
+        for (auto i = mLog.begin(); i != end; ++i) {
+            EXPECT_TRUE(i->sealed()) << "Entry is not sealed";
+            uint64_t value = *reinterpret_cast<uint64_t*>(i->data());
+
+            EXPECT_FALSE(valueSet.test(value)) << "Duplicate value " << value << " encountered";
+            valueSet.set(value);
+        }
+        EXPECT_EQ(count, valueSet.count()) << "Not all values encountered";
     }
 
     Log<Impl> mLog;
@@ -636,16 +649,17 @@ TYPED_TEST_CASE(LogTestThreaded, Implementations);
  * scenario the log contention will be the highest.
  */
 TYPED_TEST(LogTestThreaded, append) {
-    constexpr int threadCount = 4; // Number of threads running - 4 Threads
-    constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+    static constexpr int threadCount = 4; // Number of threads running - 4 Threads
+    static constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+    static constexpr uint64_t totalCount = valuesCount * threadCount;
 
     // Start threads filling the log
     auto startTime = std::chrono::steady_clock::now();
-    uint64_t values = 1;
+    uint64_t values = 0;
 
     std::array<std::thread, threadCount> worker;
     for (auto& t : worker) {
-        t = std::thread([valuesCount, values, this] () {
+        t = std::thread([values, this] () {
             auto end = values + valuesCount;
             for (auto i = values; i < end; ++i) {
                 auto entry = this->mLog.append(sizeof(i));
@@ -661,27 +675,10 @@ TYPED_TEST(LogTestThreaded, append) {
     auto endTime = std::chrono::steady_clock::now();
 
     auto diff = endTime - startTime;
-    std::cout << "Wrote " << (values - 1) << " entries in "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() << "ms" << std::endl;
+    std::cout << "Wrote " << values << " entries in " <<
+            std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() << "ms" << std::endl;
 
-    // Fill set with expected values
-    std::unordered_set<uint64_t> valueSet;
-    valueSet.reserve(values);
-    for (uint64_t i = 1; i < values; ++i) {
-        valueSet.emplace(i);
-    }
-
-    // Iterate over log and remove the value in the entry from the expected values set
-    auto end = this->mLog.end();
-    for (auto i = this->mLog.begin(); i != end; ++i) {
-        EXPECT_TRUE(i->sealed()) << "Entry is not sealed";
-        uint64_t value = *reinterpret_cast<uint64_t*>(i->data());
-
-        auto j = valueSet.find(value);
-        EXPECT_NE(j, valueSet.end()) << "Value from entry is not in values set";
-        valueSet.erase(j);
-    }
-    EXPECT_TRUE(valueSet.empty()) << "Values set is not empty";
+    this->assertWritten(totalCount);
 }
 
 using UnorderedLogThreadedTest = LogTestThreaded<UnorderedLogImpl>;
@@ -694,17 +691,18 @@ using UnorderedLogThreadedTest = LogTestThreaded<UnorderedLogImpl>;
  * segment directly and one that writes into private pages, appending the pages to the log when they are full.
  */
 TEST_F(UnorderedLogThreadedTest, append) {
-    constexpr int headThreadCount = 2; // Number of threads appending to head - 2 Threads
-    constexpr int appendThreadCount = 2; // Number of threads appending to head - 2 Threads
-    constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+    static constexpr int headThreadCount = 2; // Number of threads appending to head - 2 Threads
+    static constexpr int appendThreadCount = 2; // Number of threads appending to head - 2 Threads
+    static constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
+    static constexpr uint64_t totalCount = valuesCount * (headThreadCount + appendThreadCount);
 
     // Start threads filling the log
     auto startTime = std::chrono::steady_clock::now();
-    uint64_t values = 1;
+    uint64_t values = 0;
 
     std::array<std::thread, headThreadCount + appendThreadCount> worker;
     for (size_t i = 0; i < headThreadCount; ++i) {
-        worker[i] = std::thread([valuesCount, values, this] () {
+        worker[i] = std::thread([values, this] () {
             auto end = values + valuesCount;
             for (auto i = values; i < end; ++i) {
                 auto entry = this->mLog.append(sizeof(i));
@@ -715,7 +713,7 @@ TEST_F(UnorderedLogThreadedTest, append) {
         values += valuesCount;
     }
     for (size_t i = headThreadCount; i < headThreadCount + appendThreadCount; ++i) {
-        worker[i] = std::thread([valuesCount, values, this] () {
+        worker[i] = std::thread([values, this] () {
             auto page = new(this->mPageManager->alloc()) LogPage();
             auto end = values + valuesCount;
             for (auto i = values; i < end; ++i) {
@@ -738,29 +736,10 @@ TEST_F(UnorderedLogThreadedTest, append) {
     auto endTime = std::chrono::steady_clock::now();
 
     auto diff = endTime - startTime;
-    std::cout << "Wrote " << (values - 1) << " entries in "
+    std::cout << "Wrote " << values << " entries in "
               << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() << "ms" << std::endl;
 
-    // Fill set with expected values
-    std::unordered_set<uint64_t> valueSet;
-    valueSet.reserve(values);
-    for (uint64_t i = 1; i < values; ++i) {
-        valueSet.emplace(i);
-    }
-
-    // Iterate over log and remove the value in the entry from the expected values set
-    auto end = this->mLog.end();
-    for (auto i = this->mLog.begin(); i != end; ++i) {
-        EXPECT_TRUE(i->sealed()) << "Entry is not sealed";
-        uint64_t value = *reinterpret_cast<uint64_t*>(i->data());
-
-        auto j = valueSet.find(value);
-        EXPECT_NE(j, valueSet.end()) << "Value from entry is not in values set";
-        valueSet.erase(j);
-    }
-    EXPECT_TRUE(valueSet.empty()) << "Values set is not empty";
+    this->assertWritten(totalCount);
 }
-
-#endif // ENABLE_HEAVYWEIGHT_TESTS
 
 }
