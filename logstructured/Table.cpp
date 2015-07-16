@@ -200,6 +200,17 @@ public:
     bool find(ChainedVersionRecord* element);
 
     /**
+     * @brief Advances the iterator until it points to the element with the given version
+     *
+     * In case the element is not found in the list the iterator will point to the end of the list or some arbitrary
+     * element.
+     *
+     * @param version The version of the element to search for in the version list
+     * @return Whether the element was found in the version list
+     */
+    bool find(uint64_t version);
+
+    /**
      * @brief Removes the current element from the version list
      *
      * Even in the case the operation succeeds the old element might still be contained in the list (though marked as
@@ -327,8 +338,24 @@ bool VersionRecordIterator::find(ChainedVersionRecord* element) {
             return true;
         }
 
-        // The current element is already older than the given element
+        // Check if the current element is already older than the given element
         if (mCurrent->validFrom() < element->validFrom()) {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+bool VersionRecordIterator::find(uint64_t version) {
+    for (; !done(); next()) {
+        // Check if the iterator reached the element with the given version
+        if (mCurrent->validFrom() == version) {
+            return true;
+        }
+
+        // Check if the current element is already older than the given version
+        if (mCurrent->validFrom() < version) {
             return false;
         }
     }
@@ -822,7 +849,8 @@ bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
     while (!recIter.done()) {
         // Cancel if the element in the hash map is of a different version
         if (recIter->validFrom() != snapshot.version()) {
-            return false;
+            // Succeed if the version list contains no element of the given version
+            return !recIter.find(snapshot.version());
         }
 
         // Cancel if a concurrent revert is taking place
