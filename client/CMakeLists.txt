@@ -5,10 +5,12 @@ set(CLIENT_SRCS
     Client.hpp
     Client.cpp
     ClientConfig.hpp
-    ServerConnection.hpp
-    ServerConnection.cpp
-    TransactionManager.hpp
-    TransactionManager.cpp
+    ClientManager.hpp
+    ClientManager.cpp
+    ClientSocket.hpp
+    ClientSocket.cpp
+    Table.cpp
+    Table.hpp
 )
 
 # Add TellStore client executable
@@ -19,7 +21,6 @@ target_link_libraries(tellstore-client PRIVATE TellStoreUtil TellStoreNetwork)
 
 # Link against Boost
 target_include_directories(tellstore-client PRIVATE ${Boost_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE ${Boost_LIBRARIES})
 
 # Link against Crossbow
 target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})

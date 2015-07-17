@@ -67,7 +67,6 @@ size_t Field::sizeOf(const boost::any& value) const {
             LOG_ERROR("NULLTYPE is not appropriate to use in a schema");
             return 0;
         case FieldType::TEXT:
-            return sizeof(uint32_t) + boost::any_cast<crossbow::string>(value).size();
         case FieldType::BLOB:
             return sizeof(uint32_t) + boost::any_cast<crossbow::string>(value).size();
         case FieldType::NOTYPE:
@@ -245,6 +244,21 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
     return result;
 }
 
+size_t Record::sizeOfTuple(const char* ptr) const {
+    auto baseId = mSchema.fixedSizeFields().size();
+    auto pos = mFieldMetaData[baseId].second;
+    LOG_ASSERT(pos > 0, "Offset for first variable length field is smaller than 0");
+
+    for (; baseId < mFieldMetaData.size(); ++baseId) {
+        // we know, that now all fields are variable mLength - that means the first four bytes are always the
+        // field size
+        pos += *reinterpret_cast<const uint32_t* const>(ptr + pos) + sizeof(uint32_t);
+    }
+    // we have to make sure that the size of a tuple is 8 byte aligned
+    pos += (pos % 8) ? 8 - (pos % 8) : 0;
+    return pos;
+}
+
 
 char* Record::create(const GenericTuple& tuple, size_t& size) const {
     uint32_t recSize = uint32_t(sizeOfTuple(tuple));
@@ -399,7 +413,7 @@ char* Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) 
 }
 
 const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {
-    if (id > mFieldMetaData.size()) {
+    if (id >= mFieldMetaData.size()) {
         LOG_ERROR("Tried to get nonexistent id");
         assert(false);
         return nullptr;

@@ -6,6 +6,7 @@
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
+#include <crossbow/infinio/MessageId.hpp>
 
 #include <tbb/spin_mutex.h>
 
@@ -37,10 +38,10 @@ public:
         LAST = ScanStatus::DONE,
     };
 
-    ClientScanQueryData(uint64_t transactionId, SnapshotDescriptor snapshot,
+    ClientScanQueryData(crossbow::infinio::MessageId messageId, SnapshotDescriptor snapshot,
             crossbow::infinio::LocalMemoryRegion& srcRegion, crossbow::infinio::RemoteMemoryRegion destRegion,
             crossbow::infinio::InfinibandSocket socket)
-            : mTransactionId(transactionId),
+            : mMessageId(messageId),
               mSnapshot(std::move(snapshot)),
               mSrcRegion(srcRegion),
               mDestRegion(std::move(destRegion)),
@@ -82,10 +83,10 @@ public:
     void done(crossbow::infinio::ScatterGatherBuffer& buffer, std::error_code& ec);
 
     /**
-     * @brief The transaction ID of the starting process on the remote host
+     * @brief The message ID of the starting process on the remote host
      */
-    uint64_t transactionId() const {
-        return mTransactionId;
+    crossbow::infinio::MessageId messageId() const {
+        return mMessageId;
     }
 
     /**
@@ -132,8 +133,8 @@ private:
      */
     void writeSignaled(crossbow::infinio::ScatterGatherBuffer& buffer, ScanStatus status, std::error_code& ec);
 
-    /// Transaction ID of the starting process on the remote host
-    uint64_t mTransactionId;
+    /// Message ID of the starting process on the remote host
+    crossbow::infinio::MessageId mMessageId;
 
     /// Snapshot to check the validity of tuples against
     SnapshotDescriptor mSnapshot;

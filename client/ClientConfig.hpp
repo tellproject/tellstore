@@ -15,6 +15,9 @@ struct ClientConfig {
     /// Port to connect to the server
     uint16_t port = 7241;
 
+    /// Number of network threads to process transactions on
+    int numNetworkThreads = 2;
+
     /// Size of memory region to reserve for scans
     size_t scanMemory = 0x80000000ull;
 

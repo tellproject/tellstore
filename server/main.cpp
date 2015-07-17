@@ -1,10 +1,11 @@
 #include "ServerConfig.hpp"
-#include "ConnectionManager.hpp"
+#include "ServerSocket.hpp"
 
 #include <tellstore.hpp>
 #include <util/StorageConfig.hpp>
 
 #include <crossbow/allocator.hpp>
+#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/program_options.hpp>
 
@@ -38,26 +39,29 @@ int main(int argc, const char** argv) {
         return 0;
     }
 
-    serverConfig.infinibandLimits.receiveBufferCount = 128;
-    serverConfig.infinibandLimits.sendBufferCount = 128;
-    serverConfig.infinibandLimits.bufferLength = 32 * 1024;
-    serverConfig.infinibandLimits.sendQueueLength = 128;
-    serverConfig.infinibandLimits.maxScatterGather = 32;
+    crossbow::infinio::InfinibandLimits infinibandLimits;
+    infinibandLimits.receiveBufferCount = 128;
+    infinibandLimits.sendBufferCount = 128;
+    infinibandLimits.bufferLength = 32 * 1024;
+    infinibandLimits.sendQueueLength = 128;
+    infinibandLimits.maxScatterGather = 32;
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore server [memory = %1%GB, capacity = %2%, scan-threads = %3%]",
-            double(storageConfig.totalMemory) / double(1024 * 1024 * 1024), storageConfig.hashMapCapacity,
-            storageConfig.numScanThreads);
+    LOG_INFO("Starting TellStore server [port = %1%, memory = %2%GB, capacity = %3%, scan-threads = %4%]",
+            serverConfig.port, double(storageConfig.totalMemory) / double(1024 * 1024 * 1024),
+            storageConfig.hashMapCapacity, storageConfig.numScanThreads);
 
     // Initialize allocator
     crossbow::allocator::init();
 
-    // Initialize storage
+    LOG_INFO("Initialize storage");
     tell::store::Storage storage(storageConfig);
 
-    // Initialize network server
-    tell::store::ConnectionManager connectionManager(storage, serverConfig);
+    LOG_INFO("Initialize network server");
+    crossbow::infinio::InfinibandService service(infinibandLimits);
+    tell::store::ServerManager server(service, storage, serverConfig);
+    service.run();
 
     LOG_INFO("Exiting TellStore server");
     return 0;

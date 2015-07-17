@@ -368,6 +368,8 @@ public:
 
     size_t sizeOfTuple(const GenericTuple& tuple) const;
 
+    size_t sizeOfTuple(const char* ptr) const;
+
     bool idOf(const crossbow::string& name, id_t& result) const;
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
