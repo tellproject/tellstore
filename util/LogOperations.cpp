@@ -1,6 +1,6 @@
 #include "LogOperations.hpp"
 
-#include <util/Record.hpp>
+#include <tellstore/Record.hpp>
 
 #include "Log.hpp"
 

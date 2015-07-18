@@ -1,17 +1,17 @@
 #pragma once
 
-#include "Table.hpp"
-
-#include <network/ErrorCode.hpp>
-#include <network/MessageTypes.hpp>
-#include <util/GenericTuple.hpp>
-#include <util/Record.hpp>
-#include <util/sparsehash/dense_hash_map>
+#include <tellstore/ErrorCode.hpp>
+#include <tellstore/MessageTypes.hpp>
+#include <tellstore/GenericTuple.hpp>
+#include <tellstore/Record.hpp>
+#include <tellstore/Table.hpp>
 
 #include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/infinio/RpcClient.hpp>
 #include <crossbow/string.hpp>
+
+#include <sparsehash/dense_hash_map>
 
 #include <cstdint>
 #include <memory>

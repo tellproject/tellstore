@@ -1,7 +1,10 @@
+#pragma once
+
 #include <cstddef>
 #include <cstdint>
 
-#pragma once
+#cmakedefine USE_DELTA_MAIN_REWRITE
+#cmakedefine USE_LOGSTRUCTURED_MEMORY
 
 namespace tell {
 namespace store {

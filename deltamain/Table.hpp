@@ -1,12 +1,13 @@
 #pragma once
 #include <config.h>
-#include <implementation.hpp>
 #include <util/PageManager.hpp>
 #include <util/TableManager.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
-#include <util/Record.hpp>
 #include <util/IteratorEntry.hpp>
+#include <util/StoreImpl.hpp>
+
+#include <tellstore/Record.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/string.hpp>

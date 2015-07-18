@@ -1,10 +1,8 @@
 #pragma once
 
-#include "ClientSocket.hpp"
-#include "Table.hpp"
-
-#include <util/GenericTuple.hpp>
-#include <util/sparsehash/dense_hash_set>
+#include <tellstore/ClientSocket.hpp>
+#include <tellstore/GenericTuple.hpp>
+#include <tellstore/Table.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -13,6 +11,8 @@
 #include <crossbow/infinio/Fiber.hpp>
 #include <crossbow/non_copyable.hpp>
 #include <crossbow/string.hpp>
+
+#include <sparsehash/dense_hash_set>
 
 #include <boost/functional/hash.hpp>
 

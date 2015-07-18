@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GenericTuple.hpp"
+#include <tellstore/GenericTuple.hpp>
 
 #include <crossbow/logger.hpp>
 #include <crossbow/string.hpp>

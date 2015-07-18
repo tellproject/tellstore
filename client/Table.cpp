@@ -1,4 +1,4 @@
-#include "Table.hpp"
+#include <tellstore/Table.hpp>
 
 #include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/logger.hpp>

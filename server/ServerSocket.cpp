@@ -1,8 +1,9 @@
 #include "ServerSocket.hpp"
 
-#include <network/ErrorCode.hpp>
-#include <network/MessageTypes.hpp>
 #include <util/PageManager.hpp>
+
+#include <tellstore/ErrorCode.hpp>
+#include <tellstore/MessageTypes.hpp>
 
 #include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>

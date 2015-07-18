@@ -1,4 +1,4 @@
-#include "ClientSocket.hpp"
+#include <tellstore/ClientSocket.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 

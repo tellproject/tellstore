@@ -1,9 +1,8 @@
 #pragma once
 
-#include "ServerConfig.hpp"
 #include "ClientScanQuery.hpp"
-
-#include <tellstore.hpp>
+#include "ServerConfig.hpp"
+#include "Storage.hpp"
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 

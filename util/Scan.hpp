@@ -1,8 +1,9 @@
 #pragma once
 
-#include "ScanQuery.hpp"
-#include "Record.hpp"
 #include <config.h>
+#include "ScanQuery.hpp"
+
+#include <tellstore/Record.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/singleconsumerqueue.hpp>

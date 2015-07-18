@@ -1,6 +1,6 @@
 #pragma once
 
-#include <util/Record.hpp>
+#include <tellstore/Record.hpp>
 
 #include <crossbow/non_copyable.hpp>
 #include <crossbow/string.hpp>

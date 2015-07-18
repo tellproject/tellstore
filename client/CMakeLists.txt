@@ -1,34 +1,49 @@
 ###################
-# TellStore client
+# TellStore client library
 ###################
 set(CLIENT_SRCS
-    Client.hpp
-    Client.cpp
-    ClientConfig.hpp
-    ClientManager.hpp
     ClientManager.cpp
-    ClientSocket.hpp
     ClientSocket.cpp
     Table.cpp
+)
+
+set(CLIENT_PUBLIC_HDR
+    ClientConfig.hpp
+    ClientManager.hpp
+    ClientSocket.hpp
     Table.hpp
 )
 
-# Add TellStore client executable
-add_executable(tellstore-client main.cpp ${CLIENT_SRCS})
+# Transform public header list to use absolute paths
+foreach(hdr ${CLIENT_PUBLIC_HDR})
+    list(APPEND CLIENT_PUBLIC_HDR_ABSOLUTE ${PROJECT_SOURCE_DIR}/tellstore/${hdr})
+endforeach()
 
-# Link against TellStore library
-target_link_libraries(tellstore-client PRIVATE TellStoreUtil TellStoreNetwork)
+# Retrieve the public header list for the common library (client has to install those headers)
+get_target_property(COMMON_PUBLIC_HDR_ABSOLUTE tellstore-common PUBLIC_HEADER)
 
-# Link against CommitManager library
+# Add TellStore client library
+add_library(tellstore-client ${CLIENT_SRCS} ${CLIENT_PUBLIC_HDR_ABSOLUTE})
+set_target_properties(tellstore-client PROPERTIES PUBLIC_HEADER
+        "${COMMON_PUBLIC_HDR_ABSOLUTE};${CLIENT_PUBLIC_HDR_ABSOLUTE}")
+target_include_directories(tellstore-client PUBLIC $<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${INCLUDE_INSTALL_DIR}>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+
+# Link against TellStore common
+target_link_libraries(tellstore-client PRIVATE tellstore-common)
+
+# Link against CommitManager
 target_link_libraries(tellstore-client PUBLIC commitmanager-client)
 
 # Link against Boost
-target_include_directories(tellstore-client PRIVATE ${Boost_INCLUDE_DIRS})
+target_include_directories(tellstore-client PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
-target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE crossbow_allocator crossbow_infinio crossbow_logger)
+target_include_directories(tellstore-client PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(tellstore-client PUBLIC crossbow_infinio crossbow_logger)
 
-# Link against Jemalloc
-target_include_directories(tellstore-client PRIVATE ${Jemalloc_INCLUDE_DIRS})
-target_link_libraries(tellstore-client PRIVATE ${Jemalloc_LIBRARIES})
+# Install the library
+install(TARGETS tellstore-client EXPORT TellStoreClientTargets
+        ARCHIVE DESTINATION ${LIB_INSTALL_DIR}
+        LIBRARY DESTINATION ${LIB_INSTALL_DIR}
+        PUBLIC_HEADER DESTINATION ${INCLUDE_INSTALL_DIR}/tellstore)

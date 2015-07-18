@@ -1,13 +1,14 @@
 #pragma once
 
 #include <config.h>
-#include <implementation.hpp>
 #include <util/IteratorEntry.hpp>
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
-#include <util/Record.hpp>
+#include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
+
+#include <tellstore/Record.hpp>
 
 #include <crossbow/non_copyable.hpp>
 

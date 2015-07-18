@@ -1,8 +1,9 @@
 #pragma once
 
 #include "StorageConfig.hpp"
-#include "Record.hpp"
 #include "Scan.hpp"
+
+#include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 

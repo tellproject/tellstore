@@ -1,7 +1,7 @@
 #include "ServerConfig.hpp"
 #include "ServerSocket.hpp"
+#include "Storage.hpp"
 
-#include <tellstore.hpp>
 #include <util/StorageConfig.hpp>
 
 #include <crossbow/allocator.hpp>

@@ -6,7 +6,8 @@
 
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
-#include <util/Record.hpp>
+
+#include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 

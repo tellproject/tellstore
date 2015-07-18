@@ -2,50 +2,57 @@
 # TellStore Util library
 ###################
 set(UTIL_SRCS
-    OpenAddressingHash.hpp
-    OpenAddressingHash.cpp
-    LogOperations.hpp
-    LogOperations.cpp
-    Log.hpp
-    Log.cpp
-    PageManager.cpp
-    PageManager.hpp
     CuckooHash.cpp
+    Log.cpp
+    LogOperations.cpp
+    OpenAddressingHash.cpp
+    PageManager.cpp
+)
+
+set(UTIL_PRIVATE_HDR
+    chunk_allocator.hpp
+    OpenAddressingHash.hpp
     CuckooHash.hpp
     FixedSizeStack.hpp
-    TableManager.hpp
-    Record.hpp
-    Record.cpp
-    StorageConfig.hpp
+    functional.hpp
+    IteratorEntry.hpp
+    Log.hpp
+    LogOperations.hpp
+    OpenAddressingHash.hpp
+    PageManager.hpp
     Scan.hpp
     ScanQuery.hpp
-    IteratorEntry.hpp
-    chunk_allocator.hpp
-    functional.hpp
+    StorageConfig.hpp
+    StoreImpl.hpp
+    TableManager.hpp
 )
 
 # Add TellStore util library
-add_library(TellStoreUtil STATIC ${UTIL_SRCS} ${PROJECT_BINARY_DIR}/config.h)
-target_include_directories(TellStoreUtil PUBLIC ${PROJECT_SOURCE_DIR})
-target_include_directories(TellStoreUtil PUBLIC ${PROJECT_BINARY_DIR})
+add_library(tellstore-util STATIC ${UTIL_SRCS} ${UTIL_PRIVATE_HDR} ${PROJECT_BINARY_DIR}/config.h)
+
+target_include_directories(tellstore-util PUBLIC ${PROJECT_SOURCE_DIR})
+target_include_directories(tellstore-util PUBLIC ${PROJECT_BINARY_DIR})
 
 # Workaround for link failure with GCC 5.1 (GCC Bug 65913)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "5.1.0")
-        target_link_libraries(TellStoreUtil PUBLIC atomic)
+        target_link_libraries(tellstore-util PUBLIC atomic)
     endif()
 endif()
 
+# Link against TellStore common library
+target_link_libraries(tellstore-util PUBLIC tellstore-common)
+
 # Link against CommitManager library
-target_link_libraries(TellStoreUtil PUBLIC commitmanager-client)
+target_link_libraries(tellstore-util PUBLIC commitmanager-client)
 
 # Link against Boost
-target_include_directories(TellStoreUtil PUBLIC ${Boost_INCLUDE_DIRS})
+target_include_directories(tellstore-util PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
-target_include_directories(TellStoreUtil PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(TellStoreUtil PUBLIC crossbow_allocator crossbow_logger)
+target_include_directories(tellstore-util PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_link_libraries(tellstore-util PUBLIC crossbow_allocator crossbow_logger)
 
 # Link against TBB
-target_include_directories(TellStoreUtil PUBLIC ${TBB_INCLUDE_DIRS})
-target_link_libraries(TellStoreUtil PUBLIC ${TBB_LIBRARIES})
+target_include_directories(tellstore-util PUBLIC ${TBB_INCLUDE_DIRS})
+target_link_libraries(tellstore-util PUBLIC ${TBB_LIBRARIES})

@@ -1,4 +1,4 @@
-#include "Record.hpp"
+#include <tellstore/Record.hpp>
 
 #include <crossbow/enum_underlying.hpp>
 

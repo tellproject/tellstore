@@ -1,75 +1,17 @@
-#include <gtest/gtest.h>
-#include <tellstore.hpp>
+#include <config.h>
+
+#include <deltamain/Table.hpp>
+#include <logstructured/Table.hpp>
 
 #include "DummyCommitManager.hpp"
 
 #include <crossbow/allocator.hpp>
 
+#include <gtest/gtest.h>
+
 using namespace tell::store;
 
 namespace {
-
-::testing::AssertionResult correctTableId(const crossbow::string& name, uint64_t tId, Storage& storage)
-{
-    uint64_t id;
-    if (!storage.getTable(name, id))
-        return ::testing::AssertionFailure() << "Table does not exist";
-    else if (tId == id)
-        return ::testing::AssertionSuccess();
-    else
-        return ::testing::AssertionFailure() << "Expected tid " << tId << " got " << id << " instead";
-}
-
-TEST(simple, insert_and_get)
-{
-    StorageConfig config;
-    config.totalMemory = 0x10000000ull;
-    config.hashMapCapacity = 0x100000ull;
-    Storage storage(config);
-    Schema schema(TableType::TRANSACTIONAL);
-    schema.addField(FieldType::INT, "foo", true);
-    Record record(schema);
-    uint64_t tId;
-    crossbow::string tableName = "testTable";
-    DummyCommitManager commitManager;
-    {
-        crossbow::allocator _; // needed to free memory
-        auto res = storage.createTable(tableName, schema, tId);
-        ASSERT_TRUE(res) << "creating table failed";
-        EXPECT_TRUE(correctTableId(tableName, tId, storage));
-        // Force GC - since we did not do anything yet, this should
-        // just return. We can not really test whether it worked
-        // correctly, but at least it must not segfault
-        storage.forceGC();
-        auto tx = commitManager.startTx();
-        {
-            size_t size;
-            std::unique_ptr<char[]> rec(record.create(GenericTuple({
-                    std::make_pair<crossbow::string, boost::any>("foo", 12)
-            }), size));
-            storage.insert(tId, 1, size, rec.get(), tx, &res);
-            ASSERT_TRUE(res) << "This insert must not fail!";
-        }
-        {
-            bool isNewest = false;
-            uint64_t version = 0x0u;
-            const char* rec;
-            size_t s;
-            res = storage.get(tId, 1, s, rec, tx, version, isNewest);
-            ASSERT_TRUE(res) << "Tuple not found";
-            ASSERT_EQ(tx.descriptor().version(), version) << "Tuple has not the version of the snapshot descriptor";
-            ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
-        }
-        storage.forceGC();
-    }
-    {
-        crossbow::allocator _;
-        uint64_t sTid;
-        ASSERT_TRUE(storage.getTable(tableName, sTid) != nullptr) << "This table exists";
-        ASSERT_EQ(sTid, tId) << "Table Id did change";
-    }
-}
-
 
 int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
 crossbow::string gTupleText1 = crossbow::string("Bacon ipsum dolor amet t-bone chicken prosciutto, cupim ribeye turkey "
@@ -77,9 +19,83 @@ crossbow::string gTupleText1 = crossbow::string("Bacon ipsum dolor amet t-bone c
 crossbow::string gTupleText2 = crossbow::string("Chuck pork loin ham hock tri-tip pork ball tip drumstick tongue. Jowl "
         "swine short loin, leberkas andouille pancetta strip steak doner ham bresaola.");
 
-class HeavyTest : public ::testing::Test {
+template <typename Impl>
+class StorageTest : public ::testing::Test {
+protected:
+    StorageTest() {
+        StorageConfig config;
+        config.totalMemory = 0x10000000ull;
+        config.hashMapCapacity = 0x100000ull;
+        mStorage.reset(new Impl(config));
+    }
+
+    ::testing::AssertionResult correctTableId(const crossbow::string& name, uint64_t tId) {
+        uint64_t id;
+        if (!mStorage->getTable(name, id))
+            return ::testing::AssertionFailure() << "Table does not exist";
+        else if (tId == id)
+            return ::testing::AssertionSuccess();
+        else
+            return ::testing::AssertionFailure() << "Expected tid " << tId << " got " << id << " instead";
+    }
+
+    std::unique_ptr<Impl> mStorage;
+
+    DummyCommitManager mCommitManager;
+};
+
+using StorageTestImplementations = ::testing::Types<StoreImpl<Implementation::DELTA_MAIN_REWRITE>,
+        StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>>;
+TYPED_TEST_CASE(StorageTest, StorageTestImplementations);
+
+TYPED_TEST(StorageTest, insert_and_get) {
+    Schema schema(TableType::TRANSACTIONAL);
+    schema.addField(FieldType::INT, "foo", true);
+    Record record(schema);
+    uint64_t tId;
+    crossbow::string tableName = "testTable";
+    {
+        crossbow::allocator _; // needed to free memory
+        auto res = this->mStorage->createTable(tableName, schema, tId);
+        ASSERT_TRUE(res) << "creating table failed";
+        EXPECT_TRUE(this->correctTableId(tableName, tId));
+        // Force GC - since we did not do anything yet, this should
+        // just return. We can not really test whether it worked
+        // correctly, but at least it must not segfault
+        this->mStorage->forceGC();
+        auto tx = this->mCommitManager.startTx();
+        {
+            size_t size;
+            std::unique_ptr<char[]> rec(record.create(GenericTuple({
+                    std::make_pair<crossbow::string, boost::any>("foo", 12)
+            }), size));
+            this->mStorage->insert(tId, 1, size, rec.get(), tx, &res);
+            ASSERT_TRUE(res) << "This insert must not fail!";
+        }
+        {
+            bool isNewest = false;
+            uint64_t version = 0x0u;
+            const char* rec;
+            size_t s;
+            res = this->mStorage->get(tId, 1, s, rec, tx, version, isNewest);
+            ASSERT_TRUE(res) << "Tuple not found";
+            ASSERT_EQ(tx.descriptor().version(), version) << "Tuple has not the version of the snapshot descriptor";
+            ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
+        }
+        this->mStorage->forceGC();
+    }
+    {
+        crossbow::allocator _;
+        uint64_t sTid;
+        ASSERT_TRUE(this->mStorage->getTable(tableName, sTid) != nullptr) << "This table exists";
+        ASSERT_EQ(sTid, tId) << "Table Id did change";
+    }
+}
+
+template <typename Impl>
+class HeavyStorageTest : public ::testing::Test {
 public:
-    HeavyTest()
+    HeavyStorageTest()
             : mSchema(TableType::TRANSACTIONAL),
               mTableId(0),
               mTupleSize(0),
@@ -88,7 +104,7 @@ public:
         config.totalMemory = 0x100000000ull;
         config.numScanThreads = 0;
         config.hashMapCapacity = 0x2000000ull;
-        mStorage.reset(new Storage(config));
+        mStorage.reset(new Impl(config));
     }
 
     virtual void SetUp() {
@@ -162,7 +178,11 @@ public:
     }
 
 protected:
-    std::unique_ptr<Storage> mStorage;
+    std::function<void()> runFunction(uint64_t startRange, uint64_t endRange) {
+        return std::bind(&HeavyStorageTest<Impl>::run, this, startRange, endRange);
+    }
+
+    std::unique_ptr<Impl> mStorage;
     DummyCommitManager mCommitManager;
 
     Schema mSchema;
@@ -175,17 +195,20 @@ protected:
     std::atomic<bool> mGo;
 };
 
+// TODO Reactivate Delta Main test (currently crashes)
 
+using HeavyStorageTestImplementations = ::testing::Types<StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>>;
+TYPED_TEST_CASE(HeavyStorageTest, HeavyStorageTestImplementations);
 
-TEST_F(HeavyTest, heavy) {
+TYPED_TEST(HeavyStorageTest, heavy) {
     std::array<std::thread, 3> threads = {
-        std::thread(std::bind(&HeavyTest::run, this, 0, 2500000)),
-        std::thread(std::bind(&HeavyTest::run, this, 2500000, 5000000)),
-        std::thread(std::bind(&HeavyTest::run, this, 5000000, 7500000)),
+        std::thread(this->runFunction(0, 2500000)),
+        std::thread(this->runFunction(2500000, 5000000)),
+        std::thread(this->runFunction(5000000, 7500000))
     };
 
-    mGo.store(true);
-    run(7500000, 10000000);
+    this->mGo.store(true);
+    this->run(7500000, 10000000);
 
     for (auto& t : threads) {
         t.join();

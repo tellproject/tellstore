@@ -1,17 +1,25 @@
-#include "Client.hpp"
-
-#include <util/Record.hpp>
+#include <tellstore/ClientConfig.hpp>
+#include <tellstore/ClientManager.hpp>
+#include <tellstore/GenericTuple.hpp>
+#include <tellstore/Record.hpp>
 
 #include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
+#include <crossbow/program_options.hpp>
+#include <crossbow/string.hpp>
 
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <iostream>
+#include <memory>
 #include <system_error>
 
-namespace tell {
-namespace store {
+using namespace tell;
+using namespace tell::store;
 
 namespace {
 
@@ -49,9 +57,35 @@ private:
     std::chrono::nanoseconds mTotalDuration;
 };
 
-} // anonymous namespace
+class TestClient {
+public:
+    TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
+            size_t numTransactions);
 
-Client::Client(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
+    void shutdown();
+
+private:
+    void addTable(ClientHandle& client);
+
+    void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey);
+
+    void doScan(ClientTransaction& transaction, const Table& record, float selectivity);
+
+    ClientManager mManager;
+
+    /// Number of tuples to insert per transaction
+    size_t mNumTuple;
+
+    /// Number of concurrent transactions to start
+    size_t mNumTransactions;
+
+    std::atomic<size_t> mActiveTransactions;
+
+    uint64_t mTupleSize;
+    std::array<GenericTuple, 4> mTuple;
+};
+
+TestClient::TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
         size_t numTransactions)
         : mManager(service, config),
           mNumTuple(numTuple),
@@ -69,16 +103,16 @@ Client::Client(crossbow::infinio::InfinibandService& service, const ClientConfig
     }
 
     LOG_DEBUG("Start transaction");
-    mManager.execute(std::bind(&Client::addTable, this, std::placeholders::_1));
+    mManager.execute(std::bind(&TestClient::addTable, this, std::placeholders::_1));
 }
 
-void Client::shutdown() {
+void TestClient::shutdown() {
     LOG_INFO("Shutting down the TellStore client");
 
     // TODO
 }
 
-void Client::addTable(ClientHandle& client) {
+void TestClient::addTable(ClientHandle& client) {
     LOG_TRACE("Adding table");
     Schema schema(TableType::TRANSACTIONAL);
     schema.addField(FieldType::INT, "number", true);
@@ -104,12 +138,11 @@ void Client::addTable(ClientHandle& client) {
         auto startRange = i * mNumTuple;
         auto endRange = startRange + mNumTuple;
         ++mActiveTransactions;
-        mManager.execute(std::bind(&Client::executeTransaction, this, std::placeholders::_1, startRange,
-                endRange));
+        mManager.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange));
     }
 }
 
-void Client::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey) {
+void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey) {
     LOG_TRACE("Opening table");
     auto openTableStartTime = std::chrono::steady_clock::now();
     auto openTableFuture = client.getTable("testTable");
@@ -218,7 +251,7 @@ void Client::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_
     doScan(scanTransaction, *table, 0.25);
 }
 
-void Client::doScan(ClientTransaction& transaction, const Table& table, float selectivity) {
+void TestClient::doScan(ClientTransaction& transaction, const Table& table, float selectivity) {
     LOG_INFO("TID %1%] Starting scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -263,5 +296,59 @@ void Client::doScan(ClientTransaction& transaction, const Table& table, float se
             transaction.version(), scanDuration.count(), scanCount, mTupleSize, scanDataSize, scanBandwidth);
 }
 
-} // namespace store
-} // namespace tell
+} // anonymous namespace
+
+int main(int argc, const char** argv) {
+    crossbow::string commitManagerHost;
+    crossbow::string tellStoreHost;
+    size_t numTuple = 1000000ull;
+    size_t numTransactions = 10;
+    tell::store::ClientConfig clientConfig;
+    bool help = false;
+    crossbow::string logLevel("DEBUG");
+
+    auto opts = crossbow::program_options::create_options(argv[0],
+            crossbow::program_options::value<'h'>("help", &help),
+            crossbow::program_options::value<'l'>("log-level", &logLevel),
+            crossbow::program_options::value<'c'>("commit-manager", &commitManagerHost),
+            crossbow::program_options::value<'s'>("server", &tellStoreHost),
+            crossbow::program_options::value<'m'>("memory", &clientConfig.scanMemory),
+            crossbow::program_options::value<'n'>("tuple", &numTuple),
+            crossbow::program_options::value<'t'>("transactions", &numTransactions));
+
+    try {
+        crossbow::program_options::parse(opts, argc, argv);
+    } catch (crossbow::program_options::argument_not_found e) {
+        std::cerr << e.what() << std::endl << std::endl;
+        crossbow::program_options::print_help(std::cout, opts);
+        return 1;
+    }
+
+    if (help) {
+        crossbow::program_options::print_help(std::cout, opts);
+        return 0;
+    }
+
+    clientConfig.commitManager = crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), commitManagerHost);
+    clientConfig.tellStore = crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), tellStoreHost);
+
+    crossbow::infinio::InfinibandLimits infinibandLimits;
+    infinibandLimits.receiveBufferCount = 128;
+    infinibandLimits.sendBufferCount = 128;
+    infinibandLimits.bufferLength = 32 * 1024;
+    infinibandLimits.sendQueueLength = 128;
+
+    crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
+
+    LOG_INFO("Starting TellStore client [commitmanager = %1%, tellStore = %2%, memory = %3%GB, tuple = %4%, "
+            "transactions = %5%]", clientConfig.commitManager, clientConfig.tellStore,
+            double(clientConfig.scanMemory) / double(1024 * 1024 * 1024), numTuple, numTransactions);
+
+    // Initialize network stack
+    crossbow::infinio::InfinibandService service(infinibandLimits);
+    TestClient client(service, clientConfig, numTuple, numTransactions);
+    service.run();
+
+    LOG_INFO("Exiting TellStore client");
+    return 0;
+}

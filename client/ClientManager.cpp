@@ -1,6 +1,6 @@
-#include "ClientManager.hpp"
+#include <tellstore/ClientManager.hpp>
 
-#include "ClientConfig.hpp"
+#include <tellstore/ClientConfig.hpp>
 
 #include <crossbow/logger.hpp>
 

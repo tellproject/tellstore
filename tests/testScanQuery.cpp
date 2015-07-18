@@ -1,6 +1,6 @@
 #include <util/ScanQuery.hpp>
 
-#include <util/Record.hpp>
+#include <tellstore/Record.hpp>
 
 #include <gtest/gtest.h>
 
