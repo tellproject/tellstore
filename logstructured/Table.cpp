@@ -2,6 +2,8 @@
 
 #include "Record.hpp"
 
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 #include <crossbow/enum_underlying.hpp>
 
 #include <tuple>
@@ -750,8 +752,8 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, H
           mLog(mPageManager) {
 }
 
-bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, uint64_t& version,
-        bool& isNewest) {
+bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+        uint64_t& version, bool& isNewest) {
     auto recIter = find(key);
     for (; !recIter.done(); recIter.next()) {
         if (!snapshot.inReadSet(recIter->validFrom())) {
@@ -779,7 +781,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const SnapshotDes
     return false;
 }
 
-void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
+void Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
     auto recIter = find(key);
@@ -836,15 +838,15 @@ void Table::insert(uint64_t key, size_t size, const char* data, const SnapshotDe
     if (succeeded) *succeeded = false;
 }
 
-bool Table::update(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot) {
+bool Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
     return internalUpdate(key, size, data, snapshot, false);
 }
 
-bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
+bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     return internalUpdate(key, 0, nullptr, snapshot, true);
 }
 
-bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     auto recIter = find(key);
     while (!recIter.done()) {
         // Cancel if the element in the hash map is of a different version
@@ -923,8 +925,8 @@ VersionRecordIterator Table::find(uint64_t key) {
     return VersionRecordIterator(*this, minVersion(), key);
 }
 
-bool Table::internalUpdate(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-                           bool deletion) {
+bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
+        const commitmanager::SnapshotDescriptor& snapshot, bool deletion) {
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
     auto recIter = find(key);
@@ -994,7 +996,7 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config)
         : mPageManager(PageManager::construct(config.totalMemory)),
-          mTableManager(*mPageManager, config, mGc, mCommitManager),
+          mTableManager(*mPageManager, config, mGc),
           mHashMap(config.hashMapCapacity) {
 }
 

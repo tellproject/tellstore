@@ -3,9 +3,11 @@
 #include "ClientSocket.hpp"
 #include "Table.hpp"
 
-#include <util/CommitManager.hpp>
 #include <util/GenericTuple.hpp>
 #include <util/sparsehash/dense_hash_set>
+
+#include <commitmanager/ClientSocket.hpp>
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/Fiber.hpp>
@@ -34,14 +36,15 @@ class Record;
  */
 class ClientTransaction : crossbow::non_copyable {
 public:
-    ClientTransaction(ClientProcessor& processor, crossbow::infinio::Fiber& fiber, SnapshotDescriptor snapshot);
+    ClientTransaction(ClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     ~ClientTransaction();
 
     ClientTransaction(ClientTransaction&& other);
 
     uint64_t version() const {
-        return mSnapshot.version();
+        return mSnapshot->version();
     }
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
@@ -76,7 +79,7 @@ private:
     ClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
 
-    SnapshotDescriptor mSnapshot;
+    std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;
 
     google::dense_hash_set<std::tuple<uint64_t, uint64_t>, ModifiedHasher> mModified;
 
@@ -90,11 +93,11 @@ class ClientHandle : crossbow::non_copyable, crossbow::non_movable {
 public:
     ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber& fiber);
 
+    ClientTransaction startTransaction();
+
     std::shared_ptr<CreateTableResponse> createTable(const crossbow::string& name, const Schema& schema);
 
     std::shared_ptr<GetTableResponse> getTable(const crossbow::string& name);
-
-    ClientTransaction startTransaction();
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
 
@@ -118,8 +121,8 @@ private:
  */
 class ClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientProcessor(CommitManager& commitManager, crossbow::infinio::InfinibandService& service,
-            crossbow::infinio::LocalMemoryRegion& scanRegion, const ClientConfig& config, uint64_t processorNum);
+    ClientProcessor(crossbow::infinio::InfinibandService& service, crossbow::infinio::LocalMemoryRegion& scanRegion,
+            const ClientConfig& config, uint64_t processorNum);
 
     uint64_t transactionCount() const {
         return mTransactionCount.load();
@@ -131,10 +134,7 @@ private:
     friend class ClientHandle;
     friend class ClientTransaction;
 
-    ClientTransaction start(crossbow::infinio::Fiber& fiber) {
-        auto snapshot = mCommitManager.startTx();
-        return {*this, fiber, std::move(snapshot)};
-    }
+    ClientTransaction start(crossbow::infinio::Fiber& fiber);
 
     std::shared_ptr<CreateTableResponse> createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name,
             const Schema& schema) {
@@ -146,44 +146,43 @@ private:
     }
 
     std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot) {
+            const commitmanager::SnapshotDescriptor& snapshot) {
         return mTellStoreSocket.get(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot, bool hasSucceeded) {
+            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
+            bool hasSucceeded) {
         return mTellStoreSocket.insert(fiber, tableId, key, record, tuple, snapshot, hasSucceeded);
     }
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot) {
+            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTellStoreSocket.update(fiber, tableId, key, record, tuple, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot) {
+            const commitmanager::SnapshotDescriptor& snapshot) {
         return mTellStoreSocket.remove(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot) {
+            const commitmanager::SnapshotDescriptor& snapshot) {
         return mTellStoreSocket.revert(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            uint32_t queryLength, const char* query, const SnapshotDescriptor& snapshot) {
+            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTellStoreSocket.scan(fiber, tableId, record, queryLength, query, mScanRegion, snapshot);
     }
 
-    void commit(const SnapshotDescriptor& snapshot) {
-        mCommitManager.commitTx(snapshot);
-    }
+    void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
-    CommitManager& mCommitManager;
     crossbow::infinio::LocalMemoryRegion& mScanRegion;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
+    commitmanager::ClientSocket mCommitManagerSocket;
     ClientSocket mTellStoreSocket;
 
     uint64_t mProcessorNum;
@@ -209,8 +208,6 @@ private:
     }
 
     crossbow::infinio::LocalMemoryRegion mScanRegion;
-
-    CommitManager mCommitManager;
 
     std::vector<std::unique_ptr<ClientProcessor>> mProcessor;
 };

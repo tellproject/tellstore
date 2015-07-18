@@ -18,10 +18,13 @@
 #include <system_error>
 
 namespace tell {
+namespace commitmanager {
+class SnapshotDescriptor;
+} // namespace commitmanager
+
 namespace store {
 
 class ClientSocket;
-class SnapshotDescriptor;
 
 /**
  * @brief Response for a Create-Table request
@@ -194,23 +197,24 @@ public:
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name);
 
     std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot);
+            const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot, bool hasSucceeded);
+            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
+            bool hasSucceeded);
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot);
+            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot);
+            const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const SnapshotDescriptor& snapshot);
+            const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
             uint32_t queryLength, const char* query, const crossbow::infinio::LocalMemoryRegion& destRegion,
-            const SnapshotDescriptor& snapshot);
+            const commitmanager::SnapshotDescriptor& snapshot);
 
 private:
     friend class ScanResponse;

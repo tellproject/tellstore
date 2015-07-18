@@ -1,7 +1,8 @@
 #pragma once
 
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 #include <algorithm>
-#include <util/SnapshotDescriptor.hpp>
 
 namespace tell {
 namespace store {
@@ -26,10 +27,10 @@ template<class StorageImpl>
 class TransactionImpl {
     friend StorageImpl;
     StorageImpl* mStorage;
-    SnapshotDescriptor mDescriptor;
+    std::unique_ptr<commitmanager::SnapshotDescriptor> mDescriptor;
     bool mCommitted = false;
 public:
-    TransactionImpl(StorageImpl& storage, SnapshotDescriptor&& snapshot)
+    TransactionImpl(StorageImpl& storage, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mStorage(&storage)
         , mDescriptor(std::move(snapshot))
     {
@@ -39,13 +40,15 @@ public:
     TransactionImpl(TransactionImpl&& other)
         : mStorage(other.mStorage)
         , mDescriptor(std::move(other.mDescriptor))
-    {}
+        , mCommitted(other.mCommitted)
+    {
+        other.mCommitted = true;
+    }
 
     ~TransactionImpl()
     {
-        if (mCommitted)
-            mStorage->commit(mDescriptor);
-        mCommitted = false;
+        if (!mCommitted)
+            mStorage->commit(*mDescriptor);
     }
 
     TransactionImpl operator= (const TransactionImpl&) = delete;
@@ -53,7 +56,7 @@ public:
     {
         // First we need to destroy ourself
         if (!mCommitted)
-            mStorage->commit(mDescriptor);
+            mStorage->commit(*mDescriptor);
         mStorage = other.mStorage;
         mDescriptor = std::move(other.mDescriptor);
         mCommitted = other.mCommitted;
@@ -62,20 +65,20 @@ public:
     }
 
 public:
-    operator const SnapshotDescriptor&() const {
-        return mDescriptor;
+    operator const commitmanager::SnapshotDescriptor&() const {
+        return *mDescriptor;
     }
 
-    const SnapshotDescriptor& descriptor() const
+    const commitmanager::SnapshotDescriptor& descriptor() const
     {
-        return mDescriptor;
+        return *mDescriptor;
     }
 
     void commit()
     {
         if (mCommitted)
             return;
-        mStorage->commit(mDescriptor);
+        mStorage->commit(*mDescriptor);
         mCommitted = true;
     }
 
@@ -83,7 +86,7 @@ public:
     {
         if (mCommitted)
             return;
-        mStorage->abort(mDescriptor);
+        mStorage->abort(*mDescriptor);
         mCommitted = true;
     }
 };

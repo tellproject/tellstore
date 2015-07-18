@@ -11,23 +11,6 @@
 namespace tell {
 namespace store {
 
-namespace {
-
-/**
- * @brief Reads the snapshot descriptor from the message
- */
-SnapshotDescriptor readSnapshot(uint64_t version, crossbow::infinio::BufferReader& request) {
-    request.align(sizeof(uint32_t));
-    auto descriptorLength = request.read<uint32_t>();
-    auto descriptorData = request.read(descriptorLength);
-
-    std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[descriptorLength]);
-    memcpy(dataBuffer.get(), descriptorData, descriptorLength);
-    return SnapshotDescriptor(dataBuffer.release(), descriptorLength, version);
-}
-
-} // anonymous namespace
-
 void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
         crossbow::infinio::BufferReader& request) {
     LOG_TRACE("MID %1%] Handling request of type %2%", messageId.userId(), messageType);
@@ -132,7 +115,8 @@ void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossb
 void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
-    handleSnapshot(messageId, request, [this, messageId, tableId, key] (const SnapshotDescriptor& snapshot) {
+    handleSnapshot(messageId, request, [this, messageId, tableId, key]
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         size_t size = 0;
         const char* data = nullptr;
         uint64_t version = 0x0u;
@@ -165,7 +149,7 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
 
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
-            (const SnapshotDescriptor& snapshot) {
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         auto succeeded = mStorage.update(tableId, key, dataLength, data, snapshot);
 
         // Message size is 1 byte (succeeded)
@@ -188,7 +172,7 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
 
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request, [this, messageId, tableId, key, wantsSucceeded, dataLength, data]
-            (const SnapshotDescriptor& snapshot) {
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         bool succeeded = false;
         mStorage.insert(tableId, key, dataLength, data, snapshot, (wantsSucceeded ? &succeeded : nullptr));
 
@@ -205,7 +189,8 @@ void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
-    handleSnapshot(messageId, request, [this, messageId, tableId, key] (const SnapshotDescriptor& snapshot) {
+    handleSnapshot(messageId, request, [this, messageId, tableId, key]
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         auto succeeded = mStorage.remove(tableId, key, snapshot);
 
         // Message size is 1 byte (succeeded)
@@ -221,7 +206,8 @@ void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
-    handleSnapshot(messageId, request, [this, messageId, tableId, key] (const SnapshotDescriptor& snapshot) {
+    handleSnapshot(messageId, request, [this, messageId, tableId, key]
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         auto succeeded = mStorage.revert(tableId, key, snapshot);
 
         // Message size is 1 byte (succeeded)
@@ -250,11 +236,9 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request, [this, messageId, tableId, scanId, &remoteRegion, queryLength, &query]
-            (const SnapshotDescriptor& snapshot) {
-        auto descriptorLength = snapshot.length();
-        std::unique_ptr<unsigned char[]> dataBuffer(new unsigned char[descriptorLength]);
-        memcpy(dataBuffer.get(), snapshot.descriptor(), descriptorLength);
-        SnapshotDescriptor scanSnapshot(dataBuffer.release(), descriptorLength, snapshot.version());
+            (const commitmanager::SnapshotDescriptor& snapshot) {
+        auto scanSnapshot = commitmanager::SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
+                snapshot.baseVersion(), snapshot.version(), snapshot.data());
 
         std::unique_ptr<ClientScanQueryData> scanData(new ClientScanQueryData(messageId, std::move(scanSnapshot),
                 manager().pageRegion(), remoteRegion, mSocket));
@@ -326,36 +310,35 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
 template <typename Fun>
 void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& message,
         Fun f) {
-    auto version = message.read<uint64_t>();
-    bool cached = message.read<uint8_t>();
-    bool hasDescriptor = message.read<uint8_t>();
+    bool cached = (message.read<uint8_t>() != 0x0u);
+    bool hasDescriptor = (message.read<uint8_t>() != 0x0u);
+    message.align(sizeof(uint64_t));
     if (cached) {
-        auto i = mSnapshots.find(version);
-
-        // Either we already have the snapshot in our cache or the client send it to us
-        auto found = (i != mSnapshots.end());
-        if (found ^ hasDescriptor) {
-            writeErrorResponse(messageId, error::invalid_snapshot);
-            return;
-        }
-
-        if (!found) {
-            // We have to add the snapshot to the cache
-            auto res = mSnapshots.emplace(version, readSnapshot(version, message));
-            if (!res.second) { // Element was inserted by another thread
+        typename decltype(mSnapshots)::iterator i;
+        if (!hasDescriptor) {
+            // The client did not send a snapshot so it has to be in the cache
+            auto version = message.read<uint64_t>();
+            i = mSnapshots.find(version);
+            if (i == mSnapshots.end()) {
+                writeErrorResponse(messageId, error::invalid_snapshot);
+                return;
+            }
+        } else {
+            // The client send a snapshot so we have to add it to the cache (it must not already be there)
+            auto snapshot = commitmanager::SnapshotDescriptor::deserialize(message);
+            auto res = mSnapshots.emplace(snapshot->version(), std::move(snapshot));
+            if (!res.second) { // Snapshot descriptor already is in the cache
                 writeErrorResponse(messageId, error::invalid_snapshot);
                 return;
             }
             i = res.first;
         }
-
-        f(i->second);
+        f(*i->second);
+    } else if (hasDescriptor) {
+        auto snapshot = commitmanager::SnapshotDescriptor::deserialize(message);
+        f(*snapshot);
     } else {
-        if (!hasDescriptor) {
-            writeErrorResponse(messageId, error::invalid_snapshot);
-            return;
-        }
-        f(readSnapshot(version, message));
+        writeErrorResponse(messageId, error::invalid_snapshot);
     }
 }
 

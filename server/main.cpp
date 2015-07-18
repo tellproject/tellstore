@@ -10,7 +10,6 @@
 #include <crossbow/program_options.hpp>
 
 #include <iostream>
-#include <system_error>
 
 int main(int argc, const char** argv) {
     tell::store::StorageConfig storageConfig;

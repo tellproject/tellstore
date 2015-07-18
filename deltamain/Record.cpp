@@ -1,7 +1,8 @@
 #include "Record.hpp"
 
-#include <util/SnapshotDescriptor.hpp>
 #include <util/Log.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/logger.hpp>
 
@@ -166,7 +167,7 @@ public:
         return ptr->compare_exchange_strong(exp, des);
     }
 
-    const char* data(const SnapshotDescriptor& snapshot,
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
                      size_t& size,
                      uint64_t& version,
                      bool& isNewest,
@@ -260,7 +261,7 @@ class LogInsert<char*> : public LogUpdates<LogInsertBase<char*>> {
 public:
     LogInsert(char* data) : LogUpdates<LogInsertBase<char*>>(data) {}
 
-    bool update(char* next, bool& isValid, const SnapshotDescriptor& snapshot) {
+    bool update(char* next, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot) {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return false;
@@ -293,7 +294,7 @@ public:
         const_cast<char&>(this->mData[1]) = 1;
     }
 
-    const char* data(const SnapshotDescriptor& snapshot,
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
                      size_t& size,
                      uint64_t& version,
                      bool& isNewest,
@@ -374,7 +375,7 @@ class LogUpdate<char*> : public LogUpdates<LogUpdateBase<char*>> {
 public:
     LogUpdate(char* data) : LogUpdates<LogUpdateBase<char*>>(data) {}
 
-    bool update(char* data, bool& isValid, const SnapshotDescriptor& snapshot)
+    bool update(char* data, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot)
     {
         LOG_ASSERT(this->isValidDataRecord(), "Invalid log updates should not be reachable");
         isValid = true;
@@ -396,7 +397,7 @@ public:
         return 32;
     }
 
-    const char* data(const SnapshotDescriptor& snapshot,
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
                      size_t& size,
                      uint64_t& version,
                      bool& isNewest,
@@ -485,7 +486,7 @@ class LogDelete<char*> : public LogUpdates<LogDeleteBase<char*>> {
 public:
     LogDelete(char* data) : LogUpdates<LogDeleteBase<char*>>(data) {}
 
-    bool update(char*, bool&, const SnapshotDescriptor&)
+    bool update(char*, bool&, const commitmanager::SnapshotDescriptor&)
     {
         LOG_ASSERT(false, "Calling update on a deleted record is an invalid operation");
         // the client has to do an insert in this case!!
@@ -620,7 +621,7 @@ public:
         return false;
     }
 
-    const char* data(const SnapshotDescriptor& snapshot,
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
                      size_t& size,
                      uint64_t& version,
                      bool& isNewest,
@@ -743,7 +744,7 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
 
     bool update(char* next,
                 bool& isValid,
-                const SnapshotDescriptor& snapshot) {
+                const commitmanager::SnapshotDescriptor& snapshot) {
         auto newest = getNewest();
         if (newest) {
             DMRecord rec(newest);
@@ -1118,7 +1119,7 @@ auto DMRecordImplBase<T>::getVersionIterator(const Record* record) const -> Vers
 }
 
 template<class T>
-const char* DMRecordImplBase<T>::data(const SnapshotDescriptor& snapshot,
+const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& snapshot,
                                   size_t& size,
                                   uint64_t& version,
                                   bool& isNewest,
@@ -1208,7 +1209,7 @@ void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
 
 bool DMRecordImpl<char*>::update(char* next,
                                  bool& isValid,
-                                 const SnapshotDescriptor& snapshot) {
+                                 const commitmanager::SnapshotDescriptor& snapshot) {
     DISPATCH_METHOD_NCONST(update, next, isValid, snapshot);
 } 
 

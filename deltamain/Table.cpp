@@ -3,6 +3,8 @@
 #include "Page.hpp"
 #include "InsertMap.hpp"
 
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 #include <memory>
 
 namespace tell {
@@ -108,7 +110,7 @@ Table::~Table() {
 bool Table::get(uint64_t key,
                 size_t& size,
                 const char*& data,
-                const SnapshotDescriptor& snapshot,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 uint64_t& version,
                 bool& isNewest) const {
     auto ptr = mHashTable.load()->get(key);
@@ -148,7 +150,7 @@ bool Table::get(uint64_t key,
 void Table::insert(uint64_t key,
                    size_t size,
                    const char* const data,
-                   const SnapshotDescriptor& snapshot,
+                   const commitmanager::SnapshotDescriptor& snapshot,
                    bool* succeeded /*= nullptr*/) {
     // we need to get the iterator as a first step to make
     // sure to check the part of the log that was visible
@@ -208,7 +210,7 @@ void Table::insert(uint64_t key,
 bool Table::update(uint64_t key,
                    size_t size,
                    const char* const data,
-                   const SnapshotDescriptor& snapshot)
+                   const commitmanager::SnapshotDescriptor& snapshot)
 {
     auto fun = [this, key, size, data, &snapshot]()
     {
@@ -227,7 +229,7 @@ bool Table::update(uint64_t key,
     return genericUpdate(fun, key, snapshot);
 }
 
-bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
+bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     auto fun = [this, key, &snapshot]() {
         auto logEntrySize = DMRecord::spaceOverhead(DMRecord::Type::LOG_DELETE);
         auto entry = mUpdateLog.append(logEntrySize);
@@ -241,7 +243,7 @@ bool Table::remove(uint64_t key, const SnapshotDescriptor& snapshot) {
     return genericUpdate(fun, key, snapshot);
 }
 
-bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
+bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Implement
     return false;
 }
@@ -249,7 +251,7 @@ bool Table::revert(uint64_t key, const SnapshotDescriptor& snapshot) {
 template<class Fun>
 bool Table::genericUpdate(const Fun& appendFun,
                           uint64_t key,
-                          const SnapshotDescriptor& snapshot)
+                          const commitmanager::SnapshotDescriptor& snapshot)
 {
     auto iter = mInsertLog.begin();
     auto iterEnd = mInsertLog.end();
@@ -372,13 +374,13 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
     : mPageManager(PageManager::construct(config.totalMemory))
-    , tableManager(*mPageManager, config, gc, commitManager)
+    , tableManager(*mPageManager, config, gc)
 {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
     : mPageManager(PageManager::construct(totalMem))
-    , tableManager(*mPageManager, config, gc, commitManager)
+    , tableManager(*mPageManager, config, gc)
 {
 }
 

@@ -2,20 +2,22 @@
 
 #include <config.h>
 #include <implementation.hpp>
-#include <util/CommitManager.hpp>
 #include <util/IteratorEntry.hpp>
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/Record.hpp>
 #include <util/TableManager.hpp>
-#include <util/TransactionImpl.hpp>
 
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
 
 namespace tell {
+namespace commitmanager {
+class SnapshotDescriptor;
+} // namespace commitmanager
+
 namespace store {
 namespace logstructured {
 
@@ -142,8 +144,8 @@ public:
      * @param isNewest Whether the returned tuple contains the newest version written
      * @return Whether the tuple was found
      */
-    bool get(uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot, uint64_t& version,
-            bool& isNewest);
+    bool get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+            uint64_t& version, bool& isNewest);
 
     /**
      * @brief Inserts a tuple into the table
@@ -154,7 +156,7 @@ public:
      * @param snapshot Descriptor containing the version to write
      * @param succeeded Whether the tuple was inserted successfully
      */
-    void insert(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
+    void insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             bool* succeeded = nullptr);
 
     /**
@@ -166,7 +168,7 @@ public:
      * @param snapshot Descriptor containing the version to write
      * @return Whether the tuple was updated successfully
      */
-    bool update(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot);
+    bool update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Removes an already existing tuple from the table
@@ -175,7 +177,7 @@ public:
      * @param snapshot Descriptor containing the version to remove
      * @return Whether the tuple was removed successfully
      */
-    bool remove(uint64_t key, const SnapshotDescriptor& snapshot);
+    bool remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Reverts the existing element with the given version to the element with the previous version
@@ -186,7 +188,7 @@ public:
      * @param snapshot Descriptor containing the version to revert
      * @return Whether the element was successfully reverted to the older version
      */
-    bool revert(uint64_t key, const SnapshotDescriptor& snapshot);
+    bool revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Start a full scan of this table
@@ -230,7 +232,8 @@ private:
      * @param deleted Whether the entry marks a deletion
      * @return Whether the entry was successfully written
      */
-    bool internalUpdate(uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot, bool deletion);
+    bool internalUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
+            bool deletion);
 
     PageManager& mPageManager;
     HashTable& mHashMap;
@@ -260,16 +263,11 @@ public:
     using Table = logstructured::Table;
     using GC = logstructured::GarbageCollector;
     using StorageType = StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>;
-    using Transaction = TransactionImpl<StorageType>;
 
     StoreImpl(const StorageConfig& config);
 
     PageManager& pageManager() {
         return *(mPageManager.get());
-    }
-
-    Transaction startTx() {
-        return Transaction(*this, mCommitManager.startTx());
     }
 
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
@@ -280,25 +278,26 @@ public:
         return mTableManager.getTable(name, id);
     }
 
-    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data, const SnapshotDescriptor& snapshot,
-            uint64_t& version, bool& isNewest) {
+    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
+            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) {
         return mTableManager.get(tableId, key, size, data, snapshot, version, isNewest);
     }
 
-    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot) {
+    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.update(tableId, key, size, data, snapshot);
     }
 
-    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data, const SnapshotDescriptor& snapshot,
-            bool* succeeded = nullptr) {
+    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot, bool* succeeded = nullptr) {
         mTableManager.insert(tableId, key, size, data, snapshot, succeeded);
     }
 
-    bool remove(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {
+    bool remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.remove(tableId, key, snapshot);
     }
 
-    bool revert(uint64_t tableId, uint64_t key, const SnapshotDescriptor& snapshot) {
+    bool revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.revert(tableId, key, snapshot);
     }
 
@@ -319,21 +318,9 @@ public:
         mTableManager.forceGC();
     }
 
-    void commit(SnapshotDescriptor& snapshot) {
-        mCommitManager.commitTx(snapshot);
-    }
-
-    void abort(SnapshotDescriptor& snapshot) {
-        // TODO: Roll-back. I am not sure whether this would generally
-        // work. Probably not (since we might also need to roll back the
-        // index which has to be done in the processing layer).
-        mCommitManager.abortTx(snapshot);
-    }
-
 private:
     PageManager::Ptr mPageManager;
     GC mGc;
-    CommitManager mCommitManager;
     TableManager<Table, GC> mTableManager;
 
     Table::HashTable mHashMap;

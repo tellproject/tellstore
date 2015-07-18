@@ -2,6 +2,8 @@
 # Unit tests
 ###################
 set(TEST_SRCS
+    DummyCommitManager.cpp
+    DummyCommitManager.hpp
     testCuckooMap.cpp
     testCommitManager.cpp
     testLog.cpp

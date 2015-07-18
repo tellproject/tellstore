@@ -10,6 +10,12 @@ namespace store {
 
 struct ClientConfig {
     /// Address of the server to connect to
+    crossbow::string commitManager = "";
+
+    /// Port to connect to the server
+    uint16_t commitManagerPort = 7242;
+
+    /// Address of the server to connect to
     crossbow::string server = "";
 
     /// Port to connect to the server

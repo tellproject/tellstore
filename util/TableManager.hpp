@@ -2,8 +2,9 @@
 
 #include "StorageConfig.hpp"
 #include "Record.hpp"
-#include "CommitManager.hpp"
 #include "Scan.hpp"
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/concurrent_map.hpp>
@@ -45,7 +46,7 @@ private:
     StorageConfig mConfig;
     GC& mGC;
     PageManager& mPageManager;
-    CommitManager& mCommitManager;
+    std::atomic<uint64_t> mLowestActiveVersion;
     ScanThreads<Table> mScanThreads;
     std::atomic<bool> mShutDown;
     mutable tbb::spin_rw_mutex mTablesMutex;
@@ -60,6 +61,7 @@ private:
         std::unique_lock<std::mutex> lock(mGCMutex);
         auto begin = Clock::now();
         auto duration = std::chrono::seconds(mConfig.gcIntervall);
+        auto oldLowestActiveVersion = 0x1u;
         while (!mShutDown.load()) {
             auto now = Clock::now();
             if (begin + duration > now) {
@@ -75,16 +77,16 @@ private:
                     tables.push_back(p.second);
                 }
             }
-            mGC.run(tables, mCommitManager.getLowestActiveVersion());
+            mGC.run(tables, mLowestActiveVersion.load());
         }
     }
 
 public:
-    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc, CommitManager& commitManager)
+    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc)
         : mConfig(config)
         , mGC(gc)
         , mPageManager(pageManager)
-        , mCommitManager(commitManager)
+        , mLowestActiveVersion(0x1u)
         , mScanThreads(config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
@@ -138,11 +140,12 @@ public:
              uint64_t key,
              size_t& size,
              const char*& data,
-             const SnapshotDescriptor& snapshot,
+             const commitmanager::SnapshotDescriptor& snapshot,
              uint64_t& version,
              bool& isNewest)
     {
         crossbow::allocator _;
+        updateLowestActiveVersion(snapshot);
         return lookupTable(tableId)->get(key, size, data, snapshot, version, isNewest);
     }
 
@@ -150,9 +153,10 @@ public:
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
+        updateLowestActiveVersion(snapshot);
         return lookupTable(tableId)->update(key, size, data, snapshot);
     }
 
@@ -161,26 +165,29 @@ public:
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
         crossbow::allocator _;
+        updateLowestActiveVersion(snapshot);
         lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
     }
 
     bool remove(uint64_t tableId,
                 uint64_t key,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
+        updateLowestActiveVersion(snapshot);
         return lookupTable(tableId)->remove(key, snapshot);
     }
 
     bool revert(uint64_t tableId,
                 uint64_t key,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
+        updateLowestActiveVersion(snapshot);
         return lookupTable(tableId)->revert(key, snapshot);
     }
 
@@ -212,6 +219,16 @@ private:
 
     Table* lookupTable(uint64_t tableId) {
         return const_cast<Table*>(const_cast<const TableManager*>(this)->lookupTable(tableId));
+    }
+
+    void updateLowestActiveVersion(const commitmanager::SnapshotDescriptor& snapshot) {
+        auto lowestActiveVersion = mLowestActiveVersion.load();
+        while (lowestActiveVersion < snapshot.lowestActiveVersion()) {
+            if (!mLowestActiveVersion.compare_exchange_strong(lowestActiveVersion, snapshot.lowestActiveVersion())) {
+                continue;
+            }
+            return;
+        }
     }
 };
 

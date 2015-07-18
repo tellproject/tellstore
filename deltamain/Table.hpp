@@ -2,8 +2,6 @@
 #include <config.h>
 #include <implementation.hpp>
 #include <util/PageManager.hpp>
-#include <util/TransactionImpl.hpp>
-#include <util/CommitManager.hpp>
 #include <util/TableManager.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
@@ -22,6 +20,10 @@
 #include "Page.hpp"
 
 namespace tell {
+namespace commitmanager {
+class SnapshotDescriptor;
+} // namespace commitmanager
+
 namespace store {
 namespace deltamain {
 
@@ -91,26 +93,26 @@ public:
     bool get(uint64_t key,
              size_t& size,
              const char*& data,
-             const SnapshotDescriptor& snapshot,
+             const commitmanager::SnapshotDescriptor& snapshot,
              uint64_t& version,
              bool& isNewest) const;
 
     void insert(uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr);
 
     bool update(uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
     bool remove(uint64_t key,
-                const SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
     bool revert(uint64_t key,
-                const SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
 
@@ -119,7 +121,7 @@ private:
     template<class Fun>
     bool genericUpdate(const Fun& appendFun,
                        uint64_t key,
-                       const SnapshotDescriptor& snapshot);
+                       const commitmanager::SnapshotDescriptor& snapshot);
 };
 
 class GarbageCollector {
@@ -134,10 +136,8 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using Table = deltamain::Table;
     using GC = deltamain::GarbageCollector;
     using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
-    using Transaction = TransactionImpl<StorageType>;
     PageManager::Ptr mPageManager;
     GC gc;
-    CommitManager commitManager;
     TableManager<Table, GC> tableManager;
 
     StoreImpl(const StorageConfig& config);
@@ -146,11 +146,6 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
 
     PageManager& pageManager() {
         return *(mPageManager.get());
-    }
-
-    Transaction startTx()
-    {
-        return Transaction(*this, commitManager.startTx());
     }
 
     bool createTable(const crossbow::string &name,
@@ -168,7 +163,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
              uint64_t key,
              size_t& size,
              const char*& data,
-             const SnapshotDescriptor& snapshot,
+             const commitmanager::SnapshotDescriptor& snapshot,
              uint64_t& version,
              bool& isNewest)
     {
@@ -179,7 +174,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.update(tableId, key, size, data, snapshot);
     }
@@ -188,7 +183,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const SnapshotDescriptor& snapshot,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 bool* succeeded = nullptr)
     {
         tableManager.insert(tableId, key, size, data, snapshot, succeeded);
@@ -196,14 +191,14 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
 
     bool remove(uint64_t tableId,
                 uint64_t key,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.remove(tableId, key, snapshot);
     }
 
     bool revert(uint64_t tableId,
                 uint64_t key,
-                const SnapshotDescriptor& snapshot)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.revert(tableId, key, snapshot);
     }
@@ -225,20 +220,6 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     {
         tableManager.forceGC();
     }
-
-    void commit(SnapshotDescriptor& snapshot)
-    {
-        commitManager.commitTx(snapshot);
-    }
-
-    void abort(SnapshotDescriptor& snapshot)
-    {
-        // TODO: Roll-back. I am not sure whether this would generally
-        // work. Probably not (since we might also need to roll back the
-        // index which has to be done in the processing layer).
-        commitManager.abortTx(snapshot);
-    }
-
 };
 } // namespace store
 } // namespace tell

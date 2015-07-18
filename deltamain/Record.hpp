@@ -11,9 +11,12 @@
 #include <crossbow/enum_underlying.hpp>
 
 namespace tell {
+namespace commitmanager {
+class SnapshotDescriptor;
+} // namespace commitmanager
+
 namespace store {
 
-struct SnapshotDescriptor;
 namespace deltamain {
 
 enum class RecordType : uint8_t {
@@ -115,7 +118,7 @@ public:
      * this tuple got reverted.
      */
     const char* data(
-            const SnapshotDescriptor& snapshot,
+            const commitmanager::SnapshotDescriptor& snapshot,
             size_t& size,
             uint64_t& version,
             bool& isNewest,
@@ -214,7 +217,7 @@ public: // writing functinality
 
     bool update(char* next,
                 bool& isValid,
-                const SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
 };
 

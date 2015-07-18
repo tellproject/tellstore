@@ -4,7 +4,8 @@
 #include "ClientScanQuery.hpp"
 
 #include <tellstore.hpp>
-#include <util/SnapshotDescriptor.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
@@ -164,12 +165,10 @@ private:
      * the function will not be invoked.
      *
      * The snapshot descriptor has the following format:
-     * - 8 bytes: The version of the snapshot
      * - 1 byte:  Whether we want to get / put the snapshot descriptor from / into the cache
      * - 1 byte:  Whether we sent the full descriptor
      * If the message contains a full descriptor:
-     * - 2 bytes: Padding
-     * - 4 bytes: Length of the descriptor
+     * - 6 bytes: Padding
      * - x bytes: The descriptor data
      *
      * @param transactionId The transaction ID of the current message
@@ -189,7 +188,7 @@ private:
 
     // TODO Replace with google dense map (SnapshotDescriptor has no copy / default constructor)
     /// Snapshot cache mapping the version number to the snapshot descriptor
-    std::unordered_map<uint64_t, SnapshotDescriptor> mSnapshots;
+    std::unordered_map<uint64_t, std::unique_ptr<commitmanager::SnapshotDescriptor>> mSnapshots;
 
     /// Map from Scan ID to the shared data class associated with the scan
     /// The Connection has the ownership because we can only free this after all RDMA writes have been processed

@@ -2,10 +2,13 @@
 
 #include <logstructured/Table.hpp>
 
-#include <util/CommitManager.hpp>
+#include "../DummyCommitManager.hpp"
+
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/Record.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/allocator.hpp>
 
@@ -15,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+using namespace tell;
 using namespace tell::store;
 using namespace tell::store::logstructured;
 
@@ -40,7 +44,7 @@ protected:
      * @param expectedVersion Expected version of the element
      * @param expectedNewest Expected the newest element
      */
-    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected,
+    void assertElement(uint64_t key, const commitmanager::SnapshotDescriptor& tx, const std::string& expected,
             uint64_t expectedVersion, bool expectedNewest) {
         std::size_t size = 0;
         const char* ptr = nullptr;
@@ -52,7 +56,8 @@ protected:
         EXPECT_EQ(expectedNewest, isNewest);
     }
 
-    void assertElement(uint64_t key, const SnapshotDescriptor& tx, const std::string& expected, bool expectedNewest) {
+    void assertElement(uint64_t key, const commitmanager::SnapshotDescriptor& tx, const std::string& expected,
+            bool expectedNewest) {
         assertElement(key, tx, expected, tx.version(), expectedNewest);
     }
 
@@ -61,11 +66,11 @@ protected:
     Table::HashTable mHashMap;
     Schema mSchema;
 
-    DummyManager mCommitManager;
+    DummyCommitManager mCommitManager;
 
     Table mTable;
 
-    SnapshotDescriptor mTx;
+    Transaction mTx;
     std::string mField;
 };
 
@@ -75,10 +80,11 @@ protected:
  */
 TEST_F(TableTest, insertGet) {
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    assertElement(1, mTx, mField, true);
+    assertElement(1, *mTx, mField, true);
+    mTx.commit();
 }
 
 /**
@@ -94,13 +100,14 @@ TEST_F(TableTest, insertGetMultiple) {
 
     for (auto& e : elements) {
         bool succeeded = false;
-        mTable.insert(e.first, e.second.size(), e.second.c_str(), mTx, &succeeded);
+        mTable.insert(e.first, e.second.size(), e.second.c_str(), *mTx, &succeeded);
         EXPECT_TRUE(succeeded);
     }
 
     for (auto& e : elements) {
-        assertElement(e.first, mTx, e.second, true);
+        assertElement(e.first, *mTx, e.second, true);
     }
+    mTx.commit();
 }
 
 /**
@@ -111,11 +118,12 @@ TEST_F(TableTest, insertUpdateGet) {
     std::string fieldNew = "Test Field Update";
 
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), mTx));
-    assertElement(1, mTx, fieldNew, true);
+    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), *mTx));
+    assertElement(1, *mTx, fieldNew, true);
+    mTx.commit();
 }
 
 /**
@@ -124,18 +132,19 @@ TEST_F(TableTest, insertUpdateGet) {
  */
 TEST_F(TableTest, insertRemoveGetSameTransaction) {
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    EXPECT_TRUE(mTable.remove(1, mTx));
+    EXPECT_TRUE(mTable.remove(1, *mTx));
 
     std::size_t size = 0;
     const char* ptr = nullptr;
     uint64_t version = 0x0u;
     bool isNewest = false;
-    EXPECT_FALSE(mTable.get(1, size, ptr, mTx, version, isNewest));
+    EXPECT_FALSE(mTable.get(1, size, ptr, *mTx, version, isNewest));
     EXPECT_EQ(0x0u, version);
     EXPECT_TRUE(isNewest);
+    mTx.commit();
 }
 
 /**
@@ -144,25 +153,26 @@ TEST_F(TableTest, insertRemoveGetSameTransaction) {
  */
 TEST_F(TableTest, insertRemoveGet) {
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
     // Commit insert transaction
-    mCommitManager.commitTx(mTx);
+    mTx.commit();
 
     // Begin remove transaction
     auto tx2 = mCommitManager.startTx();
 
     // Remove element
-    EXPECT_TRUE(mTable.remove(1, tx2));
+    EXPECT_TRUE(mTable.remove(1, *tx2));
 
     std::size_t size = 0;
     const char* ptr = nullptr;
     uint64_t version = 0x0u;
     bool isNewest = false;
-    EXPECT_FALSE(mTable.get(1, size, ptr, tx2, version, isNewest));
-    EXPECT_EQ(tx2.version(), version);
+    EXPECT_FALSE(mTable.get(1, size, ptr, *tx2, version, isNewest));
+    EXPECT_EQ(tx2->version(), version);
     EXPECT_TRUE(isNewest);
+    tx2.commit();
 }
 
 /**
@@ -173,16 +183,17 @@ TEST_F(TableTest, insertRemoveInsertGet) {
     std::string field2 = "Test Field 2";
 
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    EXPECT_TRUE(mTable.remove(1, mTx));
+    EXPECT_TRUE(mTable.remove(1, *mTx));
 
     succeeded = false;
-    mTable.insert(1, field2.size(), field2.c_str(), mTx, &succeeded);
+    mTable.insert(1, field2.size(), field2.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
-    assertElement(1, mTx, field2, true);
+    assertElement(1, *mTx, field2, true);
+    mTx.commit();
 }
 
 /**
@@ -194,22 +205,23 @@ TEST_F(TableTest, insertUpdateRevert) {
 
     // Insert first element
     bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), mTx, &succeeded);
+    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
     EXPECT_TRUE(succeeded);
 
     // Commit insert transaction
-    mCommitManager.commitTx(mTx);
+    mTx.commit();
 
     // Begin update-revert transaction
     auto tx2 = mCommitManager.startTx();
 
     // Update element
-    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), tx2));
-    assertElement(1, tx2, fieldNew, true);
+    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), *tx2));
+    assertElement(1, *tx2, fieldNew, true);
 
     // Revert element
-    EXPECT_TRUE(mTable.revert(1, tx2));
-    assertElement(1, tx2, mField, mTx.version(), true);
+    EXPECT_TRUE(mTable.revert(1, *tx2));
+    assertElement(1, *tx2, mField, mTx->version(), true);
+    tx2.commit();
 }
 
 }

@@ -1,7 +1,8 @@
 #pragma once
 
 #include <util/ScanQuery.hpp>
-#include <util/SnapshotDescriptor.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
@@ -38,7 +39,8 @@ public:
         LAST = ScanStatus::DONE,
     };
 
-    ClientScanQueryData(crossbow::infinio::MessageId messageId, SnapshotDescriptor snapshot,
+    ClientScanQueryData(crossbow::infinio::MessageId messageId,
+            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot,
             crossbow::infinio::LocalMemoryRegion& srcRegion, crossbow::infinio::RemoteMemoryRegion destRegion,
             crossbow::infinio::InfinibandSocket socket)
             : mMessageId(messageId),
@@ -137,7 +139,7 @@ private:
     crossbow::infinio::MessageId mMessageId;
 
     /// Snapshot to check the validity of tuples against
-    SnapshotDescriptor mSnapshot;
+    std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;
 
     /// Local memory region covering all tuples
     crossbow::infinio::LocalMemoryRegion& mSrcRegion;

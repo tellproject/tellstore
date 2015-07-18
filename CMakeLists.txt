@@ -25,6 +25,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcx16")
 # Find dependencies
 find_package(Boost REQUIRED)
 find_package(Crossbow COMPONENTS Allocator InfinIO Logger REQUIRED)
+find_package(CommitManager REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
 
@@ -57,6 +58,9 @@ target_include_directories(TellStore PUBLIC ${PROJECT_BINARY_DIR})
 
 # Link against TellStore library
 target_link_libraries(TellStore PUBLIC TellStoreUtil)
+
+# Link against CommitManager library
+target_link_libraries(TellStore PUBLIC commitmanager-client)
 
 # Link against Crossbow
 target_include_directories(TellStore PUBLIC ${Crossbow_INCLUDE_DIRS})

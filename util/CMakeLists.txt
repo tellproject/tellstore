@@ -8,9 +8,6 @@ set(UTIL_SRCS
     LogOperations.cpp
     Log.hpp
     Log.cpp
-    TransactionImpl.hpp
-    CommitManager.hpp
-    CommitManager.cpp
     PageManager.cpp
     PageManager.hpp
     CuckooHash.cpp
@@ -20,7 +17,6 @@ set(UTIL_SRCS
     Record.hpp
     Record.cpp
     StorageConfig.hpp
-    SnapshotDescriptor.hpp
     Scan.hpp
     ScanQuery.hpp
     IteratorEntry.hpp
@@ -39,6 +35,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_link_libraries(TellStoreUtil PUBLIC atomic)
     endif()
 endif()
+
+# Link against CommitManager library
+target_link_libraries(TellStoreUtil PUBLIC commitmanager-client)
 
 # Link against Boost
 target_include_directories(TellStoreUtil PUBLIC ${Boost_INCLUDE_DIRS})

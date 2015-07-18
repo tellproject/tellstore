@@ -16,21 +16,16 @@ void checkTableType(const Table& table, TableType type) {
     }
 }
 
-SnapshotDescriptor buildNonTransactionalSnapshot(uint64_t version) {
-    auto descLen = 2 * sizeof(uint64_t) + sizeof(uint8_t);
-    auto desc = new char[descLen];
-    crossbow::infinio::BufferWriter writer(desc, descLen);
-    writer.write<uint64_t>(version); // Base Version
-    writer.write<uint64_t>(0x0u); // Lowest Active Version
-    writer.write<uint8_t>(0x0u); // Versions
-
-    return {reinterpret_cast<unsigned char*>(desc), descLen, version + 1};
+std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint64_t version) {
+    commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
+    return commitmanager::SnapshotDescriptor::create(0x0u, version, version + 1,
+            reinterpret_cast<const char*>(&descriptor));
 }
 
 } // anonymous namespace
 
 ClientTransaction::ClientTransaction(ClientProcessor& processor, crossbow::infinio::Fiber& fiber,
-        SnapshotDescriptor snapshot)
+        std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mProcessor(processor),
           mFiber(fiber),
           mSnapshot(std::move(snapshot)),
@@ -40,7 +35,11 @@ ClientTransaction::ClientTransaction(ClientProcessor& processor, crossbow::infin
 
 ClientTransaction::~ClientTransaction() {
     if (!mCommitted) {
-        abort();
+        try {
+            abort();
+        } catch (std::exception& e) {
+            LOG_ERROR("Exception caught while aborting transaction [error = %1%]", e.what());
+        }
     }
 }
 
@@ -55,7 +54,7 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
 
 std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t key) {
     return executeInTransaction<GetResponse>(table, [this, &table, key] () {
-        return mProcessor.get(mFiber, table.tableId(), key, mSnapshot);
+        return mProcessor.get(mFiber, table.tableId(), key, *mSnapshot);
     });
 }
 
@@ -63,7 +62,7 @@ std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& tab
         const GenericTuple& tuple, bool hasSucceeded /* = true */) {
     return executeInTransaction<ModificationResponse>(table, [this, &table, key, &tuple, hasSucceeded] () {
         mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, mSnapshot, hasSucceeded);
+        return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
     });
 }
 
@@ -71,26 +70,26 @@ std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& tab
         const GenericTuple& tuple) {
     return executeInTransaction<ModificationResponse>(table, [this, &table, key, &tuple] () {
         mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, mSnapshot);
+        return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
     });
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& table, uint64_t key) {
     return executeInTransaction<ModificationResponse>(table, [this, &table, key] () {
         mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.remove(mFiber, table.tableId(), key, mSnapshot);
+        return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
     });
 }
 
 std::shared_ptr<ScanResponse> ClientTransaction::scan(const Table& table, uint32_t queryLength, const char* query) {
     return executeInTransaction<ScanResponse>(table, [this, &table, queryLength, query] () {
-        return mProcessor.scan(mFiber, table.tableId(), table.record(), queryLength, query, mSnapshot);
+        return mProcessor.scan(mFiber, table.tableId(), table.record(), queryLength, query, *mSnapshot);
     });
 }
 
 void ClientTransaction::commit() {
     mModified.clear();
-    mProcessor.commit(mSnapshot);
+    mProcessor.commit(mFiber, *mSnapshot);
     mCommitted = true;
 }
 
@@ -104,27 +103,20 @@ void ClientTransaction::abort() {
 void ClientTransaction::rollbackModified() {
     std::queue<std::shared_ptr<ModificationResponse>> responses;
     for (auto& modified : mModified) {
-        auto revertFuture = mProcessor.revert(mFiber, std::get<0>(modified), std::get<1>(modified), mSnapshot);
-        responses.emplace(std::move(revertFuture));
+        auto revertResponse = mProcessor.revert(mFiber, std::get<0>(modified), std::get<1>(modified), *mSnapshot);
+        responses.emplace(std::move(revertResponse));
     }
     responses.back()->waitForResult();
 
     while (!responses.empty()) {
-        auto response = std::move(responses.front());
+        auto revertResponse = std::move(responses.front());
         responses.pop();
 
-        auto& ec = response->error();
-        if (ec) {
-            LOG_ERROR("Error while rolling back transaction [error = %1% %2%]", ec, ec.message());
-            // TODO Handle this somehow
-            continue;
+        if (!revertResponse->waitForResult()) {
+            throw std::system_error(revertResponse->error());
         }
-
-        auto succeeded = response->get();
-        if (!succeeded) {
-            LOG_ERROR("Revert did not succeed");
-            // TODO Handle this somehow
-            continue;
+        if (!revertResponse->get()) {
+            throw std::logic_error("Revert did not succeed");
         }
     }
 }
@@ -145,6 +137,10 @@ ClientHandle::ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber&
           mFiber(fiber) {
 }
 
+ClientTransaction ClientHandle::startTransaction() {
+    return mProcessor.start(mFiber);
+}
+
 std::shared_ptr<CreateTableResponse> ClientHandle::createTable(const crossbow::string& name, const Schema& schema) {
     return mProcessor.createTable(mFiber, name, schema);
 }
@@ -153,55 +149,52 @@ std::shared_ptr<GetTableResponse> ClientHandle::getTable(const crossbow::string&
     return mProcessor.getTable(mFiber, name);
 }
 
-ClientTransaction ClientHandle::startTransaction() {
-    return mProcessor.start(mFiber);
-}
-
 std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = buildNonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.get(mFiber, table.tableId(), key, snapshot);
+    auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
+    return mProcessor.get(mFiber, table.tableId(), key, *snapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,
         const GenericTuple& tuple, bool hasSucceeded) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = buildNonTransactionalSnapshot(version);
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, snapshot, hasSucceeded);
+    auto snapshot = nonTransactionalSnapshot(version);
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *snapshot, hasSucceeded);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key, uint64_t version,
         const GenericTuple& tuple) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = buildNonTransactionalSnapshot(version);
-    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, snapshot);
+    auto snapshot = nonTransactionalSnapshot(version);
+    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *snapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, uint64_t key, uint64_t version) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = buildNonTransactionalSnapshot(version);
-    return mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+    auto snapshot = nonTransactionalSnapshot(version);
+    return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
 }
 
 std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, uint32_t queryLength, const char* query) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = buildNonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.scan(mFiber, table.tableId(), table.record(), queryLength, query, snapshot);
+    auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
+    return mProcessor.scan(mFiber, table.tableId(), table.record(), queryLength, query, *snapshot);
 }
 
-ClientProcessor::ClientProcessor(CommitManager& commitManager, crossbow::infinio::InfinibandService& service,
+ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
         crossbow::infinio::LocalMemoryRegion& scanRegion, const ClientConfig& config, uint64_t processorNum)
-        : mCommitManager(commitManager),
-          mScanRegion(scanRegion),
+        : mScanRegion(scanRegion),
           mProcessor(service.createProcessor()),
+          mCommitManagerSocket(service.createSocket(*mProcessor)),
           mTellStoreSocket(service.createSocket(*mProcessor)),
           mProcessorNum(processorNum),
           mTransactionCount(0x0u) {
+    mCommitManagerSocket.connect(config.commitManager, config.commitManagerPort);
     mTellStoreSocket.connect(config.server, config.port, mProcessorNum);
 }
 
@@ -213,6 +206,29 @@ void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
         ClientHandle client(*this, fiber);
         fun(client);
     });
+}
+
+ClientTransaction ClientProcessor::start(crossbow::infinio::Fiber& fiber) {
+    // TODO Return a transaction future?
+
+    auto startResponse = mCommitManagerSocket.startTransaction(fiber);
+    if (!startResponse->waitForResult()) {
+        throw std::system_error(startResponse->error());
+    }
+
+    return {*this, fiber, startResponse->get()};
+}
+
+void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
+    // TODO Return a commit future?
+
+    auto commitResponse = mCommitManagerSocket.commitTransaction(fiber, snapshot.version());
+    if (!commitResponse->waitForResult()) {
+        throw std::system_error(commitResponse->error());
+    }
+    if (!commitResponse->get()) {
+        throw std::runtime_error("Commit transaction did not succeed");
+    }
 }
 
 ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
@@ -227,7 +243,7 @@ ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, cons
 
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(mCommitManager, service, mScanRegion, config, i));
+        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config, i));
     }
 }
 

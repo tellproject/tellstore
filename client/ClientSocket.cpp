@@ -1,8 +1,7 @@
 #include "ClientSocket.hpp"
 
-#include <util/SnapshotDescriptor.hpp>
+#include <commitmanager/SnapshotDescriptor.hpp>
 
-#include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/Endpoint.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
@@ -16,15 +15,12 @@ uint32_t messageAlign(uint32_t size, uint32_t alignment) {
     return ((size % alignment != 0) ? (alignment - (size % alignment)) : 0);
 }
 
-void writeSnapshot(crossbow::infinio::BufferWriter& message, const SnapshotDescriptor& snapshot) {
-    message.write<uint64_t>(snapshot.version());
+void writeSnapshot(crossbow::infinio::BufferWriter& message, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Implement snapshot caching
     message.write<uint8_t>(0x0u); // Cached
     message.write<uint8_t>(0x1u); // HasDescriptor
-    message.align(sizeof(uint32_t));
-    auto descriptorLength = snapshot.length();
-    message.write<uint32_t>(descriptorLength);
-    message.write(snapshot.descriptor(), descriptorLength);
+    message.align(sizeof(uint64_t));
+    snapshot.serialize(message);
 }
 
 } // anonymous namespace
@@ -141,10 +137,10 @@ std::shared_ptr<GetTableResponse> ClientSocket::getTable(crossbow::infinio::Fibe
 }
 
 std::shared_ptr<GetResponse> ClientSocket::get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-        const SnapshotDescriptor& snapshot) {
+        const commitmanager::SnapshotDescriptor& snapshot) {
     auto response = std::make_shared<GetResponse>(fiber);
 
-    uint32_t messageLength = 4 * sizeof(uint64_t) + snapshot.length();
+    uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::GET, messageLength, [tableId, key, &snapshot]
             (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
@@ -157,14 +153,14 @@ std::shared_ptr<GetResponse> ClientSocket::get(crossbow::infinio::Fiber& fiber, 
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        uint64_t key, const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot,
-        bool hasSucceeded) {
+        uint64_t key, const Record& record, const GenericTuple& tuple,
+        const commitmanager::SnapshotDescriptor& snapshot, bool hasSucceeded) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = record.sizeOfTuple(tuple);
     uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += 2 * sizeof(uint64_t) + snapshot.length();
+    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::INSERT, messageLength,
             [tableId, key, &record, tupleLength, &tuple, &snapshot, hasSucceeded]
@@ -189,13 +185,14 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        uint64_t key, const Record& record, const GenericTuple& tuple, const SnapshotDescriptor& snapshot) {
+        uint64_t key, const Record& record, const GenericTuple& tuple,
+        const commitmanager::SnapshotDescriptor& snapshot) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = record.sizeOfTuple(tuple);
     uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += 2 * sizeof(uint64_t) + snapshot.length();
+    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
             (crossbow::infinio::BufferWriter& message, std::error_code& ec) {
@@ -218,10 +215,10 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::remove(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        uint64_t key, const SnapshotDescriptor& snapshot) {
+        uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
-    uint32_t messageLength = 5 * sizeof(uint64_t) + snapshot.length();
+    uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::REMOVE, messageLength, [tableId, key, &snapshot]
             (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
@@ -234,10 +231,10 @@ std::shared_ptr<ModificationResponse> ClientSocket::remove(crossbow::infinio::Fi
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::revert(crossbow::infinio::Fiber& fiber, uint64_t table,
-        uint64_t key, const SnapshotDescriptor& snapshot) {
+        uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
-    uint32_t messageLength = 4 * sizeof(uint64_t) + snapshot.length();
+    uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::REVERT, messageLength, [table, key, &snapshot]
             (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
@@ -251,14 +248,14 @@ std::shared_ptr<ModificationResponse> ClientSocket::revert(crossbow::infinio::Fi
 
 std::shared_ptr<ScanResponse> ClientSocket::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
         const Record& record, uint32_t queryLength, const char* query,
-        const crossbow::infinio::LocalMemoryRegion& destRegion, const SnapshotDescriptor& snapshot) {
+        const crossbow::infinio::LocalMemoryRegion& destRegion, const commitmanager::SnapshotDescriptor& snapshot) {
     ++mScanId;
     auto response = std::make_shared<ScanResponse>(fiber, *this, record, mScanId,
             reinterpret_cast<const char*>(destRegion.address()), destRegion.length());
 
     uint32_t messageLength = 5 * sizeof(uint64_t) + queryLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += 2 * snapshot.length();
+    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
     sendAsyncRequest(response, RequestType::SCAN, messageLength,
             [this, tableId, queryLength, query, &destRegion, &snapshot]

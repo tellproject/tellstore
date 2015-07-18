@@ -19,6 +19,9 @@ add_executable(tellstore-client main.cpp ${CLIENT_SRCS})
 # Link against TellStore library
 target_link_libraries(tellstore-client PRIVATE TellStoreUtil TellStoreNetwork)
 
+# Link against CommitManager library
+target_link_libraries(tellstore-client PUBLIC commitmanager-client)
+
 # Link against Boost
 target_include_directories(tellstore-client PRIVATE ${Boost_INCLUDE_DIRS})
 
