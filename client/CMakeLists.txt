@@ -39,7 +39,7 @@ target_link_libraries(tellstore-client PUBLIC commitmanager-client)
 target_include_directories(tellstore-client PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
-target_include_directories(tellstore-client PUBLIC ${Crossbow_INCLUDE_DIRS})
+target_include_directories(tellstore-client PRIVATE ${Crossbow_INCLUDE_DIRS})
 target_link_libraries(tellstore-client PUBLIC crossbow_infinio crossbow_logger)
 
 # Install the library
@@ -47,3 +47,6 @@ install(TARGETS tellstore-client EXPORT TellStoreClientTargets
         ARCHIVE DESTINATION ${LIB_INSTALL_DIR}
         LIBRARY DESTINATION ${LIB_INSTALL_DIR}
         PUBLIC_HEADER DESTINATION ${INCLUDE_INSTALL_DIR}/tellstore)
+
+# Install the cmake target
+install(EXPORT TellStoreClientTargets DESTINATION ${CMAKE_INSTALL_DIR})
