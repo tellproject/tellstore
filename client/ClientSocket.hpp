@@ -187,7 +187,7 @@ public:
         mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
     }
 
-    void connect(const crossbow::string& host, uint16_t port, uint64_t threadNum);
+    void connect(const crossbow::infinio::Endpoint& host, uint64_t threadNum);
 
     void shutdown();
 

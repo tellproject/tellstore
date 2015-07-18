@@ -83,13 +83,13 @@ void ScanResponse::notifyProgress(uint16_t tupleCount) {
     notify();
 }
 
-void ClientSocket::connect(const crossbow::string& host, uint16_t port, uint64_t threadNum) {
-    LOG_INFO("Connecting to TellStore server %1%:%2% on processor %3%", host, port, threadNum);
+void ClientSocket::connect(const crossbow::infinio::Endpoint& host, uint64_t threadNum) {
+    LOG_INFO("Connecting to TellStore server %1% on processor %2%", host, threadNum);
 
     crossbow::string data;
     data.append(reinterpret_cast<char*>(&threadNum), sizeof(uint64_t));
 
-    crossbow::infinio::RpcClientSocket::connect(host, port, data);
+    crossbow::infinio::RpcClientSocket::connect(host, data);
 }
 
 void ClientSocket::shutdown() {

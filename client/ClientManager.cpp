@@ -194,8 +194,8 @@ ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
           mTellStoreSocket(service.createSocket(*mProcessor)),
           mProcessorNum(processorNum),
           mTransactionCount(0x0u) {
-    mCommitManagerSocket.connect(config.commitManager, config.commitManagerPort);
-    mTellStoreSocket.connect(config.server, config.port, mProcessorNum);
+    mCommitManagerSocket.connect(config.commitManager);
+    mTellStoreSocket.connect(config.tellStore, mProcessorNum);
 }
 
 void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {

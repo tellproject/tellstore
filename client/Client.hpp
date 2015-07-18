@@ -16,7 +16,8 @@ namespace store {
 
 class Client {
 public:
-    Client(const ClientConfig& config);
+    Client(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
+            size_t numTransactions);
 
     void init();
 
@@ -29,11 +30,13 @@ private:
 
     void doScan(ClientTransaction& transaction, const Table& record, float selectivity);
 
-    ClientConfig mConfig;
-
-    crossbow::infinio::InfinibandService mService;
-
     ClientManager mManager;
+
+    /// Number of tuples to insert per transaction
+    size_t mNumTuple;
+
+    /// Number of concurrent transactions to start
+    size_t mNumTransactions;
 
     std::atomic<size_t> mActiveTransactions;
 

@@ -51,10 +51,11 @@ private:
 
 } // anonymous namespace
 
-Client::Client(const ClientConfig& config)
-        : mConfig(config),
-          mService(mConfig.infinibandLimits),
-          mManager(mService, mConfig),
+Client::Client(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
+        size_t numTransactions)
+        : mManager(service, config),
+          mNumTuple(numTuple),
+          mNumTransactions(numTransactions),
           mActiveTransactions(0),
           mTupleSize(0x0u) {
     LOG_INFO("Initialized TellStore client");
@@ -66,12 +67,9 @@ Client::Client(const ClientConfig& config)
                 std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
         });
     }
-}
 
-void Client::init() {
     LOG_DEBUG("Start transaction");
     mManager.execute(std::bind(&Client::addTable, this, std::placeholders::_1));
-    mService.run();
 }
 
 void Client::shutdown() {
@@ -102,9 +100,9 @@ void Client::addTable(ClientHandle& client) {
     auto table = createTableFuture->get();
     mTupleSize = table->record().sizeOfTuple(mTuple[0]);
 
-    for (size_t i = 0; i < mConfig.numTransactions; ++i) {
-        auto startRange = i * mConfig.numTuple;
-        auto endRange = startRange + mConfig.numTuple;
+    for (size_t i = 0; i < mNumTransactions; ++i) {
+        auto startRange = i * mNumTuple;
+        auto endRange = startRange + mNumTuple;
         ++mActiveTransactions;
         mManager.execute(std::bind(&Client::executeTransaction, this, std::placeholders::_1, startRange,
                 endRange));
