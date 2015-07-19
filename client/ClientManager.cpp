@@ -16,9 +16,10 @@ void checkTableType(const Table& table, TableType type) {
     }
 }
 
-std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint64_t version) {
+std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint64_t baseVersion) {
+    auto version = (baseVersion == std::numeric_limits<uint64_t>::max() ? baseVersion : baseVersion + 1);
     commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
-    return commitmanager::SnapshotDescriptor::create(0x0u, version, version + 1,
+    return commitmanager::SnapshotDescriptor::create(0x0u, baseVersion, version,
             reinterpret_cast<const char*>(&descriptor));
 }
 
