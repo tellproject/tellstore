@@ -93,6 +93,10 @@ class ClientHandle : crossbow::non_copyable, crossbow::non_movable {
 public:
     ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber& fiber);
 
+    crossbow::infinio::Fiber& fiber() {
+        return mFiber;
+    }
+
     ClientTransaction startTransaction();
 
     std::shared_ptr<CreateTableResponse> createTable(const crossbow::string& name, const Schema& schema);
