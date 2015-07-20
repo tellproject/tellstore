@@ -45,7 +45,7 @@ void ClientScanQueryData::writeUnsignaled(crossbow::infinio::ScatterGatherBuffer
         mSocket->writeUnsignaled(buffer, mDestRegion, mOffset, crossbow::to_underlying(ScanStatus::ONGOING), ec);
         if (ec) {
             // When we get a no memory error we overran the work queue because we are sending too fast
-            if (ec.value() == ENOMEM && ec.category() == std::system_category()) {
+            if (ec == std::errc::not_enough_memory) {
                 std::this_thread::yield();
                 ec = std::error_code();
                 continue;
@@ -66,7 +66,7 @@ void ClientScanQueryData::writeSignaled(crossbow::infinio::ScatterGatherBuffer& 
         mSocket->write(buffer, mDestRegion, mOffset, crossbow::to_underlying(status), data, ec);
         if (ec) {
             // When we get a no memory error we overran the work queue because we are sending too fast
-            if (ec.value() == ENOMEM && ec.category() == std::system_category()) {
+            if (ec == std::errc::not_enough_memory) {
                 std::this_thread::yield();
                 ec = std::error_code();
                 continue;
