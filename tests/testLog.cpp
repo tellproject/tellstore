@@ -648,7 +648,7 @@ TYPED_TEST_CASE(LogTestThreaded, Implementations);
  * This test is an extreme case because it continously appends to the log head with very small objects (8 byte), in this
  * scenario the log contention will be the highest.
  */
-TYPED_TEST(LogTestThreaded, append) {
+TYPED_TEST(LogTestThreaded, DISABLED_append) {
     static constexpr int threadCount = 4; // Number of threads running - 4 Threads
     static constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M
     static constexpr uint64_t totalCount = valuesCount * threadCount;
@@ -690,7 +690,7 @@ using UnorderedLogThreadedTest = LogTestThreaded<UnorderedLogImpl>;
  * Similar to the LogTestThreaded::append test but divides the threads into two groups: One that writes to the head
  * segment directly and one that writes into private pages, appending the pages to the log when they are full.
  */
-TEST_F(UnorderedLogThreadedTest, append) {
+TEST_F(UnorderedLogThreadedTest, DISABLED_append) {
     static constexpr int headThreadCount = 2; // Number of threads appending to head - 2 Threads
     static constexpr int appendThreadCount = 2; // Number of threads appending to head - 2 Threads
     static constexpr uint64_t valuesCount = 10000000; // Number of entries every thread writes - 10M

@@ -200,7 +200,7 @@ protected:
 using HeavyStorageTestImplementations = ::testing::Types<StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>>;
 TYPED_TEST_CASE(HeavyStorageTest, HeavyStorageTestImplementations);
 
-TYPED_TEST(HeavyStorageTest, heavy) {
+TYPED_TEST(HeavyStorageTest, DISABLED_heavy) {
     std::array<std::thread, 3> threads = {
         std::thread(this->runFunction(0, 2500000)),
         std::thread(this->runFunction(2500000, 5000000)),
