@@ -12,9 +12,6 @@
 #error "Unknown implementation"
 #endif
 
-#include <deltamain/Table.hpp>
-#include <logstructured/Table.hpp>
-
 namespace tell {
 namespace store {
 
