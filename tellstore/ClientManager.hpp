@@ -125,8 +125,9 @@ private:
  */
 class ClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientProcessor(crossbow::infinio::InfinibandService& service, crossbow::infinio::LocalMemoryRegion& scanRegion,
-            const ClientConfig& config, uint64_t processorNum);
+    ClientProcessor(crossbow::infinio::InfinibandService& service, crossbow::infinio::AllocatedMemoryRegion& scanRegion,
+            const crossbow::infinio::Endpoint& commitManager, const crossbow::infinio::Endpoint& tellStore,
+            uint64_t processorNum);
 
     uint64_t transactionCount() const {
         return mTransactionCount.load();
@@ -182,7 +183,7 @@ private:
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
-    crossbow::infinio::LocalMemoryRegion& mScanRegion;
+    crossbow::infinio::AllocatedMemoryRegion& mScanRegion;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
@@ -205,13 +206,7 @@ public:
     void execute(std::function<void(ClientHandle&)> fun);
 
 private:
-    friend class ClientProcessor;
-
-    crossbow::infinio::LocalMemoryRegion& scanRegion() {
-        return mScanRegion;
-    }
-
-    crossbow::infinio::LocalMemoryRegion mScanRegion;
+    crossbow::infinio::AllocatedMemoryRegion mScanRegion;
 
     std::vector<std::unique_ptr<ClientProcessor>> mProcessor;
 };

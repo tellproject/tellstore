@@ -188,15 +188,16 @@ std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, uint32_t qu
 }
 
 ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
-        crossbow::infinio::LocalMemoryRegion& scanRegion, const ClientConfig& config, uint64_t processorNum)
+        crossbow::infinio::AllocatedMemoryRegion& scanRegion, const crossbow::infinio::Endpoint& commitManager,
+        const crossbow::infinio::Endpoint& tellStore, uint64_t processorNum)
         : mScanRegion(scanRegion),
           mProcessor(service.createProcessor()),
           mCommitManagerSocket(service.createSocket(*mProcessor)),
           mTellStoreSocket(service.createSocket(*mProcessor)),
           mProcessorNum(processorNum),
           mTransactionCount(0x0u) {
-    mCommitManagerSocket.connect(config.commitManager);
-    mTellStoreSocket.connect(config.tellStore, mProcessorNum);
+    mCommitManagerSocket.connect(commitManager);
+    mTellStoreSocket.connect(tellStore, mProcessorNum);
 }
 
 void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
@@ -232,19 +233,12 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
     }
 }
 
-ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
-    auto data = mmap(nullptr, config.scanMemory, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
-    if (data == MAP_FAILED) {
-        // TODO Error handling
-        std::terminate();
-    }
-
-    int flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
-    mScanRegion = service.registerMemoryRegion(data, config.scanMemory, flags);
-
+ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config)
+        : mScanRegion(service.allocateMemoryRegion(config.scanMemory,
+                IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE)) {
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config, i));
+        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config.commitManager, config.tellStore, i));
     }
 }
 
