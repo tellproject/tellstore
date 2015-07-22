@@ -314,7 +314,9 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'s'>("server", &tellStoreHost),
             crossbow::program_options::value<'m'>("memory", &clientConfig.scanMemory),
             crossbow::program_options::value<'n'>("tuple", &numTuple),
-            crossbow::program_options::value<'t'>("transactions", &numTransactions));
+            crossbow::program_options::value<'t'>("transactions", &numTransactions),
+            crossbow::program_options::value<-1>("network-threads", &clientConfig.numNetworkThreads,
+                    crossbow::program_options::tag::ignore_short<true>{}));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);
@@ -340,9 +342,13 @@ int main(int argc, const char** argv) {
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore client [commitmanager = %1%, tellStore = %2%, memory = %3%GB, tuple = %4%, "
-            "transactions = %5%]", clientConfig.commitManager, clientConfig.tellStore,
-            double(clientConfig.scanMemory) / double(1024 * 1024 * 1024), numTuple, numTransactions);
+    LOG_INFO("Starting TellStore client");
+    LOG_INFO("--- Commit Manager: %1%", clientConfig.commitManager);
+    LOG_INFO("--- TellStore: %1%", clientConfig.tellStore);
+    LOG_INFO("--- Network Threads: %1%", clientConfig.numNetworkThreads);
+    LOG_INFO("--- Scan Memory: %1%GB", double(clientConfig.scanMemory) / double(1024 * 1024 * 1024));
+    LOG_INFO("--- Number of tuples: %1%", numTuple);
+    LOG_INFO("--- Number of transactions: %1%", numTransactions);
 
     // Initialize network stack
     crossbow::infinio::InfinibandService service(infinibandLimits);

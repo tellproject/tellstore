@@ -23,7 +23,10 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'p'>("port", &serverConfig.port),
             crossbow::program_options::value<'m'>("memory", &storageConfig.totalMemory),
             crossbow::program_options::value<'c'>("capacity", &storageConfig.hashMapCapacity),
-            crossbow::program_options::value<'s'>("scan-threads", &storageConfig.numScanThreads));
+            crossbow::program_options::value<-1>("network-threads", &serverConfig.numNetworkThreads,
+                    crossbow::program_options::tag::ignore_short<true>{}),
+            crossbow::program_options::value<-2>("scan-threads", &storageConfig.numScanThreads,
+                    crossbow::program_options::tag::ignore_short<true>{}));
 
     try {
         crossbow::program_options::parse(opts, argc, argv);
@@ -47,9 +50,13 @@ int main(int argc, const char** argv) {
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore server [port = %1%, memory = %2%GB, capacity = %3%, scan-threads = %4%]",
-            serverConfig.port, double(storageConfig.totalMemory) / double(1024 * 1024 * 1024),
-            storageConfig.hashMapCapacity, storageConfig.numScanThreads);
+    LOG_INFO("Starting TellStore server");
+    LOG_INFO("--- Port: %1%", serverConfig.port);
+    LOG_INFO("--- Network Threads: %1%", serverConfig.numNetworkThreads);
+    LOG_INFO("--- GC Interval: %1%s", storageConfig.gcIntervall);
+    LOG_INFO("--- Total Memory: %1%GB", double(storageConfig.totalMemory) / double(1024 * 1024 * 1024));
+    LOG_INFO("--- Scan Threads: %1%", storageConfig.numScanThreads);
+    LOG_INFO("--- Hash Map Capacity: %1%", storageConfig.hashMapCapacity);
 
     // Initialize allocator
     crossbow::allocator::init();
