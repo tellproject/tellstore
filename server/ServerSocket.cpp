@@ -81,10 +81,15 @@ void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, cro
     auto succeeded = mStorage.createTable(tableName, schema, tableId);
     LOG_ASSERT((tableId != 0) || !succeeded, "Table ID of 0 does not denote failure");
 
+    if (!succeeded) {
+        writeErrorResponse(messageId, error::invalid_table);
+        return;
+    }
+
     uint32_t messageLength = sizeof(uint64_t);
-    writeResponse(messageId, ResponseType::CREATE_TABLE, messageLength, [succeeded, tableId]
+    writeResponse(messageId, ResponseType::CREATE_TABLE, messageLength, [tableId]
             (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
-        message.write<uint64_t>(succeeded ? tableId : 0x0u);
+        message.write<uint64_t>(tableId);
     });
 }
 
