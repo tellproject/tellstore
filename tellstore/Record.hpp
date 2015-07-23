@@ -78,8 +78,7 @@ public:
             case FieldType::BLOB:
                 return false;
             case FieldType::NOTYPE:
-                assert(false);
-                LOG_ERROR("One should never use a field of type NOTYPE");
+                LOG_ASSERT(false, "One should never use a field of type NOTYPE");
                 return false;
         }
     }
@@ -110,14 +109,13 @@ public:
         case FieldType::DOUBLE:
             return sizeof(double);
         case FieldType::TEXT:
-            LOG_DEBUG("Tried to get static size of TEXT Field, which does not have a static size");
+            LOG_ASSERT(false, "Tried to get static size of TEXT Field, which does not have a static size");
             return std::numeric_limits<size_t>::max();
         case FieldType::BLOB:
-            LOG_DEBUG("Tried to get static size of BLOB Field, which does not have a static size");
+            LOG_ASSERT(false, "Tried to get static size of BLOB Field, which does not have a static size");
             return std::numeric_limits<size_t>::max();
         case FieldType::NOTYPE:
-            assert(false);
-            LOG_ERROR("One should never use a field of type NOTYPE");
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
             return std::numeric_limits<size_t>::max();
         }
     }
@@ -130,8 +128,8 @@ public:
         case FieldType::BLOB:
             return *reinterpret_cast<const uint32_t*>(data) + sizeof(uint32_t);
         default:
-            LOG_ERROR("Unknown type");
-            std::terminate();
+            LOG_ASSERT(false, "Unknown type");
+            return std::numeric_limits<size_t>::max();
         }
     }
 
