@@ -50,10 +50,9 @@ protected:
         mTuple2.reset(record.create(insertTuple2, mTuple2Size));
     }
 
-    bool checkQuery(size_t qsize, const char* qbuffer, const char* tuple, size_t bitmapSize, const Record& record);
+    bool checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record);
 
     ScanQuery mQuery;
-    std::vector<bool> mQueryBitMap;
 
     Schema mSchema;
 
@@ -64,20 +63,11 @@ protected:
     std::unique_ptr<char[]> mTuple2;
 };
 
-bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, const char* tuple, size_t bitmapSize,
-        const Record& record) {
-    mQueryBitMap.clear();
+bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record) {
     mQuery.query = qbuffer;
-    auto q = mQuery.check(tuple, mQueryBitMap, record);
-    EXPECT_EQ(qbuffer + qsize, q) << "Returned pointer does not point at end of qbuffer";
-    EXPECT_EQ(bitmapSize, mQueryBitMap.size()) << "Query bitmap does not contain the expected number of elements";
-
-    for (auto res : mQueryBitMap) {
-        if (!res) {
-            return false;
-        }
-    }
-    return true;
+    auto res = mQuery.check(tuple, mQuery.query, record);
+    EXPECT_EQ(qbuffer + qsize, mQuery.query) << "Returned pointer does not point at end of qbuffer";
+    return res;
 }
 
 /**
@@ -93,8 +83,8 @@ TEST_F(ScanQueryTest, noPredicates) {
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 0, record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 0, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
 }
 
 /**
@@ -118,8 +108,8 @@ TEST_F(ScanQueryTest, singlePredicate) {
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
     *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 1, record));
-    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 1, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
+    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
 }
 
 /**
@@ -150,8 +140,8 @@ TEST_F(ScanQueryTest, andPredicate) {
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x1u;
     *reinterpret_cast<int64_t*>(qbuffer.get() + 40) = gTupleLargenumber;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 2, record));
-    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 2, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
+    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
 }
 
 /**
@@ -184,8 +174,8 @@ TEST_F(ScanQueryTest, orPredicate) {
     *reinterpret_cast<uint32_t*>(qbuffer.get() + 40) = gTuple2Text.length();
     memcpy(qbuffer.get() + 44, gTuple2Text.data(), gTuple2Text.length());
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 1, record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 1, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
 }
 
 /**
@@ -212,8 +202,8 @@ TEST_F(ScanQueryTest, sameColumnPredicate) {
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 28) = gTuple2Number;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), 1, record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), 1, record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
 }
 
 } // anonymous namespace

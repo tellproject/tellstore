@@ -51,7 +51,6 @@ struct ScanThread {
         auto qbuffer = queries.load();
         if (qbuffer == nullptr) return false;
         ScanQuery query;
-        std::vector<bool> queryBitMap;
         uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
         qbuffer += 8;
         for (auto iter = scanIter.load(); !iter->done(); iter->next()) {
@@ -59,16 +58,7 @@ struct ScanThread {
             const auto& entry = iter->value();
             const auto& record = *entry.record();
             for (uint64_t i = 0; i < numQueries; ++i) {
-                queryBitMap.clear();
-                query.query = query.check(entry.data(), queryBitMap, record);
-                bool process = true;
-                for (auto res : queryBitMap) {
-                    if (!res) {
-                        process = false;
-                        break;
-                    }
-                }
-                if (process) {
+                if (query.check(entry.data(), query.query, record)) {
                     impls.at(i)->process(entry.validFrom(), entry.validTo(), entry.data(), entry.size(), record);
                 }
             }

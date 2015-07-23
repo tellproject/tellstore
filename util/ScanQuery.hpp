@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <limits>
 
 namespace tell {
 namespace store {
@@ -15,6 +16,61 @@ public:
     virtual ~ScanQueryImpl() = default;
 
     virtual void process(uint64_t validFrom, uint64_t validTo, const char* data, size_t size, const Record& record) = 0;
+};
+
+class PredicateBitmap {
+public:
+    PredicateBitmap()
+            : mMaxPosition(0x0u),
+              mBitmap({}) {
+    }
+
+    bool test(uint8_t position) {
+        if (position >= mMaxPosition) {
+            mMaxPosition = position + 1;
+            return false;
+        }
+
+        auto block = (position / BITS_PER_BLOCK);
+        auto mask = (0x1u << (position % BITS_PER_BLOCK));
+        return (mBitmap[block] & mask) != 0x0u;
+    }
+
+    void set(uint8_t position) {
+        if (position >= mMaxPosition) {
+            mMaxPosition = position + 1;
+        }
+
+        auto block = (position / BITS_PER_BLOCK);
+        auto mask = (0x1u << (position % BITS_PER_BLOCK));
+        mBitmap[block] |= mask;
+    }
+
+    bool all() {
+        if (mMaxPosition == 0x0u) {
+            return true;
+        }
+
+        auto lastBlock = ((mMaxPosition - 1) / BITS_PER_BLOCK);
+        for (uint8_t block = 0x0u; block < lastBlock; ++block) {
+            if (mBitmap[block] != std::numeric_limits<BlockType>::max()) {
+                return false;
+            }
+        }
+
+        auto mask = std::numeric_limits<BlockType>::max() >> (BITS_PER_BLOCK - (mMaxPosition % BITS_PER_BLOCK));
+        return ((mBitmap[lastBlock] & mask) == mask);
+    }
+
+private:
+    using BlockType = uint64_t;
+
+    static constexpr size_t BITS_PER_BLOCK = sizeof(BlockType) * 8u;
+
+    static constexpr size_t CAPACITY = 4u;
+
+    uint8_t mMaxPosition;
+    std::array<BlockType, CAPACITY> mBitmap;
 };
 
 /**
@@ -72,8 +128,9 @@ struct ScanQuery {
         return *reinterpret_cast<const uint8_t*>(query + offset + 1);
     }
 
-    const char* check(const char* data, std::vector<bool>& bitmap, const Record& record) const
+    bool check(const char* data, const char*& nextData, const Record& record) const
     {
+        PredicateBitmap bitmap;
         auto numberOfCols = numberOfColumns();
         auto offset = offsetToFirstColumn();
         for (uint64_t i = 0; i < numberOfCols; ++i) {
@@ -88,8 +145,7 @@ struct ScanQuery {
             offset += offsetToFirstPredicate();
             for (decltype(predCnt) i = 0; i < predCnt; ++i) {
                 auto bitmapPos = posInQuery(offset);
-                if (bitmap.size() <= bitmapPos) bitmap.resize(bitmapPos + 1);
-                else if (bitmap[bitmapPos]) {
+                if (bitmap.test(bitmapPos)) {
                     // if one of several ORs is true, we don't need to check the others
                     offset += offsetToNextPredicate(offset, f);
                     continue;
@@ -98,7 +154,9 @@ struct ScanQuery {
 
                 // we need to handle NULL special
                 if (isNull) {
-                    bitmap[bitmapPos] = type == PredicateType::IS_NULL;
+                    if (type == PredicateType::IS_NULL) {
+                        bitmap.set(bitmapPos);
+                    }
                     offset += offsetToNextPredicate(offset, f);
                     continue;
                 }
@@ -108,19 +166,22 @@ struct ScanQuery {
                 // Furthermore we do know, that both values are not null
                 switch (type) {
                 case PredicateType::IS_NOT_NULL:
-                    bitmap[bitmapPos] = true;
+                    bitmap.set(bitmapPos);
                 case PredicateType::IS_NULL:
                     offset += offsetToNextPredicate(offset, f);
                     break;
                 default:
                     offset += f.offsetInQuery();
-                    bitmap[bitmapPos] = f.cmp(type, field, query + offset);
+                    if (f.cmp(type, field, query + offset)) {
+                        bitmap.set(bitmapPos);
+                    }
                     offset += f.sizeOf(query + offset);
                     offset += ((offset % 8 != 0) ? (8 - (offset % 8)) : 0);
                 }
             }
         }
-        return query + offset;
+        nextData = query + offset;
+        return bitmap.all();
     }
 };
 
