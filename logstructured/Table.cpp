@@ -6,6 +6,8 @@
 
 #include <crossbow/enum_underlying.hpp>
 
+#include <boost/config.hpp>
+
 #include <tuple>
 
 namespace tell {
@@ -618,7 +620,7 @@ bool GcScanIterator::advanceEntry() {
 
 void GcScanIterator::setCurrentEntry() {
     do {
-        if (!mEntryIt->sealed()) {
+        if (BOOST_UNLIKELY(!mEntryIt->sealed())) {
             LOG_ASSERT(!mRecycle, "Recycling page even though not all entries are sealed");
             mSealed = false;
             continue;
@@ -810,7 +812,7 @@ void Table::insert(uint64_t key, size_t size, const char* data, const commitmana
             }
 
             // Cancel if the entry is not yet sealed
-            if (!oldEntry->sealed()) {
+            if (BOOST_UNLIKELY(!oldEntry->sealed())) {
                 break;
             }
 
@@ -866,7 +868,7 @@ bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
         // condition where the running write sets the validTo version to expired after we reverted the element (even
         // though it should be active).
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
-        if (!entry->sealed()) {
+        if (BOOST_UNLIKELY(!entry->sealed())) {
             return false;
         }
 
@@ -953,7 +955,7 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
         }
 
         // Cancel if the entry is not yet sealed
-        if (!oldEntry->sealed()) {
+        if (BOOST_UNLIKELY(!oldEntry->sealed())) {
             break;
         }
 
