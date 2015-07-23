@@ -165,25 +165,15 @@ public:
     class EntryIterator : public std::iterator<std::input_iterator_tag, LogEntry> {
     public:
         EntryIterator()
-                : mPage(nullptr),
-                  mPos(0x0u) {
+                : mPos(nullptr) {
         }
 
-        EntryIterator(LogPage* page, uint32_t pos)
-                : mPage(page),
-                  mPos(pos) {
-        }
-
-        LogPage* page() const {
-            return mPage;
-        }
-
-        uint32_t offset() const {
-            return mPos;
+        EntryIterator(char* pos)
+                : mPos(pos) {
         }
 
         EntryIterator& operator++() {
-            auto entry = reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+            auto entry = reinterpret_cast<LogEntry*>(mPos);
             mPos += entry->entrySize();
             return *this;
         }
@@ -195,7 +185,7 @@ public:
         }
 
         bool operator==(const EntryIterator& rhs) const {
-            return ((mPage == rhs.mPage) && (mPos == rhs.mPos));
+            return (mPos == rhs.mPos);
         }
 
         bool operator!=(const EntryIterator& rhs) const {
@@ -207,15 +197,12 @@ public:
         }
 
         pointer operator->() const {
-            return reinterpret_cast<LogEntry*>(mPage->data() + mPos);
+            return reinterpret_cast<LogEntry*>(mPos);
         }
 
     private:
-        /// Page this iterator belongs to
-        LogPage* mPage;
-
-        /// Current offset the iterator is pointing to
-        uint32_t mPos;
+        /// Current element the iterator is pointing to
+        char* mPos;
     };
 
     LogPage()
@@ -285,11 +272,11 @@ public:
     }
 
     EntryIterator begin() {
-        return EntryIterator(this, 0x0u);
+        return EntryIterator(data());
     }
 
     EntryIterator end() {
-        return EntryIterator(this, offset());
+        return EntryIterator(data() + offset());
     }
 
     /**
