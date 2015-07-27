@@ -131,7 +131,7 @@ public:
     }
 
     const Schema& schema() const {
-        return mSchema;
+        return mRecord.schema();
     }
 
     /**
@@ -238,7 +238,6 @@ private:
 
     PageManager& mPageManager;
     HashTable& mHashMap;
-    Schema mSchema;
     Record mRecord;
     const uint64_t mTableId;
 

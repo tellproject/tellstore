@@ -30,8 +30,8 @@ class ClientSocket;
  * @brief Response for a Create-Table request
  */
 class CreateTableResponse final
-        : public crossbow::infinio::RpcResponseResult<CreateTableResponse, std::unique_ptr<Table>> {
-    using Base = crossbow::infinio::RpcResponseResult<CreateTableResponse, std::unique_ptr<Table>>;
+        : public crossbow::infinio::RpcResponseResult<CreateTableResponse, Table> {
+    using Base = crossbow::infinio::RpcResponseResult<CreateTableResponse, Table>;
 
 public:
     CreateTableResponse(crossbow::infinio::Fiber& fiber, const Schema& schema)
@@ -56,8 +56,8 @@ private:
 /**
  * @brief Response for a Get-Table request
  */
-class GetTableResponse final : public crossbow::infinio::RpcResponseResult<GetTableResponse, std::unique_ptr<Table>> {
-    using Base = crossbow::infinio::RpcResponseResult<GetTableResponse, std::unique_ptr<Table>>;
+class GetTableResponse final : public crossbow::infinio::RpcResponseResult<GetTableResponse, Table> {
+    using Base = crossbow::infinio::RpcResponseResult<GetTableResponse, Table>;
 
 public:
     using Base::Base;

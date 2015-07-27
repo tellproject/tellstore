@@ -748,8 +748,7 @@ bool GcScanIterator::replaceElement(ChainedVersionRecord* oldElement, ChainedVer
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
         : mPageManager(pageManager),
           mHashMap(hashMap),
-          mSchema(schema),
-          mRecord(mSchema),
+          mRecord(schema),
           mTableId(tableId),
           mLog(mPageManager) {
 }
@@ -787,7 +786,7 @@ void Table::insert(uint64_t key, size_t size, const char* data, const commitmana
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
     auto recIter = find(key);
-    LOG_ASSERT(mSchema.type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
             "Version of the snapshot already committed");
 
     while (true) {
@@ -916,7 +915,7 @@ void Table::runGC(uint64_t minVersion) {
 }
 
 uint64_t Table::minVersion() const {
-    if (mSchema.type() == TableType::NON_TRANSACTIONAL) {
+    if (mRecord.schema().type() == TableType::NON_TRANSACTIONAL) {
         return ChainedVersionRecord::ACTIVE_VERSION;
     } else {
         // TODO Get correct version from CommitManager
@@ -933,7 +932,7 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
     auto recIter = find(key);
-    LOG_ASSERT(mSchema.type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
             "Version of the snapshot already committed");
 
     while (!recIter.done()) {

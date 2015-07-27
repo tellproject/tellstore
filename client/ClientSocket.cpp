@@ -27,7 +27,7 @@ void writeSnapshot(crossbow::buffer_writer& message, const commitmanager::Snapsh
 
 void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
-    setResult(new Table(tableId, std::move(mSchema)));
+    setResult(tableId, std::move(mSchema));
 }
 
 void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
@@ -39,7 +39,7 @@ void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
     Schema schema(schemaData);
     message.advance(schemaLength - sizeof(uint32_t));
 
-    setResult(new Table(tableId, std::move(schema)));
+    setResult(tableId, std::move(schema));
 }
 
 void GetResponse::processResponse(crossbow::buffer_reader& message) {

@@ -31,7 +31,6 @@ namespace deltamain {
 class Table {
     using PageList = std::vector<char*>;
     PageManager& mPageManager;
-    Schema mSchema;
     Record mRecord;
     std::atomic<CuckooTable*> mHashTable;
     Log<OrderedLogImpl> mInsertLog;
@@ -84,11 +83,11 @@ public:
     ~Table();
 
     const Schema& schema() const {
-        return mSchema;
+        return mRecord.schema();
     }
 
     TableType type() const {
-        return mSchema.type();
+        return mRecord.schema().type();
     }
 
     bool get(uint64_t key,

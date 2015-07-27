@@ -34,7 +34,6 @@ class OperationTimer {
 public:
     OperationTimer()
             : mTotalDuration(0x0u) {
-
     }
 
     void start() {
@@ -132,7 +131,7 @@ void TestClient::addTable(ClientHandle& client) {
     LOG_INFO("Adding table took %1%ns", duration.count());
 
     auto table = createTableFuture->get();
-    mTupleSize = table->record().sizeOfTuple(mTuple[0]);
+    mTupleSize = table.record().sizeOfTuple(mTuple[0]);
 
     for (size_t i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
@@ -167,7 +166,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
-        auto insertFuture = transaction.insert(*table, key, mTuple[key % mTuple.size()], true);
+        auto insertFuture = transaction.insert(table, key, mTuple[key % mTuple.size()], true);
         if (!insertFuture->waitForResult()) {
             auto& ec = insertFuture->error();
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
@@ -185,7 +184,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 
         LOG_TRACE("Get tuple");
         getTimer.start();
-        auto getFuture = transaction.get(*table, key);
+        auto getFuture = transaction.get(table, key);
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
@@ -209,19 +208,19 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         }
 
         LOG_TRACE("Check tuple");
-        if (table->field<int32_t>("number", tuple->data()) != (key % mTuple.size())) {
+        if (table.field<int32_t>("number", tuple->data()) != (key % mTuple.size())) {
             LOG_ERROR("Number value does not match");
             return;
         }
-        if (table->field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
+        if (table.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
             LOG_ERROR("Text1 value does not match");
             return;
         }
-        if (table->field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
+        if (table.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
             LOG_ERROR("Text2 value does not match");
             return;
         }
-        if (table->field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
+        if (table.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
             LOG_ERROR("Text2 value does not match");
             return;
         }
@@ -246,9 +245,9 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     }
 
     auto scanTransaction = client.startTransaction();
-    doScan(scanTransaction, *table, 1.0);
-    doScan(scanTransaction, *table, 0.5);
-    doScan(scanTransaction, *table, 0.25);
+    doScan(scanTransaction, table, 1.0);
+    doScan(scanTransaction, table, 0.5);
+    doScan(scanTransaction, table, 0.25);
 }
 
 void TestClient::doScan(ClientTransaction& transaction, const Table& table, float selectivity) {

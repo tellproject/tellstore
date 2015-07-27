@@ -91,7 +91,6 @@ void Table::Iterator::setCurrentEntry()
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
-    , mSchema(schema)
     , mRecord(schema)
     , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)

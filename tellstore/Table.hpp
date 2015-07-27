@@ -60,12 +60,28 @@ private:
     uint32_t mSize;
 };
 
-class Table : crossbow::non_copyable, crossbow::non_movable {
+class Table : crossbow::non_copyable {
 public:
+    Table()
+            : mTableId(0x0u) {
+    }
+
     Table(uint64_t tableId, Schema schema)
             : mTableId(tableId),
-              mSchema(std::move(schema)),
-              mRecord(mSchema) {
+              mRecord(std::move(schema)) {
+    }
+
+    Table(Table&& other)
+            : mTableId(other.mTableId),
+              mRecord(std::move(other.mRecord)) {
+        other.mTableId = 0x0u;
+    }
+
+    Table& operator=(Table&& other) {
+        mTableId = other.mTableId;
+        other.mTableId = 0x0u;
+        mRecord = std::move(other.mRecord);
+        return *this;
     }
 
     uint64_t tableId() const {
@@ -77,7 +93,7 @@ public:
     }
 
     TableType tableType() const {
-        return mSchema.type();
+        return mRecord.schema().type();
     }
 
     template <typename T>
@@ -85,7 +101,6 @@ public:
 
 private:
     uint64_t mTableId;
-    Schema mSchema;
     Record mRecord;
 };
 

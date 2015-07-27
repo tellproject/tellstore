@@ -358,11 +358,17 @@ class Record {
 public:
     using id_t = uint16_t;
 private:
-    const Schema& mSchema;
+    Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, int32_t>> mFieldMetaData;
 public:
-    Record(const Schema& schema);
+    Record() = default;
+
+    Record(Schema schema);
+
+    const Schema& schema() const {
+        return mSchema;
+    }
 
     size_t sizeOfTuple(const GenericTuple& tuple) const;
 

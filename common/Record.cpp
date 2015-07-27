@@ -194,18 +194,19 @@ Schema::Schema(const char* ptr) {
     }
 }
 
-Record::Record(const Schema& schema)
-    : mSchema(schema), mFieldMetaData(schema.fixedSizeFields().size() + schema.varSizeFields().size()) {
+Record::Record(Schema schema)
+        : mSchema(std::move(schema)),
+          mFieldMetaData(mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size()) {
     int32_t currOffset = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
     currOffset += (currOffset % 8) ? 8 - (currOffset % 8) : 0;
 
     size_t id = 0;
-    for (const auto& field : schema.fixedSizeFields()) {
+    for (const auto& field : mSchema.fixedSizeFields()) {
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, currOffset);
         currOffset += field.staticSize();
     }
-    for (const auto& field : schema.varSizeFields()) {
+    for (const auto& field : mSchema.varSizeFields()) {
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, currOffset);
         // make sure, that all others are set to min
