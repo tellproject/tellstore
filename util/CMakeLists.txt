@@ -33,11 +33,9 @@ add_library(tellstore-util STATIC ${UTIL_SRCS} ${UTIL_PRIVATE_HDR} ${PROJECT_BIN
 target_include_directories(tellstore-util PUBLIC ${PROJECT_SOURCE_DIR})
 target_include_directories(tellstore-util PUBLIC ${PROJECT_BINARY_DIR})
 
-# Workaround for link failure with GCC 5.1 (GCC Bug 65913)
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "5.1.0")
-        target_link_libraries(tellstore-util PUBLIC atomic)
-    endif()
+# Workaround for link failure with GCC 5 (GCC Bug 65913)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    target_link_libraries(tellstore-util PUBLIC atomic)
 endif()
 
 # Link against TellStore common library
