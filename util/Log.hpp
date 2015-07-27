@@ -422,11 +422,6 @@ public:
         uint32_t mPos;
     };
 
-protected:
-    BaseLogImpl(PageManager& pageManager)
-            : mPageManager(pageManager) {
-    }
-
     /**
      * @brief Acquires an empty log page from the page manager
      */
@@ -455,6 +450,11 @@ protected:
      * @param end The page succeeding the last deleted pages
      */
     void freePage(LogPage* begin, LogPage* end);
+
+protected:
+    BaseLogImpl(PageManager& pageManager)
+            : mPageManager(pageManager) {
+    }
 
 private:
     PageManager& mPageManager;

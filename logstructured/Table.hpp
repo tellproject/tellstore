@@ -238,7 +238,6 @@ private:
     bool internalUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             bool deletion);
 
-    PageManager& mPageManager;
     VersionManager& mVersionManager;
     HashTable& mHashMap;
     Record mRecord;

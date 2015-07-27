@@ -683,7 +683,7 @@ void GcScanIterator::setCurrentEntry() {
 
 void GcScanIterator::recycleEntry(ChainedVersionRecord* oldElement, uint32_t size, uint32_t type) {
     if (mRecyclingHead == nullptr) {
-        mRecyclingHead = new(mTable.mPageManager.alloc()) LogPage();
+        mRecyclingHead = mTable.mLog.acquirePage();
         if (mRecyclingHead == nullptr) {
             LOG_ERROR("PageManager ran out of space");
             mRecycle = false;
@@ -694,7 +694,7 @@ void GcScanIterator::recycleEntry(ChainedVersionRecord* oldElement, uint32_t siz
 
     auto newEntry = mRecyclingHead->append(size, type);
     if (newEntry == nullptr) {
-        auto newHead = new(mTable.mPageManager.alloc()) LogPage();
+        auto newHead = mTable.mLog.acquirePage();
         if (newHead == nullptr) {
             LOG_ERROR("PageManager ran out of space");
             mRecycle = false;
@@ -747,12 +747,11 @@ bool GcScanIterator::replaceElement(ChainedVersionRecord* oldElement, ChainedVer
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
         HashTable& hashMap)
-        : mPageManager(pageManager),
-          mVersionManager(versionManager),
+        : mVersionManager(versionManager),
           mHashMap(hashMap),
           mRecord(schema),
           mTableId(tableId),
-          mLog(mPageManager) {
+          mLog(pageManager) {
 }
 
 bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
