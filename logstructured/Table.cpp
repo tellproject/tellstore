@@ -787,7 +787,8 @@ void Table::insert(uint64_t key, size_t size, const char* data, const commitmana
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
     auto recIter = find(key);
-    LOG_ASSERT(snapshot.version() >= recIter.minVersion(), "Version of the snapshot already committed");
+    LOG_ASSERT(mSchema.type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+            "Version of the snapshot already committed");
 
     while (true) {
         LOG_ASSERT(recIter.isNewest(), "Version iterator must point to newest version");
@@ -932,7 +933,8 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
     auto recIter = find(key);
-    LOG_ASSERT(snapshot.version() >= recIter.minVersion(), "Version of the snapshot already committed");
+    LOG_ASSERT(mSchema.type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+            "Version of the snapshot already committed");
 
     while (!recIter.done()) {
         LOG_ASSERT(recIter.isNewest(), "Version iterator must point to newest version");
