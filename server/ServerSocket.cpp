@@ -128,17 +128,17 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::i
         uint64_t version = 0x0u;
         bool isNewest = false;
         auto success = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
+        LOG_ASSERT(success || (size == 0x0u), "Size of 0 does not indicate element-not-found");
 
         // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
         uint32_t messageLength = 2 * sizeof(uint64_t) + size;
-        writeResponse(messageId, ResponseType::GET, messageLength, [version, isNewest, success, size, data]
+        writeResponse(messageId, ResponseType::GET, messageLength, [version, isNewest, size, data]
                 (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
             message.write<uint64_t>(version);
             message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
-            message.write<uint8_t>(success ? 0x1u : 0x0u);
-            if (success) {
-                message.align(sizeof(uint32_t));
-                message.write<uint32_t>(size);
+            message.align(sizeof(uint32_t));
+            message.write<uint32_t>(size);
+            if (size > 0) {
                 message.write(data, size);
             }
         });
