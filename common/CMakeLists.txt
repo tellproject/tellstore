@@ -24,4 +24,4 @@ set_target_properties(tellstore-common PROPERTIES PUBLIC_HEADER "${COMMON_PUBLIC
 
 # Link against Crossbow
 target_include_directories(tellstore-common PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-common PUBLIC crossbow_infinio crossbow_logger)
+target_link_libraries(tellstore-common PUBLIC crossbow_logger)

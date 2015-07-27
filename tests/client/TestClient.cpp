@@ -3,8 +3,8 @@
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/Record.hpp>
 
+#include <crossbow/byte_buffer.hpp>
 #include <crossbow/enum_underlying.hpp>
-#include <crossbow/infinio/ByteBuffer.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/program_options.hpp>
@@ -264,7 +264,7 @@ void TestClient::doScan(ClientTransaction& transaction, const Table& table, floa
     uint32_t queryLength = 24;
     std::unique_ptr<char[]> query(new char[queryLength]);
 
-    crossbow::infinio::BufferWriter queryWriter(query.get(), queryLength);
+    crossbow::buffer_writer queryWriter(query.get(), queryLength);
     queryWriter.write<uint64_t>(0x1u);
     queryWriter.write<uint16_t>(recordField);
     queryWriter.write<uint16_t>(0x1u);

@@ -15,7 +15,7 @@ uint32_t messageAlign(uint32_t size, uint32_t alignment) {
     return ((size % alignment != 0) ? (alignment - (size % alignment)) : 0);
 }
 
-void writeSnapshot(crossbow::infinio::BufferWriter& message, const commitmanager::SnapshotDescriptor& snapshot) {
+void writeSnapshot(crossbow::buffer_writer& message, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Implement snapshot caching
     message.write<uint8_t>(0x0u); // Cached
     message.write<uint8_t>(0x1u); // HasDescriptor
@@ -25,12 +25,12 @@ void writeSnapshot(crossbow::infinio::BufferWriter& message, const commitmanager
 
 } // anonymous namespace
 
-void CreateTableResponse::processResponse(crossbow::infinio::BufferReader& message) {
+void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
     setResult(new Table(tableId, std::move(mSchema)));
 }
 
-void GetTableResponse::processResponse(crossbow::infinio::BufferReader& message) {
+void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
 
     // TODO Refactor schema serialization
@@ -42,11 +42,11 @@ void GetTableResponse::processResponse(crossbow::infinio::BufferReader& message)
     setResult(new Table(tableId, std::move(schema)));
 }
 
-void GetResponse::processResponse(crossbow::infinio::BufferReader& message) {
+void GetResponse::processResponse(crossbow::buffer_reader& message) {
     setResult(Tuple::deserialize(message));
 }
 
-void ModificationResponse::processResponse(crossbow::infinio::BufferReader& message) {
+void ModificationResponse::processResponse(crossbow::buffer_reader& message) {
     auto succeeded = (message.read<uint8_t>() != 0x0u);
     setResult(succeeded);
 }
@@ -73,7 +73,7 @@ const char* ScanResponse::next() {
     return tuple;
 }
 
-void ScanResponse::processResponse(crossbow::infinio::BufferReader& /* message */) {
+void ScanResponse::processResponse(crossbow::buffer_reader& /* message */) {
     mSocket.onScanComplete(mScanId);
     setResult(true);
 }
@@ -108,7 +108,7 @@ std::shared_ptr<CreateTableResponse> ClientSocket::createTable(crossbow::infinio
     messageLength += schemaLength;
 
     sendRequest(response, RequestType::CREATE_TABLE, messageLength, [nameLength, schemaLength, &name, &schema]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint16_t>(nameLength);
         message.write(name.data(), nameLength);
 
@@ -128,7 +128,7 @@ std::shared_ptr<GetTableResponse> ClientSocket::getTable(crossbow::infinio::Fibe
     uint32_t messageLength = sizeof(uint16_t) + nameLength;
 
     sendRequest(response, RequestType::GET_TABLE, messageLength, [nameLength, &name]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint16_t>(nameLength);
         message.write(name.data(), nameLength);
     });
@@ -143,7 +143,7 @@ std::shared_ptr<GetResponse> ClientSocket::get(crossbow::infinio::Fiber& fiber, 
     uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::GET, messageLength, [tableId, key, &snapshot]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
         message.write<uint64_t>(key);
         writeSnapshot(message, snapshot);
@@ -164,7 +164,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
 
     sendRequest(response, RequestType::INSERT, messageLength,
             [tableId, key, &record, tupleLength, &tuple, &snapshot, hasSucceeded]
-            (crossbow::infinio::BufferWriter& message, std::error_code& ec) {
+            (crossbow::buffer_writer& message, std::error_code& ec) {
         message.write<uint64_t>(tableId);
         message.write<uint64_t>(key);
         message.write<uint8_t>(hasSucceeded ? 0x1u : 0x0u);
@@ -195,7 +195,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
     messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
-            (crossbow::infinio::BufferWriter& message, std::error_code& ec) {
+            (crossbow::buffer_writer& message, std::error_code& ec) {
         message.write<uint64_t>(tableId);
         message.write<uint64_t>(key);
 
@@ -221,7 +221,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::remove(crossbow::infinio::Fi
     uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::REMOVE, messageLength, [tableId, key, &snapshot]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
         message.write<uint64_t>(key);
         writeSnapshot(message, snapshot);
@@ -237,7 +237,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::revert(crossbow::infinio::Fi
     uint32_t messageLength = 3 * sizeof(uint64_t) + snapshot.serializedLength();
 
     sendRequest(response, RequestType::REVERT, messageLength, [table, key, &snapshot]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(table);
         message.write<uint64_t>(key);
         writeSnapshot(message, snapshot);
@@ -259,7 +259,7 @@ std::shared_ptr<ScanResponse> ClientSocket::scan(crossbow::infinio::Fiber& fiber
 
     sendAsyncRequest(response, RequestType::SCAN, messageLength,
             [this, tableId, queryLength, query, &destRegion, &snapshot]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
         message.write<uint16_t>(mScanId);
 

@@ -12,9 +12,7 @@
 #include <stdexcept>
 
 namespace crossbow {
-namespace infinio {
-class BufferReader;
-} // namespace infinio
+class buffer_reader;
 } // namespace crossbow
 
 namespace tell {
@@ -31,7 +29,7 @@ public: // Construction
     void operator delete[](void* ptr) = delete;
 
 public: // Serialization
-    static std::unique_ptr<Tuple> deserialize(crossbow::infinio::BufferReader& reader);
+    static std::unique_ptr<Tuple> deserialize(crossbow::buffer_reader& reader);
 
 public:
     const char* data() const {

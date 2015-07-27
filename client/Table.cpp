@@ -1,6 +1,6 @@
 #include <tellstore/Table.hpp>
 
-#include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/byte_buffer.hpp>
 #include <crossbow/logger.hpp>
 
 namespace tell {
@@ -15,7 +15,7 @@ void Tuple::operator delete(void* ptr) {
     ::free(ptr);
 }
 
-std::unique_ptr<Tuple> Tuple::deserialize(crossbow::infinio::BufferReader& reader) {
+std::unique_ptr<Tuple> Tuple::deserialize(crossbow::buffer_reader& reader) {
     auto version = reader.read<uint64_t>();
     auto isNewest = reader.read<uint8_t>();
     reader.align(sizeof(uint32_t));

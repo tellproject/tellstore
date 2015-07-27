@@ -6,7 +6,7 @@
 #include <tellstore/Record.hpp>
 #include <tellstore/Table.hpp>
 
-#include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
 #include <crossbow/infinio/RpcClient.hpp>
 #include <crossbow/string.hpp>
@@ -48,7 +48,7 @@ private:
         return error::get_error_category();
     }
 
-    void processResponse(crossbow::infinio::BufferReader& message);
+    void processResponse(crossbow::buffer_reader& message);
 
     Schema mSchema;
 };
@@ -71,7 +71,7 @@ private:
         return error::get_error_category();
     }
 
-    void processResponse(crossbow::infinio::BufferReader& message);
+    void processResponse(crossbow::buffer_reader& message);
 };
 
 /**
@@ -92,7 +92,7 @@ private:
         return error::get_error_category();
     }
 
-    void processResponse(crossbow::infinio::BufferReader& message);
+    void processResponse(crossbow::buffer_reader& message);
 };
 
 /**
@@ -113,7 +113,7 @@ private:
         return error::get_error_category();
     }
 
-    void processResponse(crossbow::infinio::BufferReader& message);
+    void processResponse(crossbow::buffer_reader& message);
 };
 
 /**
@@ -157,7 +157,7 @@ private:
         return error::get_error_category();
     }
 
-    void processResponse(crossbow::infinio::BufferReader& message);
+    void processResponse(crossbow::buffer_reader& message);
 
     void notifyProgress(uint16_t tupleCount);
 

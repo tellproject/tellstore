@@ -13,7 +13,7 @@ namespace tell {
 namespace store {
 
 void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
-        crossbow::infinio::BufferReader& request) {
+        crossbow::buffer_reader& request) {
     LOG_TRACE("MID %1%] Handling request of type %2%", messageId.userId(), messageType);
     auto startTime = std::chrono::steady_clock::now();
 
@@ -65,7 +65,7 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
     LOG_TRACE("MID %1%] Handling request took %2%ns", messageId.userId(), duration.count());
 }
 
-void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableNameLength = request.read<uint16_t>();
     auto tableNameData = request.read(tableNameLength);
     request.align(sizeof(uint64_t));
@@ -88,12 +88,12 @@ void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, cro
 
     uint32_t messageLength = sizeof(uint64_t);
     writeResponse(messageId, ResponseType::CREATE_TABLE, messageLength, [tableId]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
     });
 }
 
-void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableNameLength = request.read<uint16_t>();
     auto tableNameData = request.read(tableNameLength);
     crossbow::string tableName(tableNameData, tableNameLength);
@@ -111,14 +111,14 @@ void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossb
 
     uint32_t messageLength = sizeof(uint64_t) + schemaLength;
     writeResponse(messageId, ResponseType::GET_TABLE, messageLength, [tableId, schemaLength, &schema]
-            (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
         schema.serialize(message.data());
         message.advance(schemaLength);
     });
 }
 
-void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
@@ -133,7 +133,7 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::i
         // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
         uint32_t messageLength = 2 * sizeof(uint64_t) + size;
         writeResponse(messageId, ResponseType::GET, messageLength, [version, isNewest, size, data]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint64_t>(version);
             message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
             message.align(sizeof(uint32_t));
@@ -145,7 +145,7 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::i
     });
 }
 
-void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
@@ -161,13 +161,13 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
         // Message size is 1 byte (succeeded)
         uint32_t messageLength = sizeof(uint8_t);
         writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
         });
     });
 }
 
-void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
     bool wantsSucceeded = request.read<uint8_t>();
@@ -185,13 +185,13 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
         // Message size is 1 byte (succeeded)
         uint32_t messageLength = sizeof(uint8_t);
         writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
         });
     });
 }
 
-void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
@@ -202,13 +202,13 @@ void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow
         // Message size is 1 byte (succeeded)
         uint32_t messageLength = sizeof(uint8_t);
         writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
         });
     });
 }
 
-void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
@@ -219,13 +219,13 @@ void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow
         // Message size is 1 byte (succeeded)
         uint32_t messageLength = sizeof(uint8_t);
         writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
         });
     });
 }
 
-void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request) {
+void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto scanId = request.read<uint16_t>();
 
@@ -302,7 +302,7 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         LOG_DEBUG("Scan with ID %1% finished", bufferId);
         size_t messageLength = sizeof(uint16_t);
         writeResponse(i->second->messageId(), ResponseType::SCAN, messageLength, [bufferId]
-                (crossbow::infinio::BufferWriter& message, std::error_code& /* ec */) {
+                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
             message.write<uint16_t>(bufferId);
         });
         mScans.erase(i);
@@ -314,8 +314,7 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
 }
 
 template <typename Fun>
-void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& message,
-        Fun f) {
+void ServerSocket::handleSnapshot(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& message, Fun f) {
     bool cached = (message.read<uint8_t>() != 0x0u);
     bool hasDescriptor = (message.read<uint8_t>() != 0x0u);
     message.align(sizeof(uint64_t));

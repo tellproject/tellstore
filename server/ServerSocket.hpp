@@ -6,7 +6,7 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 
-#include <crossbow/infinio/ByteBuffer.hpp>
+#include <crossbow/byte_buffer.hpp>
 #include <crossbow/infinio/RpcServer.hpp>
 #include <crossbow/string.hpp>
 
@@ -38,8 +38,7 @@ public:
 private:
     friend Base;
 
-    void onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
-        crossbow::infinio::BufferReader& message);
+    void onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType, crossbow::buffer_reader& message);
 
     /**
      * The create table request has the following format:
@@ -52,7 +51,7 @@ private:
      * The response consists of the following format:
      * - 8 bytes: The table ID of the newly created table or 0 when the table already exists
      */
-    void handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The get table ID request has the following format:
@@ -62,7 +61,7 @@ private:
      * The response consists of the following format:
      * - 8 bytes: The table ID of the table or 0 when the table does not exist
      */
-    void handleGetTable(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleGetTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The get request has the following format:
@@ -79,7 +78,7 @@ private:
      * - 4 bytes: Length of the tuple's data field
      * - x bytes: The tuple's data
      */
-    void handleGet(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleGet(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The update request has the following format:
@@ -94,7 +93,7 @@ private:
      * The response consists of the following format:
      * - 1 byte:  Whether the update was successfull
      */
-    void handleUpdate(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleUpdate(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The insert request has the following format:
@@ -110,7 +109,7 @@ private:
      * The response consists of the following format:
      * - 1 byte:  Whether the insert was successfull
      */
-    void handleInsert(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleInsert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The remove request has the following format:
@@ -121,7 +120,7 @@ private:
      * The response consists of the following format:
      * - 1 byte:  Whether the remove was successfull
      */
-    void handleRemove(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleRemove(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The revert request has the following format:
@@ -132,7 +131,7 @@ private:
      * The response consists of the following format:
      * - 1 byte:  Whether the revert was successfull
      */
-    void handleRevert(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleRevert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
      * The scan request has the following format:
@@ -147,7 +146,7 @@ private:
      * - y bytes: Variable padding to make message 8 byte aligned
      * - x bytes: Snapshot descriptor
      */
-    void handleScan(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& request);
+    void handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
@@ -176,7 +175,7 @@ private:
      * @param f Function with the signature (const SnapshotDescriptor&)
      */
     template <typename Fun>
-    void handleSnapshot(crossbow::infinio::MessageId messageId, crossbow::infinio::BufferReader& message, Fun f);
+    void handleSnapshot(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& message, Fun f);
 
     /**
      * @brief Removes the snapshot from the cache
