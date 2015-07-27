@@ -25,6 +25,7 @@ set(UTIL_PRIVATE_HDR
     StorageConfig.hpp
     StoreImpl.hpp
     TableManager.hpp
+    VersionManager.hpp
 )
 
 # Add TellStore util library

@@ -7,6 +7,7 @@
 #include <util/PageManager.hpp>
 #include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
+#include <util/VersionManager.hpp>
 
 #include <tellstore/Record.hpp>
 
@@ -124,7 +125,8 @@ public:
 
     using Iterator = GcScanIterator;
 
-    Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap);
+    Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
+            HashTable& hashMap);
 
     uint64_t id() const {
         return mTableId;
@@ -237,6 +239,7 @@ private:
             bool deletion);
 
     PageManager& mPageManager;
+    VersionManager& mVersionManager;
     HashTable& mHashMap;
     Record mRecord;
     const uint64_t mTableId;
@@ -271,7 +274,7 @@ public:
     }
 
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
-        return mTableManager.createTable(name, schema, idx, mHashMap);
+        return mTableManager.createTable(name, schema, idx, mVersionManager, mHashMap);
     }
 
     const Table* getTable(const crossbow::string& name, uint64_t& id) const {
@@ -321,6 +324,7 @@ public:
 private:
     PageManager::Ptr mPageManager;
     GC mGc;
+    VersionManager mVersionManager;
     TableManager<Table, GC> mTableManager;
 
     Table::HashTable mHashMap;

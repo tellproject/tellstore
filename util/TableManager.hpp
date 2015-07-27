@@ -2,6 +2,7 @@
 
 #include "StorageConfig.hpp"
 #include "Scan.hpp"
+#include "VersionManager.hpp"
 
 #include <tellstore/Record.hpp>
 
@@ -47,7 +48,7 @@ private:
     StorageConfig mConfig;
     GC& mGC;
     PageManager& mPageManager;
-    std::atomic<uint64_t> mLowestActiveVersion;
+    VersionManager& mVersionManager;
     ScanThreads<Table> mScanThreads;
     std::atomic<bool> mShutDown;
     mutable tbb::spin_rw_mutex mTablesMutex;
@@ -78,16 +79,16 @@ private:
                     tables.push_back(p.second);
                 }
             }
-            mGC.run(tables, mLowestActiveVersion.load());
+            mGC.run(tables, mVersionManager.lowestActiveVersion());
         }
     }
 
 public:
-    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc)
+    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc, VersionManager& versionManager)
         : mConfig(config)
         , mGC(gc)
         , mPageManager(pageManager)
-        , mLowestActiveVersion(0x1u)
+        , mVersionManager(versionManager)
         , mScanThreads(config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
@@ -146,7 +147,7 @@ public:
              bool& isNewest)
     {
         crossbow::allocator _;
-        updateLowestActiveVersion(snapshot);
+        mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->get(key, size, data, snapshot, version, isNewest);
     }
 
@@ -157,7 +158,7 @@ public:
                 const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
-        updateLowestActiveVersion(snapshot);
+        mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->update(key, size, data, snapshot);
     }
 
@@ -170,7 +171,7 @@ public:
                 bool* succeeded = nullptr)
     {
         crossbow::allocator _;
-        updateLowestActiveVersion(snapshot);
+        mVersionManager.addSnapshot(snapshot);
         lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
     }
 
@@ -179,7 +180,7 @@ public:
                 const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
-        updateLowestActiveVersion(snapshot);
+        mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->remove(key, snapshot);
     }
 
@@ -188,7 +189,7 @@ public:
                 const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
-        updateLowestActiveVersion(snapshot);
+        mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->revert(key, snapshot);
     }
 
@@ -220,16 +221,6 @@ private:
 
     Table* lookupTable(uint64_t tableId) {
         return const_cast<Table*>(const_cast<const TableManager*>(this)->lookupTable(tableId));
-    }
-
-    void updateLowestActiveVersion(const commitmanager::SnapshotDescriptor& snapshot) {
-        auto lowestActiveVersion = mLowestActiveVersion.load();
-        while (lowestActiveVersion < snapshot.lowestActiveVersion()) {
-            if (!mLowestActiveVersion.compare_exchange_strong(lowestActiveVersion, snapshot.lowestActiveVersion())) {
-                continue;
-            }
-            return;
-        }
     }
 };
 

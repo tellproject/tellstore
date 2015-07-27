@@ -745,8 +745,10 @@ bool GcScanIterator::replaceElement(ChainedVersionRecord* oldElement, ChainedVer
     return true;
 }
 
-Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, HashTable& hashMap)
+Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
+        HashTable& hashMap)
         : mPageManager(pageManager),
+          mVersionManager(versionManager),
           mHashMap(hashMap),
           mRecord(schema),
           mTableId(tableId),
@@ -918,8 +920,7 @@ uint64_t Table::minVersion() const {
     if (mRecord.schema().type() == TableType::NON_TRANSACTIONAL) {
         return ChainedVersionRecord::ACTIVE_VERSION;
     } else {
-        // TODO Get correct version from CommitManager
-        return 0x1u;
+        return mVersionManager.lowestActiveVersion();
     }
 }
 
@@ -999,7 +1000,7 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>::StoreImpl(const StorageConfig& config)
         : mPageManager(PageManager::construct(config.totalMemory)),
-          mTableManager(*mPageManager, config, mGc),
+          mTableManager(*mPageManager, config, mGc, mVersionManager),
           mHashMap(config.hashMapCapacity) {
 }
 

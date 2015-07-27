@@ -6,6 +6,7 @@
 
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
+#include <util/VersionManager.hpp>
 
 #include <tellstore/Record.hpp>
 
@@ -31,7 +32,7 @@ protected:
             : mPageManager(PageManager::construct(4 * TELL_PAGE_SIZE)),
               mHashMap(1024),
               mSchema(TableType::TRANSACTIONAL),
-              mTable(*mPageManager, mSchema, 1, mHashMap),
+              mTable(*mPageManager, mSchema, 1, mVersionManager, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
     }
@@ -64,6 +65,7 @@ protected:
 
     crossbow::allocator mAlloc;
     PageManager::Ptr mPageManager;
+    VersionManager mVersionManager;
     Table::HashTable mHashMap;
     Schema mSchema;
 

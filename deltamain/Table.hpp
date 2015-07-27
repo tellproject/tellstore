@@ -6,6 +6,7 @@
 #include <util/Log.hpp>
 #include <util/IteratorEntry.hpp>
 #include <util/StoreImpl.hpp>
+#include <util/VersionManager.hpp>
 
 #include <tellstore/Record.hpp>
 
@@ -138,6 +139,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
     using StorageType = StoreImpl<Implementation::DELTA_MAIN_REWRITE>;
     PageManager::Ptr mPageManager;
     GC gc;
+    VersionManager mVersionManager;
     TableManager<Table, GC> tableManager;
 
     StoreImpl(const StorageConfig& config);

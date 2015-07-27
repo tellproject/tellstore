@@ -373,13 +373,13 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config)
     : mPageManager(PageManager::construct(config.totalMemory))
-    , tableManager(*mPageManager, config, gc)
+    , tableManager(*mPageManager, config, gc, mVersionManager)
 {
 }
 
 StoreImpl<Implementation::DELTA_MAIN_REWRITE>::StoreImpl(const StorageConfig& config, size_t totalMem)
     : mPageManager(PageManager::construct(totalMem))
-    , tableManager(*mPageManager, config, gc)
+    , tableManager(*mPageManager, config, gc, mVersionManager)
 {
 }
 
