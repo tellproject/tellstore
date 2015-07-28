@@ -6,6 +6,9 @@
 #cmakedefine USE_DELTA_MAIN_REWRITE
 #cmakedefine USE_LOGSTRUCTURED_MEMORY
 
+#cmakedefine USE_ROW_STORE
+#cmakedefine USE_COLUMN_MAP
+
 namespace tell {
 namespace store {
 

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
+set(STORAGE_LAYOUT "ROW_STORE" CACHE STRING "The storage layout to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
@@ -39,6 +40,14 @@ elseif(IMPLEMENTATION STREQUAL "LOGSTRUCTURED_MEMORY")
     set(USE_LOGSTRUCTURED_MEMORY 1)
 else()
     message(FATAL_ERROR "Unknown implementation")
+endif()
+
+if(STORAGE_LAYOUT STREQUAL "ROW_STORE")
+    set(USE_ROW_STORE 1)
+elseif(STORAGE_LAYOUT STREQUAL "COLUMN_MAP")
+    set(USE_COLUMN_MAP 1)
+else()
+    message(FATAL_ERROR "Unknown storage layout")
 endif()
 
 # Create configuration file
