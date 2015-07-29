@@ -5,8 +5,8 @@ set(DELTAMAIN_SRCS
     Page.cpp
     Record.cpp
     Table.cpp
-    RowStoreRecord.cpp
-    ColumnMapRecord.cpp
+#    RowStoreRecord.cpp
+#    ColumnMapRecord.cpp
 )
 
 set(DELTAMAIN_PRIVATE_HDR

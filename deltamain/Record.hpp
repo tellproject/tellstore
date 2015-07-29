@@ -43,19 +43,15 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  * log or in a table. The base pointer must be set in
  * a way, that it is able to find all relevant versions
  * of the record from there. The memory layout of a
- * DMRecord looks like follows:
+ * LOG-DMRecord looks like follows:
  *
  * -1 byte: Record::Type
  * - For Log Entries
  *   - 1 byte with a boolean, indicating whether the entry
  *     got reverted
  *   - 6 bytes padding
- * - For multiversion record:
- *   - 3 bytes padding
- *   - 4 bytes integer storing the number of versions
  * -8 bytes: key
  *
- *    For log entries:
  *    - 8 bytes: version
  *    - 8 bytes: pointer to a previous version. this will
  *      always be set to null, if the previous version was
@@ -69,21 +65,11 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  *      If the log operation is an insert, this position
  *      holds the pointer to the newest version
  *
- *    For multiversion records:
- *    - A pointer to the newest version
- *    - An array of version numbers
- *    - An array of size number_of_versions + 1 of 4 byte integers
- *      to store the offsets to
- *      the data for each version - this offset will be absolute.
- *      If the offset is euqal to the next offset, it means that the
- *      tuple was deleted at this version. The last offsets points to
- *      the byte after the record.
- *      If an offset is negative, its absolute value is still the
- *      size of the value, but the tuple is marked as reverted, it
- *      will be deleted at the next GC phase
- *    - A 4 byte padding if there are an even number of versions
- *
  *  - The data (if not delete)
+ *
+ *  For the memory layout of a MV-DMRecord:
+ *  PLEASE consult the specific comments in RowStoreRecord.cpp,
+ *  resp. ColumnMapRecord.cpp.
  *
  *  This class comes in to flavors: const and non-const.
  *  The non-const version provides also functionality for
