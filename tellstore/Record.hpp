@@ -378,7 +378,7 @@ public:
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
 
-    char* create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
+    bool create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
     char* create(const GenericTuple& tuple, size_t& size) const;
 
     /**
@@ -391,6 +391,8 @@ public:
     }
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
+
+    bool isFieldNull(const char* ptr, id_t id) const;
 };
 
 } // namespace store
