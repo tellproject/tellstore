@@ -172,7 +172,12 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted) const {
+                     bool* wasDeleted
+#if defined USE_COLUMN_MAP
+                     ,
+                     Table *table
+#endif
+    ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return nullptr;
@@ -299,7 +304,12 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted) const {
+                     bool* wasDeleted
+#if defined USE_COLUMN_MAP
+                     ,
+                     Table *table
+#endif
+    ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return nullptr;
@@ -402,7 +412,12 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted) const {
+                     bool* wasDeleted
+#if defined USE_COLUMN_MAP
+                     ,
+                     Table *table
+#endif
+    ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return nullptr;
@@ -652,14 +667,6 @@ const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry* DMRecordImpl
     return &currEntry;
 }
 
-#if defined USE_ROW_STORE
-#define DISPATCH_MV_T impl::MVRecord<T> rec(this->mData)
-#elif defined USE_COLUMN_MAP
-#define DISPATCH_MV_T impl::MVRecord<T> rec(this->mData, this->mTable)
-#else
-#error "Unknown storage layout"
-#endif
-
 #define DISPATCH_METHOD(T, methodName,  ...) switch(this->type()) {\
 case Type::LOG_INSERT:\
     {\
@@ -698,9 +705,20 @@ const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& s
                                   uint64_t& version,
                                   bool& isNewest,
                                   bool& isValid,
-                                  bool *wasDeleted /* = nullptr */) const {
+                                  bool *wasDeleted /* = nullptr */
+#if defined USE_COLUMN_MAP
+                                  ,
+                                  Table *table /* = nullptr */
+#endif
+) const {
     isNewest = true;
+#if defined USE_ROW_STORE
     DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted);
+#elif defined USE_COLUMN_MAP
+    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted, table);
+#else
+#error "Unknown storage layout"
+#endif
     return nullptr;
 }
 

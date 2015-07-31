@@ -112,7 +112,13 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted) const {
+                     bool* wasDeleted
+
+ #if defined USE_COLUMN_MAP
+                     ,
+                     Table *table
+ #endif
+    ) const {
         LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
         std::terminate();
     }
