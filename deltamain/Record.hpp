@@ -86,6 +86,12 @@ public:
     DMRecordImplBase(T data) : mData(data) {}
 
     RecordType type() const {
+
+#if defined USE_COLUMN_MAP
+// if we use columnMap, finding the type is slightly more tricky
+        if ((mData >> 1) % 2)
+            return RecordType::MULTI_VERSION_RECORD;
+#endif
         return crossbow::from_underlying<Type>(*mData);
     }
 
@@ -141,6 +147,7 @@ public:
      * is not a tombstone or a reverted operation.
      */
     bool isValidDataRecord() const;
+
 public: // Interface for iterating over all versions
     class VersionIterator {
     public:
