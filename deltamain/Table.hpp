@@ -87,6 +87,12 @@ public:
         return mRecord.schema();
     }
 
+#if defined USE_COLUMN_MAP
+    const PageManager* pageManager() const {
+        return pageManager();
+    }
+#endif
+
     TableType type() const {
         return mRecord.schema().type();
     }

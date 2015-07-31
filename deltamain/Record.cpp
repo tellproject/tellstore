@@ -652,6 +652,14 @@ const typename DMRecordImplBase<T>::VersionIterator::IteratorEntry* DMRecordImpl
     return &currEntry;
 }
 
+#if defined USE_ROW_STORE
+#define DISPATCH_MV_T impl::MVRecord<T> rec(this->mData)
+#elif defined USE_COLUMN_MAP
+#define DISPATCH_MV_T impl::MVRecord<T> rec(this->mData, this->mTable)
+#else
+#error "Unknown storage layout"
+#endif
+
 #define DISPATCH_METHOD(T, methodName,  ...) switch(this->type()) {\
 case Type::LOG_INSERT:\
     {\
@@ -691,7 +699,6 @@ const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& s
                                   bool& isNewest,
                                   bool& isValid,
                                   bool *wasDeleted /* = nullptr */) const {
-    // we have to execute this at a readable version
     isNewest = true;
     DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted);
     return nullptr;

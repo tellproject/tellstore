@@ -36,9 +36,26 @@ template<class T>
 class MVRecordBase {
 protected:
     T mData;
+#if defined USE_COLUMN_MAP
+    Table *mTable = nullptr;
+#endif
+
 public:
     using Type = typename DMRecordImplBase<T>::Type;
-    MVRecordBase(T data) : mData(data) {}
+    MVRecordBase(
+            T data
+#if defined USE_COLUMN_MAP
+            ,
+            Table *table = nullptr
+#endif
+            ) :
+        mData(data)
+#if defined USE_COLUMN_MAP
+        ,
+        mTable(table)
+#endif
+    {}
+
     T getNewest() const {
         LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
         std::terminate();

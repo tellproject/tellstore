@@ -10,6 +10,10 @@
 
 #include <crossbow/enum_underlying.hpp>
 
+// @braunl: we need this in order to make sure that we have access to
+// the compile parameters...
+#include "config.h"
+
 namespace tell {
 namespace commitmanager {
 class SnapshotDescriptor;
@@ -25,6 +29,10 @@ enum class RecordType : uint8_t {
     LOG_DELETE,
     MULTI_VERSION_RECORD
 };
+
+#if defined USE_COLUMN_MAP
+class Table;
+#endif
 
 namespace impl {
 struct VersionHolder {
@@ -75,27 +83,63 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  *  The non-const version provides also functionality for
  *  writing to the memory.
  */
+
+/**
+ * if we use columnMap, MV records need a special treatment for data pointers
+ * as pointers point directly to a key but have the second last bit set to 1 to
+ * indicate that this is an MV and not any kind of log record. On creation of
+ * such a record, we set ptr to table in order to get access to tableManager
+ * and schema which are both used in get and scan requests. Therefore, the
+ * fastest way to check whether a record is MV or not, is to check whether
+ * mTable is a nullptr.
+ */
+#if defined USE_COLUMN_MAP
+        #define IS_MV_RECORD (mTable != nullptr)
+        #define MV_BASE_ADDRESS (mData - 2)
+#endif
+
 template<class T>
 class DMRecordImplBase {
     using target_type = typename std::remove_pointer<T>::type;
     static_assert(sizeof(target_type) == 1, "only pointers to one byte size types are supported");
 protected:
     T mData;
+#if defined USE_COLUMN_MAP
+    Table *mTable = nullptr;
+#endif
+
 public:
     using Type = RecordType;
-    DMRecordImplBase(T data) : mData(data) {}
+    DMRecordImplBase(
+            T data
+#if defined USE_COLUMN_MAP
+            ,
+            Table *table = nullptr
+#endif
+    ) :
+        mData(data)
+#if defined USE_COLUMN_MAP
+        ,
+        mTable(((reinterpret_cast<uint64_t>(data) >> 1) % 2) ? table : nullptr)
+#endif
+    {}
 
     RecordType type() const {
 
 #if defined USE_COLUMN_MAP
 // if we use columnMap, finding the type is slightly more tricky
-        if ((mData >> 1) % 2)
+        if (IS_MV_RECORD)
             return RecordType::MULTI_VERSION_RECORD;
 #endif
         return crossbow::from_underlying<Type>(*mData);
     }
 
     uint64_t key() const {
+#if defined USE_COLUMN_MAP
+// if we use columnMap and deal with an MV record, the key is at a different offset
+        if (IS_MV_RECORD)
+            return *reinterpret_cast<const uint64_t*>(MV_BASE_ADDRESS);
+#endif
         return *reinterpret_cast<const uint64_t*>(mData + 8);
     }
 
@@ -109,13 +153,13 @@ public:
      * isValid will be set to false iff all versions accessible from
      * this tuple got reverted.
      */
-    const char* data(
-            const commitmanager::SnapshotDescriptor& snapshot,
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
             size_t& size,
             uint64_t& version,
             bool& isNewest,
             bool& isValid,
-            bool* wasDeleted = nullptr) const;
+            bool* wasDeleted = nullptr
+) const;
 
 
     T dataPtr();
