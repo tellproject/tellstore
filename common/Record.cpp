@@ -248,7 +248,7 @@ size_t Record::sizeOfTuple(const char* ptr) const {
         pos = f.second + f.first.staticSize();
     } else {
         auto baseId = mSchema.fixedSizeFields().size();
-        auto pos = mFieldMetaData[baseId].second;
+        pos = mFieldMetaData[baseId].second;
         LOG_ASSERT(pos >= 0, "Offset for first variable length field is smaller than 0");
 
         for (; baseId < mFieldMetaData.size(); ++baseId) {
