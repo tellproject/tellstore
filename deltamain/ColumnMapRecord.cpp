@@ -4,18 +4,19 @@
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a
  * column map page which is layed out the following way:
  *
- * - count: int32 to store the number of records that are stored in this page
- *   a negative count indicates that the page is currently being constructed by
- *   gc and hence variable-sized values have to be retrieved from a different
- *   page.
- * - count^: just stored as convenience (as we would padd anyway):
- *   count^ = 2*((count+1)/2)
+ * - count: int32 to store the number of records that are stored in this page.
+ *   We also define count^ which is: count^ = 2*((count+1)/2)
+ * - GC-flag (4 byte): a non-zero value indicates that the page is currently
+ *   being constructed by gc and hence variable-sized values have to be
+ *   retrieved from a different page.
+ * - key-version column: an array of size count of 16-byte values in format:
+ *   |key (8 byte)|version (8 byte)|
  * - newest-pointers: an array of size count of 8-byte pointers to newest
  *   versions of records in the logs
  * - null-bitmatrix: a bitmatrix of size count x (|Columns|+7)/8 bytes
- * - padding to the next multiple of 8
- * - key-version column: an array of size count of 16-byte values in format:
- *   |key (8 byte)|version (8 byte)|
+ * - var-size-meta-data column: an array of size count of 4-byte values indicating
+ *   the total size of all var-sized values of each record. This is used to
+ *   allocate enough space for a record on a get request.
  * - fixed-sized data columns: for each column there is an array of size
  *   count^ x value-size (4 or 8 bytes, as defined in schema)
  * - var-sized data columns: for each colum there is an array of
@@ -26,8 +27,10 @@
  *
  * Pointers into a page (e.g. from log) point to the first key/version entry in
  * the key-version column, but have the second lowest bit set to 1 (in order to
- * make clear it is a columnMap-MV record). This bit has to be unset in order to
- * get the correct address.
+ * make clear it is a columnMap-MV record). This bit has to be unset (by subtracting
+ * 2) in order to get the correct address.
+ *
+ * MV records are stored as single records in a way that recrods
  */
 
 namespace impl {
@@ -36,29 +39,75 @@ template<class T>
 class MVRecordBase {
 protected:
     T mData;
-#if defined USE_COLUMN_MAP
-    Table *mTable = nullptr;
-#endif
 
 public:
     using Type = typename DMRecordImplBase<T>::Type;
-    MVRecordBase(
-            T data
-#if defined USE_COLUMN_MAP
-            ,
-            Table *table = nullptr
-#endif
-            ) :
-        mData(data)
-#if defined USE_COLUMN_MAP
-        ,
-        mTable(table)
-#endif
-    {}
+    MVRecordBase(T data) : mData(data) {}
 
-    T getNewest() const {
-        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-        std::terminate();
+    /**
+     * Given a reference to table, computes the beginning of the page (basePtr),
+     * the total number of records in this page (totalRecords) and the index of the
+     * current record within the page (return value).
+     */
+    inline uint32_t getBaseKnowledge(Table *table, char *& basePtr, uint32_t &totalRecords) {
+        basePtr = table->pageManager()->getPageStart(data);
+        totalRecords = *(reinterpret_cast<uint32_t*>(basePtr));
+        return (reinterpret_cast<uint64_t>(mData-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+    }
+
+    /**
+     * The following convenience functions are used to get pointers to items of interest
+     * within the colum-oriented page.
+     */
+
+    inline char *getKeyVersionPtrAt(uint32_t index, char * basePtr)
+    {
+        return basePtr + 8 + (index*16);
+    }
+
+    inline char *getNewestPtrAt(uint32_t index, char * basePtr, uint32_t totalRecords)
+    {
+        return basePtr + 8 + (totalRecords*16) + (index*8);
+
+    }
+
+    inline size_t getBitMapSize(Table *table) {
+        if (table->schema().allNotNull())
+            return 0;
+        else
+            (table->schema().schemaSize() + 7) / 8;
+    }
+
+    inline char *getNullBitMapAt(uint32_t index, char * basePtr, uint32_t totalRecords, size_t bitMapSize)
+    {
+        return basePtr + 8 + (totalRecords*24) + (index*bitMapSize);
+    }
+
+    inline char *getColumnNAt(Table *table, uint32_t N, uint32_t index, char * basePtr, uint32_t totalRecords, size_t bitMapSize)
+    {
+        return nullptr;
+        // TODO: continue here...
+    }
+
+    T getNewest(Table *table = nullptr) const {
+        // The pointer format is like the following:
+        // If (ptr % 2) -> this is a link, we need to
+        //      follow this version.
+        // else This is just a normal version - but it might be
+        //      a MVRecord
+        //
+        // This const_cast is a hack - we might fix it
+        // later
+        char* data = const_cast<char*>(mData);
+        const char* baseAddress = table->pageManager()->getPageStart(data);
+        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
+        auto p = ptr->load();
+        while (ptr->load() % 2) {
+            // we need to follow this pointer
+            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+            p = ptr->load();
+        }
+        return reinterpret_cast<char*>(p);
     }
 
 
@@ -119,6 +168,7 @@ public:
                      Table *table
  #endif
     ) const {
+//        table->pageManager();
         LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
         std::terminate();
     }

@@ -9,6 +9,10 @@
 #include <memory.h>
 #include <map>
 
+#if defined USE_COLUMN_MAP
+#include "deltamain/Table.hpp"
+#endif
+
 namespace tell {
 namespace store {
 namespace deltamain {
