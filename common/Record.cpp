@@ -364,9 +364,6 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
         *type = p.first.type();
     }
     isNull = isFieldNull(ptr, id);
-    if (isNull) {
-        return nullptr;
-    }
     if (p.second < 0) {
         // we need to calc the position
         auto baseId = mSchema.fixedSizeFields().size();
