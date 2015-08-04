@@ -64,6 +64,14 @@ public:
         return (reinterpret_cast<uint64_t>(mData-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
     }
 
+/**
+ * As we always use computeBaseKnowledge in the same way, we have a macro for that.
+ */
+#define COMPUTE_BASE_KNOWLEDGE(table) const char *basePtr; \
+    uint32_t recordCount; \
+    uint32_t index; \
+    index = getBaseKnowledge(table, basePtr, recordCount);
+
     /**
      * The following convenience functions are used to get pointers to items of interest
      * within the colum-oriented page.
@@ -122,14 +130,19 @@ public:
         return res;
     }
 
-#define COMPUTE_BASE_KNOWLEDGE(table) const char *basePtr; \
-    uint32_t recordCount; \
-    uint32_t index; \
-    index = getBaseKnowledge(table, basePtr, recordCount);
-
     /**
      * End of convenience functions
      */
+
+/**
+ * The following macro is used to chare the common code in getNewest and casNewest.
+ */
+#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, recordCount))); \
+    auto p = ptr->load(); \
+    while (ptr->load() % 2) { \
+        ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1); \
+        p = ptr->load(); \
+    }
 
     /**
      * TODO: For now, this function has default parameter in order for the
@@ -137,21 +150,7 @@ public:
      * we have to force the caller to give non-null arguments!
      */
     T getNewest(const Table *table = nullptr, const uint32_t index = 0, const char * basePtr = nullptr, const uint32_t recordCount = 0) const {
-        // The pointer format is like the following:
-        // If (ptr % 2) -> this is a link, we need to
-        //      follow this version.
-        // else This is just a normal version - but it might be
-        //      a MVRecord
-        //
-        // This const_cast is a hack - we might fix it
-        // later
-        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, recordCount)));
-        auto p = ptr->load();
-        while (ptr->load() % 2) {
-            // we need to follow this pointer
-            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
-            p = ptr->load();
-        }
+        GET_NEWEST
         return reinterpret_cast<char*>(p);
     }
 
@@ -171,10 +170,14 @@ public:
         std::terminate();
     }
 
-//    bool casNewest(const char* expected, const char* desired) const {
-//        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-//        std::terminate();
-//    }
+    bool casNewest(const char* expected, const char* desired, const Table *table) const {
+        COMPUTE_BASE_KNOWLEDGE(table)
+        GET_NEWEST
+        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
+        uint64_t des = reinterpret_cast<const uint64_t>(desired);
+        if (p != exp) return false;
+        return ptr->compare_exchange_strong(exp, des);
+    }
 
     int32_t getNumberOfVersions() const {
         LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
