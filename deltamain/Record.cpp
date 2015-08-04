@@ -179,7 +179,7 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     Table *table
+                     const Table *table
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -311,7 +311,7 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     Table *table
+                     const Table *table
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -419,7 +419,7 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     Table *table
+                     const Table *table
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -712,7 +712,7 @@ const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& s
                                   bool *wasDeleted /* = nullptr */
 #if defined USE_COLUMN_MAP
                                   ,
-                                  Table *table /* = nullptr */
+                                  const Table *table /* = nullptr */
 #endif
 ) const {
     isNewest = true;

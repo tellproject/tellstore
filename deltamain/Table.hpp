@@ -96,14 +96,14 @@ public:
         return pageManager();
     }
 
-    const int32_t getFieldOffset(Record::id_t id) const {
+    const int32_t getFieldOffset(const Record::id_t id) const {
         return mRecord.getFieldMeta(id).second;
     }
 
     /**
      * assumes var-sized fields are constant size 8 (offset + prefix)
      */
-    const size_t getFieldSize(Record::id_t id) const {
+    const size_t getFieldSize(const Record::id_t id) const {
         return id < mNumberOfFixedSizedFields ? mRecord.schema().fixedSizeFields().at(id).defaultSize() : 8;
     }
 

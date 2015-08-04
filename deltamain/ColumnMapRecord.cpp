@@ -53,14 +53,13 @@ public:
      * the total number of records in this page (recordCount) and the index of the
      * current record within the page (return value).
      */
-    inline uint32_t getBaseKnowledge(Table *table, char *& basePtr, uint32_t &recordCount) {
+    inline uint32_t getBaseKnowledge(const Table *table, const char *& basePtr, uint32_t &recordCount) const {
         basePtr = table->pageManager()->getPageStart(data);
         recordCount = *(reinterpret_cast<uint32_t*>(basePtr));
         return (reinterpret_cast<uint64_t>(mData-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
     }
 
-    inline uint32_t getRecordCountHat(uint32_t recordCount)
-    {
+    inline uint32_t getRecordCountHat(const uint32_t recordCount) const {
         return ((recordCount + 1) / 2) * 2;
     }
 
@@ -69,47 +68,40 @@ public:
      * within the colum-oriented page.
      */
 
-    inline char *getKeyVersionPtrAt(uint32_t index, char * basePtr)
-    {
+    inline char *getKeyVersionPtrAt(const uint32_t index, const char * basePtr) const {
         return basePtr + 8 + (index*16);
     }
 
-    inline uint64_t getKeyAt(uint32_t index, char * basePtr)
-    {
+    inline uint64_t getKeyAt(const uint32_t index, const char * basePtr) const {
         return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr)));
     }
 
-    inline uint64_t getVersionAt(uint32_t index, char * basePtr)
-    {
+    inline uint64_t getVersionAt(const uint32_t index, const char * basePtr) const {
         return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8));
     }
 
     // retrive the newestptr of this record which might be a nullptr
-    inline char *getNewestPtrAt(uint32_t index, char * basePtr, uint32_t recordCount)
-    {
+    inline char *getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t recordCount) const {
         return reinterpret_cast<char *>(*(basePtr + 8 + (recordCount*16) + (index*8)));
 
     }
 
-    inline size_t getBitMapSize(Table *table) {
+    inline size_t getBitMapSize(const Table *table) const {
         if (table->schema().allNotNull())
             return 0;
         else
             (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
     }
 
-    inline char *getNullBitMapAt(uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
-    {
+    inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
         return basePtr + 8 + (recordCount*24) + (index*bitMapSize);
     }
 
-    inline uint32_t *getVarsizedLenghtAt(uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
-    {
+    inline uint32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
         return *reinterpret_cast<uint32_t*>(basePtr + 8 + (recordCount*(24 + bitMapSize)) + (index*4));
     }
 
-    inline char *getColumnNAt(Table *table, uint32_t N, uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
-    {
+    inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
         char *res = getVarsizedLenghtAt(recordCount, basePtr, recordCount, bitMapSize);
         const uint32_t fixedSizedFields= table->getNumberOfFixedSizedFields();
         uint32_t offset = 0;
@@ -125,7 +117,7 @@ public:
         return res;
     }
 
-    T getNewest(Table *table = nullptr) const {
+    T getNewest(const Table *table = nullptr) const {
         // The pointer format is like the following:
         // If (ptr % 2) -> this is a link, we need to
         //      follow this version.
@@ -201,7 +193,7 @@ public:
 
  #if defined USE_COLUMN_MAP
                      ,
-                     Table *table
+                     const Table *table
  #endif
     ) const {
 //        table->pageManager();

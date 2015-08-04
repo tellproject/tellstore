@@ -131,7 +131,7 @@ public:
             bool* wasDeleted = nullptr
 #if defined USE_COLUMN_MAP
             ,
-            Table *table = nullptr
+            const Table *table = nullptr
 #endif
             ) const;
 
