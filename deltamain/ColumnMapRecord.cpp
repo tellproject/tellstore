@@ -20,7 +20,7 @@
  * - fixed-sized data columns: for each column there is an array of size
  *   count^ x value-size (4 or 8 bytes, as defined in schema)
  * - var-sized data columns: for each colum there is an array of
- *   count^ x 8 bytes in format:
+ *   count x 8 bytes in format:
  *   |4-byte-offset from page start into var-sized heap|4-byte prefix of value|
  * - var-sized heap: values referred from var-sized columns in the format
  *   |4-byte size (including the size field)|value|
@@ -32,6 +32,10 @@
  *
  * MV records are stored as single records in a way that recrods
  */
+
+//the following includes are just for convenience when coding, not actually needed
+#include <stdint.h>
+#include "deltamain/Table.hpp"
 
 namespace impl {
 
@@ -46,13 +50,18 @@ public:
 
     /**
      * Given a reference to table, computes the beginning of the page (basePtr),
-     * the total number of records in this page (totalRecords) and the index of the
+     * the total number of records in this page (recordCount) and the index of the
      * current record within the page (return value).
      */
-    inline uint32_t getBaseKnowledge(Table *table, char *& basePtr, uint32_t &totalRecords) {
+    inline uint32_t getBaseKnowledge(Table *table, char *& basePtr, uint32_t &recordCount) {
         basePtr = table->pageManager()->getPageStart(data);
-        totalRecords = *(reinterpret_cast<uint32_t*>(basePtr));
+        recordCount = *(reinterpret_cast<uint32_t*>(basePtr));
         return (reinterpret_cast<uint64_t>(mData-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+    }
+
+    inline uint32_t getRecordCountHat(uint32_t recordCount)
+    {
+        return ((recordCount + 1) / 2) * 2;
     }
 
     /**
@@ -65,9 +74,20 @@ public:
         return basePtr + 8 + (index*16);
     }
 
-    inline char *getNewestPtrAt(uint32_t index, char * basePtr, uint32_t totalRecords)
+    inline uint64_t getKeyAt(uint32_t index, char * basePtr)
     {
-        return basePtr + 8 + (totalRecords*16) + (index*8);
+        return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr)));
+    }
+
+    inline uint64_t getVersionAt(uint32_t index, char * basePtr)
+    {
+        return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8));
+    }
+
+    // retrive the newestptr of this record which might be a nullptr
+    inline char *getNewestPtrAt(uint32_t index, char * basePtr, uint32_t recordCount)
+    {
+        return reinterpret_cast<char *>(*(basePtr + 8 + (recordCount*16) + (index*8)));
 
     }
 
@@ -75,18 +95,34 @@ public:
         if (table->schema().allNotNull())
             return 0;
         else
-            (table->schema().schemaSize() + 7) / 8;
+            (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
     }
 
-    inline char *getNullBitMapAt(uint32_t index, char * basePtr, uint32_t totalRecords, size_t bitMapSize)
+    inline char *getNullBitMapAt(uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
     {
-        return basePtr + 8 + (totalRecords*24) + (index*bitMapSize);
+        return basePtr + 8 + (recordCount*24) + (index*bitMapSize);
     }
 
-    inline char *getColumnNAt(Table *table, uint32_t N, uint32_t index, char * basePtr, uint32_t totalRecords, size_t bitMapSize)
+    inline uint32_t *getVarsizedLenghtAt(uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
     {
-        return nullptr;
-        // TODO: continue here...
+        return *reinterpret_cast<uint32_t*>(basePtr + 8 + (recordCount*(24 + bitMapSize)) + (index*4));
+    }
+
+    inline char *getColumnNAt(Table *table, uint32_t N, uint32_t index, char * basePtr, uint32_t recordCount, size_t bitMapSize)
+    {
+        char *res = getVarsizedLenghtAt(recordCount, basePtr, recordCount, bitMapSize);
+        const uint32_t fixedSizedFields= table->getNumberOfFixedSizedFields();
+        uint32_t offset = 0;
+        if (N > fixedSizedFields)   // we deal with a var-sized field, but not the first of them
+            offset = table->getFieldOffset(fixedSizedFields);
+        else                        // we deal with a fixed-sized or the first var-sized field
+            offset = table->getFieldOffset(N);
+        offset -= table->getFieldOffset(0); // subtract header part (which does not exist in column format)
+        res += getRecordCountHat(recordCount) * offset;
+        if (N > fixedSizedFields)
+            res += recordCount * (N - fixedSizedFields);
+        res += index * table->getFieldSize(N);
+        return res;
     }
 
     T getNewest(Table *table = nullptr) const {
@@ -98,8 +134,8 @@ public:
         //
         // This const_cast is a hack - we might fix it
         // later
+        // TODO: continue here
         char* data = const_cast<char*>(mData);
-        const char* baseAddress = table->pageManager()->getPageStart(data);
         auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
         auto p = ptr->load();
         while (ptr->load() % 2) {

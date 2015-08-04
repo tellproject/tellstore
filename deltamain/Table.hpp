@@ -37,6 +37,10 @@ class Table {
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<PageList*> mPages;
+#if defined USE_COLUMN_MAP
+    const uint32_t mNumberOfFixedSizedFields;
+    const uint32_t mNumberOfVarSizedFields;
+#endif
 public:
     class Iterator {
     public:
@@ -90,6 +94,25 @@ public:
 #if defined USE_COLUMN_MAP
     const PageManager* pageManager() const {
         return pageManager();
+    }
+
+    const int32_t getFieldOffset(Record::id_t id) const {
+        return mRecord.getFieldMeta(id).second;
+    }
+
+    /**
+     * assumes var-sized fields are constant size 8 (offset + prefix)
+     */
+    const size_t getFieldSize(Record::id_t id) const {
+        return id < mNumberOfFixedSizedFields ? mRecord.schema().fixedSizeFields().at(id).defaultSize() : 8;
+    }
+
+    const int32_t getNumberOfFixedSizedFields() const {
+        return mNumberOfFixedSizedFields;
+    }
+
+    const int32_t getNumberOfVarSizedFields() const {
+        return mNumberOfVarSizedFields;
     }
 #endif
 

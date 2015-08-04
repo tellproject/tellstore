@@ -96,6 +96,11 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
     , mPages(crossbow::allocator::construct<PageList>())
+#if defined USE_COLUMN_MAP
+    ,
+    mNumberOfFixedSizedFields(schema.fixedSizeFields().size()),
+    mNumberOfVarSizedFields(schema.varSizeFields().size())
+#endif
 {}
 
 Table::~Table() {
