@@ -192,6 +192,7 @@ public:
             return nullptr;
         }
         if (std::abs(off[idx]) != std::abs(off[idx + 1])) {
+            //TODO: question: if we are here, then size can never be 0, right?!
             size = size_t(std::abs(off[idx + 1]) - std::abs(off[idx]));
             if (wasDeleted) {
                 // a tuple is deleted, if its size is 0

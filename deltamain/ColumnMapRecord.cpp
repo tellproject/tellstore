@@ -12,11 +12,15 @@
  * - key-version column: an array of size count of 16-byte values in format:
  *   |key (8 byte)|version (8 byte)|
  * - newest-pointers: an array of size count of 8-byte pointers to newest
- *   versions of records in the logs
+ *   versions of records in the logs (as their is only one newest ptr per MV record
+ *   and not per record version, only the first newestptr of every MV record is valid)
  * - null-bitmatrix: a bitmatrix of size count x (|Columns|+7)/8 bytes
- * - var-size-meta-data column: an array of size count of 4-byte values indicating
- *   the total size of all var-sized values of each record. This is used to
- *   allocate enough space for a record on a get request.
+ * - var-size-meta-data column: an array of size count of signed 4-byte values
+ *   indicating the total size of all var-sized values of each record. This is
+ *   used to allocate enough space for a record on a get request.
+ *   MOREOVER: We set this size to zero to denote a version of a deleted tuple
+ *   and to a negative number if the tuple is marked as reverted and will be
+ *   deleted at the next GC phase. In that case, the absolute denotes the size.
  * - fixed-sized data columns: for each column there is an array of size
  *   count^ x value-size (4 or 8 bytes, as defined in schema)
  * - var-sized data columns: for each colum there is an array of
@@ -30,7 +34,8 @@
  * make clear it is a columnMap-MV record). This bit has to be unset (by subtracting
  * 2) in order to get the correct address.
  *
- * MV records are stored as single records in a way that recrods
+ * MV records are stored as single records in such a way that they are clustered
+ * together and ordered by version DESC (which makes get operations simpler).
  */
 
 //the following includes are just for convenience when coding, not actually needed
@@ -53,14 +58,10 @@ public:
      * the total number of records in this page (recordCount) and the index of the
      * current record within the page (return value).
      */
-    inline uint32_t getBaseKnowledge(const Table *table, const char *& basePtr, uint32_t &recordCount) const {
-        basePtr = table->pageManager()->getPageStart(data);
-        recordCount = *(reinterpret_cast<uint32_t*>(basePtr));
+    inline uint32_t getBaseKnowledge(const Table *table, const char *&basePtr, uint32_t &recordCount) const {
+        basePtr = table->pageManager()->getPageStart(mData);
+        recordCount = *(reinterpret_cast<const uint32_t*>(basePtr));
         return (reinterpret_cast<uint64_t>(mData-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
-    }
-
-    inline uint32_t getRecordCountHat(const uint32_t recordCount) const {
-        return ((recordCount + 1) / 2) * 2;
     }
 
     /**
@@ -68,41 +69,45 @@ public:
      * within the colum-oriented page.
      */
 
-    inline char *getKeyVersionPtrAt(const uint32_t index, const char * basePtr) const {
+    inline const char *getKeyVersionPtrAt(const uint32_t index, const char * basePtr) const {
         return basePtr + 8 + (index*16);
     }
 
-    inline uint64_t getKeyAt(const uint32_t index, const char * basePtr) const {
-        return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr)));
+    inline const uint64_t *getKeyAt(const uint32_t index, const char * basePtr) const {
+        return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr));
     }
 
-    inline uint64_t getVersionAt(const uint32_t index, const char * basePtr) const {
-        return *(reinterpret_cast<uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8));
+    inline const uint64_t *getVersionAt(const uint32_t index, const char * basePtr) const {
+        return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8);
     }
 
-    // retrive the newestptr of this record which might be a nullptr
-    inline char *getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t recordCount) const {
-        return reinterpret_cast<char *>(*(basePtr + 8 + (recordCount*16) + (index*8)));
+    inline const char *getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t recordCount) const {
+        return basePtr + 8 + (recordCount*16) + (index*8);
 
     }
 
-    inline size_t getBitMapSize(const Table *table) const {
+    inline size_t getNullBitMapSize(const Table *table) const {
         if (table->schema().allNotNull())
             return 0;
         else
             (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
     }
 
-    inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
-        return basePtr + 8 + (recordCount*24) + (index*bitMapSize);
+    inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) const {
+        return basePtr + 8 + (recordCount*24) + (index*nullBitMapSize);
     }
 
-    inline uint32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
-        return *reinterpret_cast<uint32_t*>(basePtr + 8 + (recordCount*(24 + bitMapSize)) + (index*4));
+    inline const int32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) const {
+        return reinterpret_cast<const int32_t*>(basePtr + 8 + (recordCount*(24 + nullBitMapSize)) + (index*4));
     }
 
-    inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t bitMapSize) const {
-        char *res = getVarsizedLenghtAt(recordCount, basePtr, recordCount, bitMapSize);
+    inline uint32_t getRecordCountHat(const uint32_t recordCount) const {
+        return ((recordCount + 1) / 2) * 2;
+    }
+
+    inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) const {
+        // end of var-sized = beginning of fixed-sized columns
+        char *res = const_cast<char *>(reinterpret_cast<const char *>(getVarsizedLenghtAt(recordCount, basePtr, recordCount, nullBitMapSize)));
         const uint32_t fixedSizedFields= table->getNumberOfFixedSizedFields();
         uint32_t offset = 0;
         if (N > fixedSizedFields)   // we deal with a var-sized field, but not the first of them
@@ -117,7 +122,21 @@ public:
         return res;
     }
 
-    T getNewest(const Table *table = nullptr) const {
+#define COMPUTE_BASE_KNOWLEDGE(table) const char *basePtr; \
+    uint32_t recordCount; \
+    uint32_t index; \
+    index = getBaseKnowledge(table, basePtr, recordCount);
+
+    /**
+     * End of convenience functions
+     */
+
+    /**
+     * TODO: For now, this function has default parameter in order for the
+     * VersionIterator to compile. Once we really want to make it useful
+     * we have to force the caller to give non-null arguments!
+     */
+    T getNewest(const Table *table = nullptr, const uint32_t index = 0, const char * basePtr = nullptr, const uint32_t recordCount = 0) const {
         // The pointer format is like the following:
         // If (ptr % 2) -> this is a link, we need to
         //      follow this version.
@@ -126,9 +145,7 @@ public:
         //
         // This const_cast is a hack - we might fix it
         // later
-        // TODO: continue here
-        char* data = const_cast<char*>(mData);
-        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
+        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, recordCount)));
         auto p = ptr->load();
         while (ptr->load() % 2) {
             // we need to follow this pointer
@@ -154,10 +171,10 @@ public:
         std::terminate();
     }
 
-    bool casNewest(const char* expected, const char* desired) const {
-        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-        std::terminate();
-    }
+//    bool casNewest(const char* expected, const char* desired) const {
+//        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
+//        std::terminate();
+//    }
 
     int32_t getNumberOfVersions() const {
         LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
@@ -184,21 +201,92 @@ public:
         std::terminate();
     }
 
+    /**
+     * BE CAREFUL: in contrast to the row-oriented version, this call actually
+     * allocates new delta (in sequential row-format) and does not only return
+     * a pointer.
+     */
     const char* data(const commitmanager::SnapshotDescriptor& snapshot,
                      size_t& size,
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted
-
- #if defined USE_COLUMN_MAP
-                     ,
+                     bool* wasDeleted,
                      const Table *table
- #endif
     ) const {
-//        table->pageManager();
-        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-        std::terminate();
+        COMPUTE_BASE_KNOWLEDGE(table)
+        const size_t nullBitMapSize = getNullBitMapSize(table);
+
+        auto newest = getNewest(table, index, basePtr, recordCount);
+        if (newest) {
+            DMRecordImplBase<T> rec(newest);
+            bool b;
+            size_t s;
+            auto res = rec.data(snapshot, s, version, isNewest, isValid, &b);
+            if (isValid) {
+                if (b || res) {
+                    if (wasDeleted) *wasDeleted = b;
+                    size = s;
+                    return res;
+                }
+                isNewest = false;
+            }
+        }
+        isValid = false;
+
+        bool found = false;
+        uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
+        int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, recordCount, nullBitMapSize));
+        for (; ; index++, key += 2, varLength++) {
+            if (*varLength < 0) continue;
+            isValid = true;
+            if (snapshot.inReadSet(key[1])) {   // key[0]: key, key[1]: version
+                version = key[1];
+                found = true;
+                break;
+            }
+            isNewest = false;
+            if (key[2] != key[0])
+                break;  // loop exit condition
+        }
+        // index, varLength and key should have the right values
+
+        if (!found) {
+            if (wasDeleted) *wasDeleted = false;
+            return nullptr;
+        }
+
+        if (*varLength != 0)
+        {
+            if (wasDeleted) *wasDeleted = false;
+
+            auto fixedSizeFields = table->getNumberOfFixedSizedFields();
+            uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
+                    + *getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
+            std::unique_ptr<char[]> buf(new char[recordSize]);  //TODO: is this what it should look like? Am I using the right allocator?
+            char *res = buf.get();
+            // copy fixed-sized columns
+            char *src;
+            char *dest = res;
+            for (uint i = 0; i < fixedSizeFields; i++)
+            {
+                src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, recordCount, nullBitMapSize));
+                auto fieldSize = table->getFieldSize(i);
+                memcpy(dest, src, fieldSize);
+                dest += fieldSize;
+            }
+            // copy var-sized colums in a batch
+            src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, recordCount, nullBitMapSize));
+            src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
+            memcpy(dest, src, *varLength);
+
+            // release buffer (which should hopefully not be garbage-collected too early)
+            buf.release();
+            return res;
+        }
+        if (wasDeleted)
+            *wasDeleted = true;
+        return nullptr;
     }
 
     Type typeOfNewestVersion(bool& isValid) const {
