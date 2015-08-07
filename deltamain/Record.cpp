@@ -137,6 +137,9 @@ public:
         char* data = const_cast<char*>(this->mData);
         auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 24);
         auto p = ptr->load();
+        //TODO: check whether this loop does the correct thing... doesn't
+        //this assume that the newestPtr is stored at the beginning of a
+        //log record (which is actually not the case)?
         while (ptr->load() % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
@@ -160,6 +163,9 @@ public:
         char* dataPtr = const_cast<char*>(this->mData);
         auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 24);
         auto p = ptr->load();
+        //TODO: check whether this loop does the correct thing... doesn't
+        //this assume that the newestPtr is stored at the beginning of a
+        //log record (which is actually not the case)?
         while (ptr->load() % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
@@ -179,7 +185,8 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     const Table *table
+                     const Table *table,
+                     bool copyData
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -270,7 +277,12 @@ class LogInsert<char*> : public LogUpdates<LogInsertBase<char*>> {
 public:
     LogInsert(char* data) : LogUpdates<LogInsertBase<char*>>(data) {}
 
-    bool update(char* next, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot) {
+    bool update(char* next, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot
+#if defined USE_COLUMN_MAP
+            ,
+            const Table *table = nullptr
+#endif
+    ) {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return false;
@@ -311,7 +323,8 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     const Table *table
+                     const Table *table,
+                     bool copyData
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -389,7 +402,12 @@ class LogUpdate<char*> : public LogUpdates<LogUpdateBase<char*>> {
 public:
     LogUpdate(char* data) : LogUpdates<LogUpdateBase<char*>>(data) {}
 
-    bool update(char* data, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot)
+    bool update(char* data, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot
+#if defined USE_COLUMN_MAP
+            ,
+            const Table *table = nullptr
+#endif
+    )
     {
         LOG_ASSERT(this->isValidDataRecord(), "Invalid log updates should not be reachable");
         isValid = true;
@@ -419,7 +437,8 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     const Table *table
+                     const Table *table,
+                     bool copyData
 #endif
     ) const {
         if (!this->isValidDataRecord()) {
@@ -505,7 +524,12 @@ class LogDelete<char*> : public LogUpdates<LogDeleteBase<char*>> {
 public:
     LogDelete(char* data) : LogUpdates<LogDeleteBase<char*>>(data) {}
 
-    bool update(char*, bool&, const commitmanager::SnapshotDescriptor&)
+    bool update(char*, bool&, const commitmanager::SnapshotDescriptor&
+#if defined USE_COLUMN_MAP
+            ,
+            const Table *table = nullptr
+#endif
+    )
     {
         LOG_ASSERT(false, "Calling update on a deleted record is an invalid operation");
         // the client has to do an insert in this case!!
@@ -556,7 +580,8 @@ public:
                      bool* wasDeleted
 #if defined USE_COLUMN_MAP
                      ,
-                     const Table *table
+                     const Table *table,
+                     bool copyData
 #endif
     ) const;
     Type typeOfNewestVersion(bool& isValid) const;
@@ -595,7 +620,12 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
     char* dataPtr();
     bool update(char* next,
                 bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot
+#if defined USE_COLUMN_MAP
+                ,
+                const Table *table = nullptr
+#endif
+    );
 };
 
 } // namespace impl
@@ -797,14 +827,15 @@ const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& s
                                   bool *wasDeleted /* = nullptr */
 #if defined USE_COLUMN_MAP
                                   ,
-                                  const Table *table /* = nullptr */
+                                  const Table *table, /* = nullptr */
+                                  bool copyData /* = true */
 #endif
-) const {
+            ) const {
     isNewest = true;
 #if defined USE_ROW_STORE
     DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted);
 #elif defined USE_COLUMN_MAP
-    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted, table);
+    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted, table, copyData);
 #else
 #error "Unknown storage layout"
 #endif
@@ -825,7 +856,14 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
     case Type::LOG_DELETE:
         return 32;
     case Type::MULTI_VERSION_RECORD:
+#if defined USE_ROW_STORE
         return 24;
+#elif defined USE_COLUMN_MAP
+        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
+        std::terminate();
+#else
+#error "Unknown storage layout"
+#endif
     }
 }
 
@@ -890,8 +928,13 @@ void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
 
 bool DMRecordImpl<char*>::update(char* next,
                                  bool& isValid,
-                                 const commitmanager::SnapshotDescriptor& snapshot) {
-    DISPATCH_METHOD_NCONST(update, next, isValid, snapshot);
+                                 const commitmanager::SnapshotDescriptor& snapshot
+#if defined USE_COLUMN_MAP
+                                 ,
+                                 const Table *table
+#endif
+) {
+    DISPATCH_METHOD_NCONST(update, next, isValid, snapshot, table);
 } 
 
 template class DMRecordImplBase<const char*>;

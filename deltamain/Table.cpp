@@ -122,6 +122,9 @@ bool Table::get(uint64_t key,
         CDMRecord rec(reinterpret_cast<char*>(ptr));
         bool wasDeleted;
         bool isValid;
+        //TODO: in the column-map case, it might be benefitial to first ucall
+        //data(.) with copyData set to false and only if !wasDeleted, call it
+        //again with copyData enabled.
         data = rec.data(snapshot, size, version, isNewest, isValid, &wasDeleted);
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
@@ -164,11 +167,19 @@ void Table::insert(uint64_t key,
     if (ptr) {
         // the key exists... but it could be, that it got deleted
         CDMRecord rec(reinterpret_cast<const char*>(ptr));
-        uint64_t version;
         bool wasDeleted, isNewest;
-        size_t s;
         bool isValid;
+
+        uint64_t version;
+        size_t s;
+#if defined USE_ROW_STORE
         rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted);
+#elif defined USE_COLUMN_MAP
+        rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted, this, false);
+#else
+#error "Unknown storage layout"
+#endif
+
         if (isValid && !(wasDeleted && isNewest)) {
             if (succeeded) *succeeded = false;
             return;
@@ -275,11 +286,17 @@ bool Table::genericUpdate(const Fun& appendFun,
         return false;
     }
     // now we found it. Therefore we first append the
-    // update optimistaically
+    // update optimistically
     char* nextPtr = appendFun();
     DMRecord rec(reinterpret_cast<char*>(ptr));
     bool isValid;
+#if defined USE_ROW_STORE
     return rec.update(nextPtr, isValid, snapshot);
+#elif defined USE_COLUMN_MAP
+    return rec.update(nextPtr, isValid, snapshot, this);
+#else
+#error "Unknown storage layout"
+#endif
 }
 
 std::vector<Table::Iterator> Table::startScan(int numThreads) const

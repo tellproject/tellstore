@@ -131,7 +131,8 @@ public:
             bool* wasDeleted = nullptr
 #if defined USE_COLUMN_MAP
             ,
-            const Table *table = nullptr
+            const Table *table = nullptr,
+            bool copyData = true
 #endif
             ) const;
 
@@ -165,6 +166,7 @@ public:
      * is not a tombstone or a reverted operation.
      */
     bool isValidDataRecord() const;
+
 public: // Interface for iterating over all versions
     class VersionIterator {
     public:
@@ -227,7 +229,12 @@ public: // writing functinality
 
     bool update(char* next,
                 bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot);
+                const commitmanager::SnapshotDescriptor& snapshot
+#if defined USE_COLUMN_MAP
+                ,
+                const Table *table = nullptr
+#endif
+    );
 
 };
 

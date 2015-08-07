@@ -38,6 +38,9 @@ T MVRecordBase<T>::getNewest(const Table *table, const uint32_t index, const cha
     char* data = const_cast<char*>(mData);
     auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
     auto p = ptr->load();
+    //TODO: check whether this loop does the correct thing... doesn't
+    //this assume that the newestPtr is stored at the beginning of a
+    //log record (which is actually not the case)?
     while (ptr->load() % 2) {
         // we need to follow this pointer
         ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
@@ -85,6 +88,9 @@ bool MVRecordBase<T>::casNewest(const char* expected, const char* desired) const
     char* dataPtr = const_cast<char*>(mData);
     auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
     auto p = ptr->load();
+    //TODO: check whether this loop does the correct thing... doesn't
+    //this assume that the newestPtr is stored at the beginning of a
+    //log record (which is actually not the case)?
     while (ptr->load() % 2) {
         // we need to follow this pointer
         ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);

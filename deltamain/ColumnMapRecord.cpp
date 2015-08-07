@@ -123,6 +123,9 @@ inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t i
  * End of convenience functions
  */
 
+//TODO: check whether this loop does the correct thing... doesn't
+//this assume that the newestPtr is stored at the beginning of a
+//log record (which is actually not the case)?
 /**
  * The following macro is used to chare the common code in getNewest and casNewest.
  */
@@ -204,9 +207,10 @@ bool MVRecordBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& ins
 }
 
 /**
- * BE CAREFUL: in contrast to the row-oriented version, this call actually
- * allocates new delta (in sequential row-format) and does not only return
- * a pointer.
+ * BE CAREFUL: in contrast to the row-oriented version, this call might actually
+ * allocate new data (in sequential row-format) if the copyData flag is set (which
+ * it is by default). In that case the ptr the newly allocated data is returned,
+ * otherwise a nullptr is returned.
  */
 template<class T>
 const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snapshot,
@@ -215,7 +219,8 @@ const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snaps
                  bool& isNewest,
                  bool& isValid,
                  bool* wasDeleted,
-                 const Table *table
+                 const Table *table,
+                 bool copyData
 ) const {
     COMPUTE_BASE_KNOWLEDGE(mData, table)
     const size_t nullBitMapSize = getNullBitMapSize(table);
@@ -262,30 +267,38 @@ const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snaps
     if (*varLength != 0)
     {
         if (wasDeleted) *wasDeleted = false;
+        if (copyData) {
 
-        auto fixedSizeFields = table->getNumberOfFixedSizedFields();
-        uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
-                + *getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table));
-        std::unique_ptr<char[]> buf(new char[recordSize]);  //TODO: is this what it should look like? Am I using the right allocator?
-        char *res = buf.get();
-        // copy fixed-sized columns
-        char *src;
-        char *dest = res;
-        for (uint i = 0; i < fixedSizeFields; i++)
-        {
-            src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, capacity, nullBitMapSize));
-            auto fieldSize = table->getFieldSize(i);
-            memcpy(dest, src, fieldSize);
-            dest += fieldSize;
+            auto fixedSizeFields = table->getNumberOfFixedSizedFields();
+            uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
+                    + *getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table));
+            std::unique_ptr<char[]> buf(new char[recordSize]);  //TODO: is this what it should look like? Am I using the right allocator?
+            char *res = buf.get();
+            char *src;
+            char *dest = res;
+            // copy nullbitmap
+            src = getNullBitMapAt(index, basePtr, capacity, nullBitMapSize);
+            memcpy(dest, src, nullBitMapSize);
+            dest += nullBitMapSize;
+
+            // copy fixed-sized columns
+            for (uint i = 0; i < fixedSizeFields; i++)
+            {
+                src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, capacity, nullBitMapSize));
+                auto fieldSize = table->getFieldSize(i);
+                memcpy(dest, src, fieldSize);
+                dest += fieldSize;
+            }
+            // copy var-sized colums in a batch
+            src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, capacity, nullBitMapSize));
+            src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
+            memcpy(dest, src, *varLength);
+
+            // release buffer (which should hopefully not be garbage-collected too early)
+            buf.release();
+            return res;
         }
-        // copy var-sized colums in a batch
-        src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, capacity, nullBitMapSize));
-        src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
-        memcpy(dest, src, *varLength);
-
-        // release buffer (which should hopefully not be garbage-collected too early)
-        buf.release();
-        return res;
+        return nullptr;
     }
     if (wasDeleted)
         *wasDeleted = true;
@@ -335,9 +348,35 @@ char *MVRecord<char*>::dataPtr() {
 
 bool MVRecord<char*>::update(char* next,
             bool& isValid,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-    LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-    std::terminate();
+            const commitmanager::SnapshotDescriptor& snapshot,
+            const Table *table) {
+    COMPUTE_BASE_KNOWLEDGE(mData, table)
+    auto newest = getNewest(table, index, basePtr, capacity);
+    if (newest) {
+        DMRecord rec(newest);
+        bool res = rec.update(next, isValid, snapshot);
+        if (!res && isValid) return false;
+        if (isValid) {
+            if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;
+            return casNewest(newest, next, table);
+        }
+    }
+
+    //TODO: continue here...
+    uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
+    int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table)));
+    for (; ; index++, key += 2, varLength++) {
+        if (*varLength >= 0) break;
+        if (key[2] != key[0])  // loop exit condition
+            isValid = false;
+            return false;
+    }
+    isValid = true;
+    if (snapshot.inReadSet(*getVersionAt(index, basePtr)))
+        return false;
+    DMRecord nextRec(next);
+    nextRec.writePrevious(this->mData);
+    return casNewest(newest, next, table);
 }
 
 
