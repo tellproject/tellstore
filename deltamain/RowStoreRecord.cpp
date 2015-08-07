@@ -26,284 +26,213 @@
 namespace impl {
 
 template<class T>
-class MVRecordBase {
-protected:
-    T mData;
-public:
-    using Type = typename DMRecordImplBase<T>::Type;
-    MVRecordBase(T data) : mData(data) {}
-    T getNewest() const {
-        // The pointer format is like the following:
-        // If (ptr % 2) -> this is a link, we need to
-        //      follow this version.
-        // else This is just a normal version - but it might be
-        //      a MVRecord
-        //
-        // This const_cast is a hack - we might fix it
-        // later
-        char* data = const_cast<char*>(mData);
-        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
-        auto p = ptr->load();
-        while (ptr->load() % 2) {
-            // we need to follow this pointer
-            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
-            p = ptr->load();
+T MVRecordBase<T>::getNewest(const Table *table, const uint32_t index, const char * basePtr, const uint32_t capacity) const {
+    // The pointer format is like the following:
+    // If (ptr % 2) -> this is a link, we need to
+    //      follow this version.
+    // else This is just a normal version - but it might be
+    //      a MVRecord
+    //
+    // This const_cast is a hack - we might fix it
+    // later
+    char* data = const_cast<char*>(mData);
+    auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(data + 16);
+    auto p = ptr->load();
+    while (ptr->load() % 2) {
+        // we need to follow this pointer
+        ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+        p = ptr->load();
+    }
+    return reinterpret_cast<char*>(p);
+    }
+
+
+template<class T>
+T MVRecordBase<T>::dataPtr() {
+    auto nV = getNumberOfVersions();
+    auto offs = offsets();
+    return mData + std::abs(offs[nV]);
+}
+
+template<class T>
+bool MVRecordBase<T>::isValidDataRecord() const {
+    // a MVRecord is valid if at least one of the records
+    // is valid
+    auto nV = getNumberOfVersions();
+    auto offs = offsets();
+    for (decltype(nV) i = 0; i < nV; ++i) {
+        if (offs[i] > 0) return true;
+    }
+    return false;
+}
+
+template<class T>
+void MVRecordBase<T>::revert(uint64_t version) {
+    auto newest = getNewest();
+    if (newest) {
+        CDMRecord rec(newest);
+        rec.revert(version);
+        return;
+    }
+    auto nV = getNumberOfVersions();
+    auto offs = offsets();
+    LOG_ASSERT(versions()[nV-1] == version, "Can only revert newest version");
+    const_cast<int32_t&>(offs[nV - 1]) *= -1;
+}
+
+template<class T>
+bool MVRecordBase<T>::casNewest(const char* expected, const char* desired) const {
+    char* dataPtr = const_cast<char*>(mData);
+    auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
+    auto p = ptr->load();
+    while (ptr->load() % 2) {
+        // we need to follow this pointer
+        ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
+        p = ptr->load();
+    }
+    uint64_t exp = reinterpret_cast<const uint64_t>(expected);
+    uint64_t des = reinterpret_cast<const uint64_t>(desired);
+    if (p != exp) return false;
+    return ptr->compare_exchange_strong(exp, des);
+}
+
+template<class T>
+int32_t MVRecordBase<T>::getNumberOfVersions() const {
+    return *reinterpret_cast<const int32_t*>(mData + 4);
+}
+
+template<class T>
+const uint64_t *MVRecordBase<T>::versions() const {
+    return reinterpret_cast<const uint64_t*>(mData + 24);
+}
+
+template<class T>
+const int32_t *MVRecordBase<T>::offsets() const {
+    auto nVersions = getNumberOfVersions();
+    size_t off = 24 + 8*nVersions;
+    return reinterpret_cast<const int32_t*>(mData +off);
+}
+
+template<class T>
+uint64_t MVRecordBase<T>::size() const {
+    auto off = offsets();
+    auto v = getNumberOfVersions();
+    return off[v];
+}
+
+template<class T>
+bool MVRecordBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+    if (getNewest()) return true;
+    auto offs = offsets();
+    auto nV = getNumberOfVersions();
+    // check whether there were some reverts
+    for (decltype(nV) i = 0; i < nV; ++i) {
+        if (offs[i] < 0) return true;
+    }
+    if (versions()[0] < lowestActiveVersion) {
+        if (nV == 1) {
+            // Check if this was a delition
+            // in that case we will either have
+            // to delete the record from the table,
+            // or merge it if there was an update.
+            // We do not need to test which case
+            // is true here.
+            return offs[0] == offs[1];
         }
-        return reinterpret_cast<char*>(p);
+        return true;
     }
-
-
-    T dataPtr() {
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        return mData + std::abs(offs[nV]);
+    if (offs[nV] == offs[nV - 1]) {
+        // The last version got deleted
+        // If the newest version is smaller than the
+        // lowest active version, we can delete the whole
+        // entry.
+        if (nV < lowestActiveVersion) return true;
+        // otherwise we need to keep it, but it could be
+        // that there was an insert
+        CDMRecord rec(mData);
+        return insertMap.count(rec.key());
     }
+    return false;
+}
 
-    bool isValidDataRecord() const {
-        // a MVRecord is valid if at least one of the records
-        // is valid
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] > 0) return true;
-        }
-        return false;
-    }
-
-    void revert(uint64_t version) {
-        auto newest = getNewest();
-        if (newest) {
-            CDMRecord rec(newest);
-            rec.revert(version);
-            return;
-        }
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        LOG_ASSERT(versions()[nV-1] == version, "Can only revert newest version");
-        const_cast<int32_t&>(offs[nV - 1]) *= -1;
-    }
-
-    bool casNewest(const char* expected, const char* desired) const {
-        char* dataPtr = const_cast<char*>(mData);
-        auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
-        auto p = ptr->load();
-        while (ptr->load() % 2) {
-            // we need to follow this pointer
-            ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
-            p = ptr->load();
-        }
-        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
-        uint64_t des = reinterpret_cast<const uint64_t>(desired);
-        if (p != exp) return false;
-        return ptr->compare_exchange_strong(exp, des);
-    }
-
-    int32_t getNumberOfVersions() const {
-        return *reinterpret_cast<const int32_t*>(mData + 4);
-    }
-
-    const uint64_t* versions() const {
-        return reinterpret_cast<const uint64_t*>(mData + 24);
-    }
-
-    const int32_t* offsets() const {
-        auto nVersions = getNumberOfVersions();
-        size_t off = 24 + 8*nVersions;
-        return reinterpret_cast<const int32_t*>(mData +off);
-    }
-
-    uint64_t size() const {
-        auto off = offsets();
-        auto v = getNumberOfVersions();
-        return off[v];
-    }
-
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
-        if (getNewest()) return true;
-        auto offs = offsets();
-        auto nV = getNumberOfVersions();
-        // check whether there were some reverts
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] < 0) return true;
-        }
-        if (versions()[0] < lowestActiveVersion) {
-            if (nV == 1) {
-                // Check if this was a delition
-                // in that case we will either have
-                // to delete the record from the table,
-                // or merge it if there was an update.
-                // We do not need to test which case
-                // is true here.
-                return offs[0] == offs[1];
-            }
-            return true;
-        }
-        if (offs[nV] == offs[nV - 1]) {
-            // The last version got deleted
-            // If the newest version is smaller than the
-            // lowest active version, we can delete the whole
-            // entry.
-            if (nV < lowestActiveVersion) return true;
-            // otherwise we need to keep it, but it could be
-            // that there was an insert
-            CDMRecord rec(mData);
-            return insertMap.count(rec.key());
-        }
-        return false;
-    }
-
-    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
-                     size_t& size,
-                     uint64_t& version,
-                     bool& isNewest,
-                     bool& isValid,
-                     bool* wasDeleted) const {
-        auto numVersions = getNumberOfVersions();
-        auto v = versions();
-        auto newest = getNewest();
-        if (newest) {
-            DMRecordImplBase<T> rec(newest);
-            bool b;
-            size_t s;
-            auto res = rec.data(snapshot, s, version, isNewest, isValid, &b);
-            if (isValid) {
-                if (b || res) {
-                    if (wasDeleted) *wasDeleted = b;
-                    size = s;
-                    return res;
-                }
-                isNewest = false;
-            }
-        }
-        isValid = false;
-        int idx = numVersions - 1;
-        auto off = offsets();
-        for (; idx >=0; --idx) {
-            if (off[idx] < 0) continue;
-            isValid = true;
-            if (snapshot.inReadSet(v[idx])) {
-                version = v[idx];
-                break;
+template<class T>
+const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snapshot,
+                 size_t& size,
+                 uint64_t& version,
+                 bool& isNewest,
+                 bool& isValid,
+                 bool* wasDeleted) const {
+    auto numVersions = getNumberOfVersions();
+    auto v = versions();
+    auto newest = getNewest();
+    if (newest) {
+        DMRecordImplBase<T> rec(newest);
+        bool b;
+        size_t s;
+        auto res = rec.data(snapshot, s, version, isNewest, isValid, &b);
+        if (isValid) {
+            if (b || res) {
+                if (wasDeleted) *wasDeleted = b;
+                size = s;
+                return res;
             }
             isNewest = false;
         }
-        if (idx < 0) {
-            if (wasDeleted) *wasDeleted = false;
-            return nullptr;
+    }
+    isValid = false;
+    int idx = numVersions - 1;
+    auto off = offsets();
+    for (; idx >=0; --idx) {
+        if (off[idx] < 0) continue;
+        isValid = true;
+        if (snapshot.inReadSet(v[idx])) {
+            version = v[idx];
+            break;
         }
-        if (std::abs(off[idx]) != std::abs(off[idx + 1])) {
-            //TODO: question: if we are here, then size can never be 0, right?!
-            size = size_t(std::abs(off[idx + 1]) - std::abs(off[idx]));
-            if (wasDeleted) {
-                // a tuple is deleted, if its size is 0
-                *wasDeleted = size == 0;
-            }
-            return mData + off[idx];
-        }
-        if (wasDeleted) *wasDeleted = true;
+        isNewest = false;
+    }
+    if (idx < 0) {
+        if (wasDeleted) *wasDeleted = false;
         return nullptr;
     }
-
-    Type typeOfNewestVersion(bool& isValid) const {
-        auto newest = getNewest();
-        if (newest) {
-            DMRecordImplBase<T> rec(newest);
-            auto res = rec.typeOfNewestVersion(isValid);
-            if (isValid) return res;
+    if (std::abs(off[idx]) != std::abs(off[idx + 1])) {
+        //TODO: question: if we are here, then size can never be 0, right?!
+        size = size_t(std::abs(off[idx + 1]) - std::abs(off[idx]));
+        if (wasDeleted) {
+            // a tuple is deleted, if its size is 0
+            *wasDeleted = size == 0;
         }
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        isValid = true;
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if(offs[i] > 0)
-                return Type::MULTI_VERSION_RECORD;
-        }
-        isValid = false;
-        return Type::MULTI_VERSION_RECORD;
+        return mData + off[idx];
     }
-
-    void collect(impl::VersionMap&, bool&, bool&) const {
-        LOG_ASSERT(false, "should never call collect on MVRecord");
-        std::cerr << "Fatal error!" << std::endl;
-        std::terminate();
-    }
-
-    uint64_t copyAndCompact(
-            uint64_t lowestActiveVersion,
-            InsertMap& insertMap,
-            char* dest,
-            uint64_t maxSize,
-            bool& success) const;
-};
+    if (wasDeleted) *wasDeleted = true;
+    return nullptr;
+}
 
 template<class T>
-struct MVRecord : MVRecordBase<T> {
-    MVRecord(T data) : MVRecordBase<T>(data) {}
-};
+typename MVRecordBase<T>::Type MVRecordBase<T>::typeOfNewestVersion(bool& isValid) const {
+    auto newest = getNewest();
+    if (newest) {
+        DMRecordImplBase<T> rec(newest);
+        auto res = rec.typeOfNewestVersion(isValid);
+        if (isValid) return res;
+    }
+    auto nV = getNumberOfVersions();
+    auto offs = offsets();
+    isValid = true;
+    for (decltype(nV) i = 0; i < nV; ++i) {
+        if(offs[i] > 0)
+            return Type::MULTI_VERSION_RECORD;
+    }
+    isValid = false;
+    return Type::MULTI_VERSION_RECORD;
+}
 
-template<>
-struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
-    MVRecord(char* data) : GeneralUpdates<MVRecordBase<char*>>(data) {}
-    void writeVersion(uint64_t) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
-    void writePrevious(const char*) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
-    void writeData(size_t, const char*) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
-
-    uint64_t* versions() {
-        return reinterpret_cast<uint64_t*>(mData + 24);
-    }
-
-    int32_t* offsets() {
-        auto nVersions = getNumberOfVersions();
-        size_t off = 24 + 8*nVersions;
-        return reinterpret_cast<int32_t*>(mData +off);
-    }
-
-    char* dataPtr() {
-        auto nVersions = getNumberOfVersions();
-        size_t off = 24 + 8*nVersions + 4*(nVersions + 1);
-        off += nVersions % 2 == 0 ? 4 : 0;
-        return mData + off;
-    }
-
-    bool update(char* next,
-                bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot) {
-        auto newest = getNewest();
-        if (newest) {
-            DMRecord rec(newest);
-            bool res = rec.update(next, isValid, snapshot);
-            if (!res && isValid) return false;
-            if (isValid) {
-                if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;
-                return casNewest(newest, next);
-            }
-        }
-        auto versionIdx = getNumberOfVersions() - 1;
-        auto v = versions();
-        auto offs = offsets();
-        for (; offs[versionIdx] < 0; --versionIdx) {
-        }
-        if (versionIdx < 0) {
-            isValid = false;
-            return false;
-        }
-        isValid = true;
-        if (snapshot.inReadSet(v[versionIdx - 1]))
-            return false;
-        DMRecord nextRec(next);
-        nextRec.writePrevious(this->mData);
-        return casNewest(newest, next);
-    }
-};
+template<class T>
+void MVRecordBase<T>::collect(impl::VersionMap&, bool&, bool&) const {
+    LOG_ASSERT(false, "should never call collect on MVRecord");
+    std::cerr << "Fatal error!" << std::endl;
+    std::terminate();
+}
 
 template<class T>
 uint64_t MVRecordBase<T>::copyAndCompact(
@@ -471,5 +400,55 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         success = true;
         return newTotalSize;
 }
+
+//Implementations of MVRecord<char*> ############################################
+
+uint64_t* MVRecord<char*>::versions() {
+    return reinterpret_cast<uint64_t*>(mData + 24);
+}
+
+int32_t* MVRecord<char*>::offsets() {
+    auto nVersions = getNumberOfVersions();
+    size_t off = 24 + 8*nVersions;
+    return reinterpret_cast<int32_t*>(mData +off);
+}
+
+char* MVRecord<char*>::dataPtr() {
+    auto nVersions = getNumberOfVersions();
+    size_t off = 24 + 8*nVersions + 4*(nVersions + 1);
+    off += nVersions % 2 == 0 ? 4 : 0;
+    return mData + off;
+}
+
+bool MVRecord<char*>::update(char* next,
+            bool& isValid,
+            const commitmanager::SnapshotDescriptor& snapshot) {
+    auto newest = getNewest();
+    if (newest) {
+        DMRecord rec(newest);
+        bool res = rec.update(next, isValid, snapshot);
+        if (!res && isValid) return false;
+        if (isValid) {
+            if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;
+            return casNewest(newest, next);
+        }
+    }
+    auto versionIdx = getNumberOfVersions() - 1;
+    auto v = versions();
+    auto offs = offsets();
+    for (; offs[versionIdx] < 0; --versionIdx) {
+    }
+    if (versionIdx < 0) {
+        isValid = false;
+        return false;
+    }
+    isValid = true;
+    if (snapshot.inReadSet(v[versionIdx - 1]))
+        return false;
+    DMRecord nextRec(next);
+    nextRec.writePrevious(this->mData);
+    return casNewest(newest, next);
+}
+
 
 } // namespace impl

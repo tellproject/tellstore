@@ -513,10 +513,95 @@ public:
     }
 };
 
+
+/**
+ * For MV record, we only give definitions while the storage-specific
+ * implementations are either in RowStoreRecord.cpp or ColumMapRecord.cpp
+ * depending on which storage layout was chosen.
+ */
+
+template<class T>
+class MVRecordBase {
+protected:
+    T mData;
+public:
+    using Type = typename DMRecordImplBase<T>::Type;
+    MVRecordBase(T data) : mData(data) {}
+
+    /**
+     * TODO: For now, this function has default parameter in order for the
+     * VersionIterator to compile. Once we really want to make it useful
+     * we have to force the caller to give non-null arguments!
+     */
+    T getNewest(const Table *table = nullptr, const uint32_t index = 0, const char * basePtr = nullptr, const uint32_t capacity = 0) const;
+    T dataPtr();
+    bool isValidDataRecord() const;
+    void revert(uint64_t version);
+    bool casNewest(const char* expected, const char* desired
+#if defined USE_COLUMN_MAP
+            ,
+            const Table *table
+#endif
+    ) const;
+    int32_t getNumberOfVersions() const;
+    const uint64_t* versions() const;
+    const int32_t* offsets() const;
+    uint64_t size() const;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+    const char* data(const commitmanager::SnapshotDescriptor& snapshot,
+                     size_t& size,
+                     uint64_t& version,
+                     bool& isNewest,
+                     bool& isValid,
+                     bool* wasDeleted
+#if defined USE_COLUMN_MAP
+                     ,
+                     const Table *table
+#endif
+    ) const;
+    Type typeOfNewestVersion(bool& isValid) const;
+    void collect(impl::VersionMap&, bool&, bool&) const;
+    uint64_t copyAndCompact(
+            uint64_t lowestActiveVersion,
+            InsertMap& insertMap,
+            char* dest,
+            uint64_t maxSize,
+            bool& success) const;
+};
+
+template<class T>
+struct MVRecord : MVRecordBase<T> {
+    MVRecord(T data) : MVRecordBase<T>(data) {}
+};
+
+template<>
+struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
+    MVRecord(char* data) : GeneralUpdates<MVRecordBase<char*>>(data) {}
+    void writeVersion(uint64_t) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+    void writePrevious(const char*) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+    void writeData(size_t, const char*) {
+        LOG_ERROR("You are not supposed to call this on a MVRecord");
+        std::terminate();
+    }
+
+    uint64_t* versions();
+    int32_t* offsets();
+    char* dataPtr();
+    bool update(char* next,
+                bool& isValid,
+                const commitmanager::SnapshotDescriptor& snapshot);
+};
+
 } // namespace impl
 
 /**
-* STORAGE-LAYOUT-SPECIFIC CODE INJECTION
+* INSERT STORAGE-LAYOUT-SPECIFIC IMPLEMENTATIONS OF MV RECORD
 */
 
 #if defined USE_ROW_STORE
