@@ -234,13 +234,6 @@ typename MVRecordBase<T>::Type MVRecordBase<T>::typeOfNewestVersion(bool& isVali
 }
 
 template<class T>
-void MVRecordBase<T>::collect(impl::VersionMap&, bool&, bool&) const {
-    LOG_ASSERT(false, "should never call collect on MVRecord");
-    std::cerr << "Fatal error!" << std::endl;
-    std::terminate();
-}
-
-template<class T>
 uint64_t MVRecordBase<T>::copyAndCompact(
         uint64_t lowestActiveVersion,
         InsertMap& insertMap,

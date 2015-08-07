@@ -628,6 +628,13 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
     );
 };
 
+template<class T>
+void MVRecordBase<T>::collect(impl::VersionMap&, bool&, bool&) const {
+    LOG_ASSERT(false, "should never call collect on MVRecord");
+    std::cerr << "Fatal error!" << std::endl;
+    std::terminate();
+}
+
 } // namespace impl
 
 /**

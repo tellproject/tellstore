@@ -156,6 +156,17 @@ T MVRecordBase<T>::dataPtr() {
 
 template<class T>
 bool MVRecordBase<T>::isValidDataRecord() const {
+//    //TODO: once you need this function, you have to add Table *table as an argument
+//    COMPUTE_BASE_KNOWLEDGE(mData, table)
+//    size_t nullBitMapSize = getNullBitMapSize(table);
+//    uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
+//    int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize));
+//    for (; ; index++, key += 2, varLength++) {
+//        if (*varLength > 0) return true;
+//        if (key[2] != key[0])  // loop exit condition
+//            break;
+//    }
+//    return false;
     LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
     std::terminate();
 }
@@ -202,6 +213,7 @@ uint64_t MVRecordBase<T>::size() const {
 
 template<class T>
 bool MVRecordBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+    //TODO: implement
     LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
     std::terminate();
 }
@@ -254,8 +266,8 @@ const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snaps
             break;
         }
         isNewest = false;
-        if (key[2] != key[0])
-            break;  // loop exit condition
+        if (key[2] != key[0])  // loop exit condition
+            break;
     }
     // index, varLength and key should have the right values
 
@@ -307,12 +319,25 @@ const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snaps
 
 template<class T>
 typename MVRecordBase<T>::Type MVRecordBase<T>::typeOfNewestVersion(bool& isValid) const {
-    LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-    std::terminate();
-}
-
-template<class T>
-void MVRecordBase<T>::collect(impl::VersionMap&, bool&, bool&) const {
+//    //TODO: once you need this function, you have to add Table *table as an argument
+//    COMPUTE_BASE_KNOWLEDGE(mData, table)
+//    size_t nullBitMapSize = getNullBitMapSize(table);
+//    auto newest = getNewest();
+//    if (newest) {
+//        DMRecordImplBase<T> rec(newest);
+//        auto res = rec.typeOfNewestVersion(isValid);
+//        if (isValid) return res;
+//    }
+//    isValid = true;
+//    uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
+//    int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize));
+//    for (; ; index++, key += 2, varLength++) {
+//        if (*varLength > 0) return Type::MULTI_VERSION_RECORD;
+//        if (key[2] != key[0])  // loop exit condition
+//            break;
+//    }
+//    isValid = false;
+//    return Type::MULTI_VERSION_RECORD;
     LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
     std::terminate();
 }
@@ -325,6 +350,7 @@ uint64_t MVRecordBase<T>::copyAndCompact(
         uint64_t maxSize,
         bool& success) const
 {
+    //TODO: implement
     LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
     std::terminate();
 }
@@ -362,7 +388,6 @@ bool MVRecord<char*>::update(char* next,
         }
     }
 
-    //TODO: continue here...
     uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
     int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table)));
     for (; ; index++, key += 2, varLength++) {
