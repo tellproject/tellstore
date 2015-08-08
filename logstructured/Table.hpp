@@ -1,13 +1,9 @@
 #pragma once
 
-#include <config.h>
+#include "GcScanProcessor.hpp"
+
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
-#include <util/PageManager.hpp>
-#include <util/ScanQuery.hpp>
-#include <util/StoreImpl.hpp>
-#include <util/TableManager.hpp>
-#include <util/VersionManager.hpp>
 
 #include <tellstore/Record.hpp>
 
@@ -21,87 +17,14 @@ class SnapshotDescriptor;
 } // namespace commitmanager
 
 namespace store {
+
+class PageManager;
+class ScanQuery;
+class VersionManager;
+
 namespace logstructured {
 
-class ChainedVersionRecord;
-class Table;
 class VersionRecordIterator;
-
-using LogImpl = Log<UnorderedLogImpl>;
-
-/**
- * @brief Scan processor for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
- */
-class GcScanProcessor : crossbow::non_copyable {
-public:
-    GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
-            const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
-
-    GcScanProcessor(GcScanProcessor&& other);
-
-    /**
-     * @brief Scans over all entries in the log
-     *
-     * Processes all valid entries with the associated scan queries.
-     *
-     * Performs garbage collection while scanning over a page.
-     */
-    void process();
-
-private:
-    /**
-     * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
-     *
-     * The processor must not be at the end when calling this function.
-     */
-    bool advanceEntry();
-
-    /**
-     * @brief Recycle the given element
-     *
-     * Copies the element to a recycling page and replaces the old element in the version list with the new element.
-     *
-     * @param oldElement The element to recycle
-     * @param size Size of the old element
-     * @param type Type of the old element
-     */
-    void recycleEntry(ChainedVersionRecord* oldElement, uint32_t size, uint32_t type);
-
-    /**
-     * @brief Replaces the given old element with the given new element in the version list of the record
-     *
-     * The two elements must belong to the same record.
-     *
-     * @param oldElement Old element to remove from the version list
-     * @param newElement New element to replace the old element with
-     * @return Whether the replacement was successful
-     */
-    bool replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement);
-
-    Table& mTable;
-    ScanQueryBatchProcessor mQueries;
-    uint64_t mMinVersion;
-
-    LogImpl::PageIterator mPagePrev;
-    LogImpl::PageIterator mPageIt;
-    LogImpl::PageIterator mPageEnd;
-
-    LogPage::EntryIterator mEntryIt;
-    LogPage::EntryIterator mEntryEnd;
-
-    LogPage* mRecyclingHead;
-    LogPage* mRecyclingTail;
-
-    /// Amount of garbage in the current page
-    uint32_t mGarbage;
-
-    /// Whether all entries in the current page were sealed
-    bool mSealed;
-
-    /// Whether the current page is being recycled
-    /// Initialized to false to prevent the first page from being garbage collected
-    bool mRecycle;
-};
 
 /**
  * @brief A table using a Log-Structured Memory approach as its data store
@@ -109,6 +32,8 @@ private:
 class Table : crossbow::non_copyable, crossbow::non_movable {
 public:
     using HashTable = OpenAddressingTable;
+
+    using LogImpl = Log<UnorderedLogImpl>;
 
     using ScanProcessor = GcScanProcessor;
 
@@ -249,75 +174,5 @@ public:
 };
 
 } // namespace logstructured
-
-/**
- * @brief A Storage implementation using a Log-Structured Memory approach as its data store
- */
-template<>
-struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : crossbow::non_copyable, crossbow::non_movable {
-public:
-    using Table = logstructured::Table;
-    using GC = logstructured::GarbageCollector;
-    using StorageType = StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>;
-
-    StoreImpl(const StorageConfig& config);
-
-    bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
-        return mTableManager.createTable(name, schema, idx, mVersionManager, mHashMap);
-    }
-
-    const Table* getTable(uint64_t id) const {
-        return mTableManager.getTable(id);
-    }
-
-    const Table* getTable(const crossbow::string& name, uint64_t& id) const {
-        return mTableManager.getTable(name, id);
-    }
-
-    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) {
-        return mTableManager.get(tableId, key, size, data, snapshot, version, isNewest);
-    }
-
-    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTableManager.update(tableId, key, size, data, snapshot);
-    }
-
-    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
-            const commitmanager::SnapshotDescriptor& snapshot, bool* succeeded = nullptr) {
-        mTableManager.insert(tableId, key, size, data, snapshot, succeeded);
-    }
-
-    bool remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTableManager.remove(tableId, key, snapshot);
-    }
-
-    bool revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTableManager.revert(tableId, key, snapshot);
-    }
-
-    bool scan(uint64_t tableId, ScanQuery* query) {
-        return mTableManager.scan(tableId, query);
-    }
-
-    /**
-     * We use this method mostly for test purposes. But
-     * it might be handy in the future as well. If possible,
-     * this should be implemented in an efficient way.
-     */
-    void forceGC() {
-        mTableManager.forceGC();
-    }
-
-private:
-    PageManager::Ptr mPageManager;
-    GC mGc;
-    VersionManager mVersionManager;
-    TableManager<Table, GC> mTableManager;
-
-    Table::HashTable mHashMap;
-};
-
 } // namespace store
 } // namespace tell

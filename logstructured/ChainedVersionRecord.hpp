@@ -12,6 +12,8 @@ namespace tell {
 namespace store {
 namespace logstructured {
 
+class ChainedVersionRecord;
+
 /**
  * @brief Types of record entries written to the log
  *
@@ -195,4 +197,3 @@ private:
 } // namespace logstructured
 } // namespace store
 } // namespace tell
-
