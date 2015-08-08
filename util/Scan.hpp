@@ -19,28 +19,17 @@
 namespace tell {
 namespace store {
 
-template<class Table>
-struct ScanRequest {
-    uint64_t tableId;
-    Table* table;
-    char* query;
-    size_t querySize;
-    std::vector<ScanQueryImpl*> impls;
-};
-
-template<class Iterator>
+template<class ScanProcessor>
 struct ScanThread {
-    std::atomic<char*> queries;
-    std::vector<ScanQueryImpl*> impls;
     std::atomic<bool>& stopScans;
-    std::atomic<Iterator*> scanIter;
+    std::atomic<ScanProcessor*> scanProcessor;
     ScanThread(std::atomic<bool>& stopScans)
-        : queries(nullptr)
-        , stopScans(stopScans)
+        : stopScans(stopScans)
+        , scanProcessor(nullptr)
     {}
     ScanThread(const ScanThread& o)
-        : queries(nullptr)
-        , stopScans(o.stopScans)
+        : stopScans(o.stopScans)
+        , scanProcessor(nullptr)
     {}
     void operator() () {
         while (!stopScans.load()) {
@@ -48,45 +37,32 @@ struct ScanThread {
         }
     }
     bool scan() {
-        auto qbuffer = queries.load();
-        if (qbuffer == nullptr) return false;
-        ScanQuery query;
-        uint64_t numQueries = *reinterpret_cast<uint64_t*>(qbuffer);
-        qbuffer += 8;
-        for (auto iter = scanIter.load(); !iter->done(); iter->next()) {
-            query.query = qbuffer;
-            const auto& entry = iter->value();
-            const auto& record = *entry.record();
-            for (uint64_t i = 0; i < numQueries; ++i) {
-                if (query.check(entry.data(), query.query, record)) {
-                    impls.at(i)->process(entry.validFrom(), entry.validTo(), entry.data(), entry.size(), record);
-                }
-            }
-        }
-        for (auto impl : impls) {
-            delete impl;
-        }
-        impls.clear();
-        scanIter.store(nullptr);
-        queries.store(nullptr);
+        auto processor = scanProcessor.load();
+        if (processor == nullptr) return false;
+
+        processor->process();
+
+        scanProcessor.store(nullptr);
         return true;
     }
 };
 
 template<class Table>
 class ScanThreads {
+    using ScanRequest = std::tuple<uint64_t, Table*, ScanQuery*>;
+
     int mNumThreads;
-    crossbow::SingleConsumerQueue<ScanRequest<Table>, MAX_QUERY_SHARING> queryQueue;
-    std::vector<ScanRequest<Table>> mEnqueuedQueries;
-    std::vector<ScanThread<typename Table::Iterator>> threadObjs;
+    crossbow::SingleConsumerQueue<ScanRequest, MAX_QUERY_SHARING> queryQueue;
+    std::vector<ScanRequest> mEnqueuedQueries;
+    std::vector<ScanThread<typename Table::ScanProcessor>> threadObjs;
     std::vector<std::thread> threads;
     std::atomic<bool> stopScans;
     std::atomic<bool> stopSlaves;
 public:
     ScanThreads(int numThreads)
         : mNumThreads(numThreads)
-        , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest<Table>{0, nullptr, nullptr, 0})
-        , threadObjs(numThreads, ScanThread<typename Table::Iterator>(stopSlaves))
+        , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
+        , threadObjs(numThreads, ScanThread<typename Table::ScanProcessor>(stopSlaves))
         , stopScans(false)
         , stopSlaves(false)
     {}
@@ -115,8 +91,8 @@ public:
         return mNumThreads;
     }
 
-    bool scan(ScanRequest<Table> request) {
-        return queryQueue.write(std::move(request));
+    bool scan(uint64_t tableId, Table* table, ScanQuery* query) {
+        return queryQueue.write(std::make_tuple(tableId, table, query));
     }
 
 private:
@@ -125,66 +101,56 @@ private:
         //  - the Table object
         //  - the total size
         //  - a vector of queries - that means the query object and the size of the query
-        std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<size_t>>> queryMap;
+        std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<ScanQuery*>>> queryMap;
         auto numQueries = queryQueue.readMultiple(mEnqueuedQueries.begin(), mEnqueuedQueries.end());
         if (numQueries == 0) return false;
+
         for (size_t i = 0; i < numQueries; ++i) {
-            auto& q = mEnqueuedQueries.at(i);
-            auto iter = queryMap.find(q.tableId);
+            uint64_t tableId;
+            Table* table;
+            ScanQuery* query;
+            std::tie(tableId, table, query) = mEnqueuedQueries.at(i);
+            auto iter = queryMap.find(tableId);
             if (iter == queryMap.end()) {
-                auto res = queryMap.emplace(q.tableId, std::make_tuple(q.table, 0, std::vector<size_t>()));
+                auto res = queryMap.emplace(tableId, std::make_tuple(table, 0, std::vector<ScanQuery*>()));
                 iter = res.first;
             }
-            std::get<1>(iter->second) += q.querySize;
-            std::get<2>(iter->second).emplace_back(i);
+            std::get<1>(iter->second) += query->selectionLength();
+            std::get<2>(iter->second).emplace_back(query);
         }
         // now we have all queries in a map, so we can start the scans
         for (auto& q : queryMap) {
             // first we need to create the QBuffer
-            // The QBuffer is the shared object of all scans, it is a byte array, where
-            // the first 8 bytes encode the number of queries followed by the serialized
-            // queries themselves.
-            std::unique_ptr<char[]> queries(new char[std::get<1>(q.second) + 8]);
-            *reinterpret_cast<uint64_t*>(queries.get()) = std::get<2>(q.second).size();
-            size_t offset = 8;
-            for (auto p : std::get<2>(q.second)) {
-                auto& request = mEnqueuedQueries.at(p);
-                // Copy the scan request query into the qbuffer
-                memcpy(queries.get() + offset, request.query, request.querySize);
-                offset += request.querySize;
-                delete[] request.query;
+            // The QBuffer is the shared object of all scans, it is a byte array containing the combined serialized
+            // selection queries of every scan query.
+            Table* table;
+            size_t bufferLength;
+            std::vector<ScanQuery*> queries;
+            std::tie(table, bufferLength, queries) = std::move(q.second);
 
-                // Add the scan query implementations to their scan objects
-                assert(threadObjs.size() == request.impls.size());
-                for (size_t i = 0; i < threadObjs.size(); ++i) {
-                    threadObjs[i].impls.push_back(request.impls.at(i));
-                }
+            std::unique_ptr<char[]> queryBuffer(new char[bufferLength]);
+            auto result = queryBuffer.get();
+            for (auto p : queries) {
+                // Copy the selection query into the qbuffer
+                memcpy(result, p->selection(), p->selectionLength());
+                result += p->selectionLength();
             }
 
             crossbow::allocator _;
 
             // now we generated the QBuffer - we now give it to all the scan threads
-            auto iterators = std::get<0>(q.second)->startScan(mNumThreads);
+            auto processors = table->startScan(mNumThreads, queryBuffer.get(), queries);
             for (size_t i = 0; i < threadObjs.size(); ++i) {
-                auto& scan = threadObjs[i];
-                // we do not need to synchronize here, we do that as soon as
-                // the scan is over. We use atomics here because the order of
-                // assignment is crucial: the master will set the queries last
-                // and the slaves will unset the queries last - therefore the
-                // queries atomic is our point of synchronisation
-                scan.scanIter.store(&iterators[i]);
-                scan.queries.store(queries.get());
+                // we do not need to synchronize here, the scan threads start as soon as the processor is set
+                threadObjs[i].scanProcessor.store(&processors[i]);
             }
             // do the master thread part of the scan
             threadObjs[0].scan();
             // now we need to wait until the other threads are done
             for (auto& scan : threadObjs) {
-                // as soon as the thread is done, it will unset the queries
-                // and iterators - it is important that the queries are
-                // unset last, this means that the scan is over and the
-                // master can delete the iterators savely (which will be
-                // done as soon as the scope is left).
-                while (scan.queries) std::this_thread::yield();
+                // as soon as the thread is done, it will unset the processors - this means that the scan is over and
+                // the master can delete the processors savely (which will be done as soon as the scope is left).
+                while (scan.scanProcessor) std::this_thread::yield();
             }
         }
         return true;

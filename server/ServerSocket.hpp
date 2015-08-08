@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ClientScanQuery.hpp"
 #include "ServerConfig.hpp"
+#include "ServerScanQuery.hpp"
 #include "Storage.hpp"
 
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -141,8 +141,12 @@ private:
      * - 8 bytes: The address of the remote memory region
      * - 8 bytes: Length of the remote memory region
      * - 4 bytes: The access key of the remote memory region
-     * - 4 bytes: Length of the query buffer's data field
-     * - x bytes: The query buffer's data
+     * - 4 bytes: Length of the selection's data field
+     * - x bytes: The selection's data
+     * - 1 byte:  The type of the query data
+     * - y bytes: Padding to make the message 4 byte aligned
+     * - 4 bytes: Length of the  query's data field
+     * - x bytes: The query's data
      * - y bytes: Variable padding to make message 8 byte aligned
      * - x bytes: Snapshot descriptor
      */
@@ -190,7 +194,7 @@ private:
 
     /// Map from Scan ID to the shared data class associated with the scan
     /// The Connection has the ownership because we can only free this after all RDMA writes have been processed
-    std::unordered_map<uint16_t, std::unique_ptr<ClientScanQueryData>> mScans;
+    std::unordered_map<uint16_t, std::unique_ptr<ServerScanQuery>> mScans;
 };
 
 class ServerManager : public crossbow::infinio::RpcServerManager<ServerManager, ServerSocket> {
@@ -205,13 +209,13 @@ private:
 
     ServerSocket* createConnection(crossbow::infinio::InfinibandSocket socket, const crossbow::string& data);
 
-    crossbow::infinio::LocalMemoryRegion& pageRegion() {
-        return mPageRegion;
+    ScanBufferManager& scanBufferManager() {
+        return mScanBufferManager;
     }
 
     Storage& mStorage;
 
-    crossbow::infinio::LocalMemoryRegion mPageRegion;
+    ScanBufferManager mScanBufferManager;
     std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
 };
 

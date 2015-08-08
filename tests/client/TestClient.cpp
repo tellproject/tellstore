@@ -68,7 +68,14 @@ private:
 
     void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey);
 
-    void doScan(ClientTransaction& transaction, const Table& record, float selectivity);
+    void doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& record,
+            float selectivity);
+
+    void doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
+            float selectivity);
+
+    void doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
+            float selectivity);
 
     ClientManager mManager;
 
@@ -80,7 +87,6 @@ private:
 
     std::atomic<size_t> mActiveTransactions;
 
-    uint64_t mTupleSize;
     std::array<GenericTuple, 4> mTuple;
 };
 
@@ -89,8 +95,7 @@ TestClient::TestClient(crossbow::infinio::InfinibandService& service, const Clie
         : mManager(service, config),
           mNumTuple(numTuple),
           mNumTransactions(numTransactions),
-          mActiveTransactions(0),
-          mTupleSize(0x0u) {
+          mActiveTransactions(0) {
     LOG_INFO("Initialized TellStore client");
     for (int32_t i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
@@ -129,9 +134,6 @@ void TestClient::addTable(ClientHandle& client) {
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("Adding table took %1%ns", duration.count());
-
-    auto table = createTableFuture->get();
-    mTupleSize = table.record().sizeOfTuple(mTuple[0]);
 
     for (size_t i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
@@ -245,13 +247,20 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     }
 
     auto scanTransaction = client.startTransaction();
-    doScan(scanTransaction, table, 1.0);
-    doScan(scanTransaction, table, 0.5);
-    doScan(scanTransaction, table, 0.25);
+    doScan(client.fiber(), scanTransaction, table, 1.0);
+    doScan(client.fiber(), scanTransaction, table, 0.5);
+    doScan(client.fiber(),scanTransaction, table, 0.25);
+    doProjection(client.fiber(), scanTransaction, table, 1.0);
+    doProjection(client.fiber(), scanTransaction, table, 0.5);
+    doProjection(client.fiber(), scanTransaction, table, 0.25);
+    doAggregation(client.fiber(), scanTransaction, table, 1.0);
+    doAggregation(client.fiber(), scanTransaction, table, 0.5);
+    doAggregation(client.fiber(), scanTransaction, table, 0.25);
 }
 
-void TestClient::doScan(ClientTransaction& transaction, const Table& table, float selectivity) {
-    LOG_INFO("TID %1%] Starting scan with selectivity %2%%%", transaction.version(),
+void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
+        float selectivity) {
+    LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t recordField;
@@ -260,39 +269,238 @@ void TestClient::doScan(ClientTransaction& transaction, const Table& table, floa
         return;
     }
 
-    uint32_t queryLength = 24;
-    std::unique_ptr<char[]> query(new char[queryLength]);
+    uint32_t selectionLength = 24;
+    std::unique_ptr<char[]> selection(new char[selectionLength]);
 
-    crossbow::buffer_writer queryWriter(query.get(), queryLength);
-    queryWriter.write<uint64_t>(0x1u);
-    queryWriter.write<uint16_t>(recordField);
-    queryWriter.write<uint16_t>(0x1u);
-    queryWriter.align(sizeof(uint64_t));
-    queryWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
-    queryWriter.write<uint8_t>(0x0u);
-    queryWriter.align(sizeof(uint32_t));
-    queryWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+    crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint16_t>(recordField);
+    selectionWriter.write<uint16_t>(0x1u);
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+    selectionWriter.write<uint8_t>(0x0u);
+    selectionWriter.align(sizeof(uint32_t));
+    selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
-    size_t scanCount = 0x0u;
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(table, queryLength, query.get());
-    while (scanFuture->hasNext()) {
-        auto tuple = scanFuture->next();
-        ++scanCount;
-    }
-    auto scanEndTime = std::chrono::steady_clock::now();
+    auto scanFuture = transaction.scan(table, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
     if (!scanFuture->waitForResult()) {
         auto& ec = scanFuture->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
         return;
     }
+    auto scanEndTime = std::chrono::steady_clock::now();
+
+    size_t scanCount = 0x0u;
+    size_t scanDataSize = 0x0u;
+    while (scanFuture->hasNext()) {
+        uint64_t key;
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(key, tuple, tupleLength) = scanFuture->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
+
+        LOG_TRACE("Check tuple");
+        if (table.field<int32_t>("number", tuple) != (key % mTuple.size())) {
+            LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+            return;
+        }
+        if (table.field<crossbow::string>("text1", tuple) != gTupleText1) {
+            LOG_ERROR("Text1 value does not match of tuple %1%", scanCount);
+            return;
+        }
+        if (table.field<int64_t>("largenumber", tuple) != gTupleLargenumber) {
+            LOG_ERROR("largenumber value of tuple %1% does not match", scanCount);
+            return;
+        }
+        if (table.field<crossbow::string>("text2", tuple) != gTupleText2) {
+            LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+            return;
+        }
+        LOG_TRACE("Tuple check successful");
+        if (scanCount % 250 == 0) {
+            fiber.yield();
+        }
+    }
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
-    auto scanDataSize = double(scanCount * mTupleSize) / double(1024 * 1024 * 1024);
-    auto scanBandwidth = double(scanCount * mTupleSize * 8) / double(1000 * 1000 * 1000 *
+    auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
+    auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-    LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of size %4% (%5%GB total, %6%Gbps bandwidth)]",
-            transaction.version(), scanDuration.count(), scanCount, mTupleSize, scanDataSize, scanBandwidth);
+    auto scanTupleSize = scanDataSize / scanCount;
+    LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
+            transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+}
+
+void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
+        float selectivity) {
+    LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", transaction.version(),
+            static_cast<int>(selectivity * 100));
+
+    Record::id_t numberField;
+    if (!table.record().idOf("number", numberField)) {
+        LOG_ERROR("number field not found");
+        return;
+    }
+
+    Record::id_t text2Field;
+    if (!table.record().idOf("text2", text2Field)) {
+        LOG_ERROR("text2 field not found");
+        return;
+    }
+
+    uint32_t selectionLength = 24;
+    std::unique_ptr<char[]> selection(new char[selectionLength]);
+
+    crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint16_t>(numberField);
+    selectionWriter.write<uint16_t>(0x1u);
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+    selectionWriter.write<uint8_t>(0x0u);
+    selectionWriter.align(sizeof(uint32_t));
+    selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+
+    uint32_t projectionLength = 4;
+    std::unique_ptr<char[]> projection(new char[projectionLength]);
+
+    crossbow::buffer_writer projectionWriter(projection.get(), projectionLength);
+    projectionWriter.write<uint16_t>(numberField);
+    projectionWriter.write<uint16_t>(text2Field);
+
+    Schema resultSchema(table.tableType());
+    resultSchema.addField(FieldType::INT, "number", true);
+    resultSchema.addField(FieldType::TEXT, "text2", true);
+    Table resultTable(table.tableId(), std::move(resultSchema));
+
+    auto scanStartTime = std::chrono::steady_clock::now();
+    auto scanFuture = transaction.scan(resultTable, ScanQueryType::PROJECTION, selectionLength, selection.get(),
+            projectionLength, projection.get());
+    if (!scanFuture->waitForResult()) {
+        auto& ec = scanFuture->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+        return;
+    }
+    auto scanEndTime = std::chrono::steady_clock::now();
+
+    size_t scanCount = 0x0u;
+    size_t scanDataSize = 0x0u;
+    while (scanFuture->hasNext()) {
+        uint64_t key;
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(key, tuple, tupleLength) = scanFuture->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
+
+        LOG_TRACE("Check tuple");
+        if (resultTable.field<int32_t>("number", tuple) != (key % mTuple.size())) {
+            LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+            return;
+        }
+        if (resultTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
+            LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+            return;
+        }
+        LOG_TRACE("Tuple check successful");
+        if (scanCount % 250 == 0) {
+            fiber.yield();
+        }
+    }
+
+    auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
+    auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
+    auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
+            std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
+    auto scanTupleSize = scanDataSize / scanCount;
+    LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
+            transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
+}
+
+void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
+        float selectivity) {
+    LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", transaction.version(),
+            static_cast<int>(selectivity * 100));
+
+    Record::id_t recordField;
+    if (!table.record().idOf("number", recordField)) {
+        LOG_ERROR("number field not found");
+        return;
+    }
+
+    uint32_t selectionLength = 24;
+    std::unique_ptr<char[]> selection(new char[selectionLength]);
+
+    crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
+    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint16_t>(recordField);
+    selectionWriter.write<uint16_t>(0x1u);
+    selectionWriter.align(sizeof(uint64_t));
+    selectionWriter.write<uint8_t>(crossbow::to_underlying(PredicateType::GREATER_EQUAL));
+    selectionWriter.write<uint8_t>(0x0u);
+    selectionWriter.align(sizeof(uint32_t));
+    selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
+
+    uint32_t aggregationLength = 12;
+    std::unique_ptr<char[]> aggregation(new char[aggregationLength]);
+
+    crossbow::buffer_writer aggregationWriter(aggregation.get(), aggregationLength);
+    aggregationWriter.write<uint16_t>(recordField);
+    aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::SUM));
+    aggregationWriter.write<uint16_t>(recordField);
+    aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::MIN));
+    aggregationWriter.write<uint16_t>(recordField);
+    aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::MAX));
+
+    Schema resultSchema(table.tableType());
+    resultSchema.addField(FieldType::INT, "sum", true);
+    resultSchema.addField(FieldType::INT, "min", true);
+    resultSchema.addField(FieldType::INT, "max", true);
+    Table resultTable(table.tableId(), std::move(resultSchema));
+
+    auto scanStartTime = std::chrono::steady_clock::now();
+    auto scanFuture = transaction.scan(resultTable, ScanQueryType::AGGREGATION, selectionLength, selection.get(),
+            aggregationLength, aggregation.get());
+    if (!scanFuture->waitForResult()) {
+        auto& ec = scanFuture->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+        return;
+    }
+    auto scanEndTime = std::chrono::steady_clock::now();
+
+    size_t scanCount = 0x0u;
+    size_t scanDataSize = 0x0u;
+    int32_t totalSum = 0;
+    int32_t totalMin = std::numeric_limits<int32_t>::max();
+    int32_t totalMax = std::numeric_limits<int32_t>::min();
+    while (scanFuture->hasNext()) {
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(std::ignore, tuple, tupleLength) = scanFuture->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
+
+        totalSum += resultTable.field<int32_t>("sum", tuple);
+        totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
+        totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
+
+        if (scanCount % 250 == 0) {
+            fiber.yield();
+        }
+    }
+
+    LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%]", transaction.version(), totalSum, totalMin,
+            totalMax);
+
+    auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
+    auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
+    auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
+            std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
+    auto scanTupleSize = scanDataSize / scanCount;
+    LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
+            transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
 } // anonymous namespace

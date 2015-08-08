@@ -7,11 +7,11 @@ set(UTIL_SRCS
     LogOperations.cpp
     OpenAddressingHash.cpp
     PageManager.cpp
+    ScanQuery.cpp
 )
 
 set(UTIL_PRIVATE_HDR
     chunk_allocator.hpp
-    OpenAddressingHash.hpp
     CuckooHash.hpp
     FixedSizeStack.hpp
     functional.hpp
@@ -20,6 +20,7 @@ set(UTIL_PRIVATE_HDR
     LogOperations.hpp
     OpenAddressingHash.hpp
     PageManager.hpp
+    PredicateBitmap.hpp
     Scan.hpp
     ScanQuery.hpp
     StorageConfig.hpp

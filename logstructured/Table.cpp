@@ -530,9 +530,10 @@ void VersionRecordIterator::setCurrentEntry() {
     mCurrentData = MutableRecordData();
 }
 
-GcScanIterator::GcScanIterator(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
-        uint64_t minVersion, const Record* record)
+GcScanProcessor::GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
+        const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion)
         : mTable(table),
+          mQueries(queryBuffer, queryData),
           mMinVersion(minVersion),
           mPagePrev(begin),
           mPageIt(begin),
@@ -544,21 +545,11 @@ GcScanIterator::GcScanIterator(Table& table, const LogImpl::PageIterator& begin,
           mGarbage(0x0u),
           mSealed(false),
           mRecycle(false) {
-    mCurrentEntry.mRecord = record;
-    if (!done()) {
-        setCurrentEntry();
-    }
 }
 
-GcScanIterator::~GcScanIterator() {
-    if (mRecyclingHead != nullptr) {
-        LOG_ASSERT(mRecyclingTail, "Recycling tail is null despite head being non null");
-        mTable.mLog.appendPage(mRecyclingHead, mRecyclingTail);
-    }
-}
-
-GcScanIterator::GcScanIterator(GcScanIterator&& other)
+GcScanProcessor::GcScanProcessor(GcScanProcessor&& other)
         : mTable(other.mTable),
+          mQueries(std::move(other.mQueries)),
           mMinVersion(other.mMinVersion),
           mPagePrev(std::move(other.mPagePrev)),
           mPageIt(std::move(other.mPageIt)),
@@ -569,8 +560,7 @@ GcScanIterator::GcScanIterator(GcScanIterator&& other)
           mRecyclingTail(other.mRecyclingTail),
           mGarbage(other.mGarbage),
           mSealed(other.mSealed),
-          mRecycle(other.mRecycle),
-          mCurrentEntry(std::move(other.mCurrentEntry)) {
+          mRecycle(other.mRecycle) {
     other.mRecyclingHead = nullptr;
     other.mRecyclingTail = nullptr;
     other.mGarbage = 0x0u;
@@ -578,47 +568,11 @@ GcScanIterator::GcScanIterator(GcScanIterator&& other)
     other.mRecycle = false;
 }
 
-void GcScanIterator::next() {
-    if (advanceEntry()) {
-        setCurrentEntry();
-    }
-}
-
-bool GcScanIterator::advanceEntry() {
-    // Advance the iterator to the next entry
-    if (++mEntryIt != mEntryEnd) {
-        return true;
+void GcScanProcessor::process() {
+    if (mPageIt == mPageEnd && mEntryIt == mEntryEnd) {
+        return;
     }
 
-    // Advance to next page
-    if (mRecycle) {
-        ++mPageIt;
-        mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
-    } else {
-        // Only store the garbage statistic when every entry in the page was sealed
-        if (mSealed) {
-            mPageIt->context().store(mGarbage);
-        }
-        mPagePrev = mPageIt++;
-    }
-
-    if (mPageIt == mPageEnd) {
-        return false;
-    }
-    mEntryIt = mPageIt->begin();
-    mEntryEnd = mPageIt->end();
-
-    // Retrieve usage statistics of the current page
-    mGarbage = 0x0u;
-    uint32_t offset;
-    std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
-    auto size = offset - mPageIt->context().load();
-    mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
-
-    return true;
-}
-
-void GcScanIterator::setCurrentEntry() {
     do {
         if (BOOST_UNLIKELY(!mEntryIt->sealed())) {
             LOG_ASSERT(!mRecycle, "Recycling page even though not all entries are sealed");
@@ -672,16 +626,54 @@ void GcScanIterator::setCurrentEntry() {
             continue;
         }
 
-        mCurrentEntry.mValidFrom = record->validFrom();
-        mCurrentEntry.mValidTo = context.validTo();
-        mCurrentEntry.mData = record->data();
-        mCurrentEntry.mSize = mEntryIt->size() - sizeof(ChainedVersionRecord);
-        return;
-
+        // Process the element
+        auto recordLength = mEntryIt->size() - sizeof(ChainedVersionRecord);
+        mQueries.processRecord(mTable.mRecord, record->key(), record->data(), recordLength, record->validFrom(),
+                context.validTo());
     } while (advanceEntry());
+
+    // Append recycled entries to the log
+    if (mRecyclingHead != nullptr) {
+        LOG_ASSERT(mRecyclingTail, "Recycling tail is null despite head being non null");
+        mTable.mLog.appendPage(mRecyclingHead, mRecyclingTail);
+    }
 }
 
-void GcScanIterator::recycleEntry(ChainedVersionRecord* oldElement, uint32_t size, uint32_t type) {
+bool GcScanProcessor::advanceEntry() {
+    // Advance the iterator to the next entry
+    if (++mEntryIt != mEntryEnd) {
+        return true;
+    }
+
+    // Advance to next page
+    if (mRecycle) {
+        ++mPageIt;
+        mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
+    } else {
+        // Only store the garbage statistic when every entry in the page was sealed
+        if (mSealed) {
+            mPageIt->context().store(mGarbage);
+        }
+        mPagePrev = mPageIt++;
+    }
+
+    if (mPageIt == mPageEnd) {
+        return false;
+    }
+    mEntryIt = mPageIt->begin();
+    mEntryEnd = mPageIt->end();
+
+    // Retrieve usage statistics of the current page
+    mGarbage = 0x0u;
+    uint32_t offset;
+    std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
+    auto size = offset - mPageIt->context().load();
+    mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
+
+    return true;
+}
+
+void GcScanProcessor::recycleEntry(ChainedVersionRecord* oldElement, uint32_t size, uint32_t type) {
     if (mRecyclingHead == nullptr) {
         mRecyclingHead = mTable.mLog.acquirePage();
         if (mRecyclingHead == nullptr) {
@@ -717,7 +709,7 @@ void GcScanIterator::recycleEntry(ChainedVersionRecord* oldElement, uint32_t siz
     newEntry->seal();
 }
 
-bool GcScanIterator::replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement) {
+bool GcScanProcessor::replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement) {
     LOG_ASSERT(oldElement->key() == newElement->key(), "Keys do not match");
 
     // Search for the old element in the version list - if it was not found it has to be invalidated by somebody else
@@ -884,8 +876,9 @@ bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
     return false;
 }
 
-std::vector<Table::Iterator> Table::startScan(int numThreads) {
-    std::vector<Table::Iterator> result;
+std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,
+        const std::vector<ScanQuery*>& queries) {
+    std::vector<ScanProcessor> result;
     result.reserve(numThreads);
 
     auto version = minVersion();
@@ -901,12 +894,12 @@ std::vector<Table::Iterator> Table::startScan(int numThreads) {
         for (auto j = 0; j < step && iter != end; ++j, ++iter) {
         }
 
-        result.emplace_back(*this, begin, iter, version, &mRecord);
+        result.emplace_back(*this, begin, iter, queryBuffer, queries, version);
         begin = iter;
     }
 
     // The last scan takes the remaining pages
-    result.emplace_back(*this, begin, end, version, &mRecord);
+    result.emplace_back(*this, begin, end, queryBuffer, queries, version);
 
     return result;
 }

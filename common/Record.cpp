@@ -1,5 +1,6 @@
 #include <tellstore/Record.hpp>
 
+#include <crossbow/alignment.hpp>
 #include <crossbow/enum_underlying.hpp>
 
 namespace tell {
@@ -193,8 +194,7 @@ Schema::Schema(const char* ptr) {
 Record::Record(Schema schema)
         : mSchema(std::move(schema)),
           mFieldMetaData(mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size()) {
-    int32_t currOffset = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
-    currOffset += (currOffset % 8) ? 8 - (currOffset % 8) : 0;
+    int32_t currOffset = headerSize();
 
     size_t id = 0;
     for (const auto& field : mSchema.fixedSizeFields()) {
@@ -212,8 +212,7 @@ Record::Record(Schema schema)
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
 {
-    size_t result = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
-    result = ((result + 7u) & -8u);
+    auto result = headerSize();
     for (auto& f : mFieldMetaData) {
         auto& field = f.first;
         if (field.isFixedSized()) {
@@ -231,7 +230,7 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
         }
     }
     // we have to make sure that the size of a tuple is 8 byte aligned
-    return ((result + 7u) & -8u);
+    return crossbow::align(result, 8);
 }
 
 size_t Record::sizeOfTuple(const char* ptr) const {
@@ -258,7 +257,39 @@ size_t Record::sizeOfTuple(const char* ptr) const {
         }
     }
     // we have to make sure that the size of a tuple is 8 byte aligned
-    return ((pos + 7u) & -8u);
+    return crossbow::align(pos, 8);
+}
+
+size_t Record::headerSize() const {
+    if (mSchema.allNotNull()) {
+        return 0u;
+    }
+
+    size_t result = (mFieldMetaData.size() + 7) / 8;
+    return crossbow::align(result, 8);
+}
+
+size_t Record::minimumSize() const {
+    if (mFieldMetaData.empty()) {
+        return 0;
+    }
+
+    size_t length = 0;
+    if (mSchema.varSizeFields().empty()) {
+        auto& f = mFieldMetaData.back();
+        LOG_ASSERT(f.first.isFixedSized(), "Element must be fixed size in Schema with no variable sized fields");
+        length = f.second + f.first.staticSize();
+    } else {
+        auto baseId = mSchema.fixedSizeFields().size();
+        length = mFieldMetaData[baseId].second;
+        LOG_ASSERT(length >= 0, "Offset for first variable length field is smaller than 0");
+
+        // Variable sized fields are always at least 4 bytes to indicate a NULL length
+        length += (mSchema.varSizeFields().size() * sizeof(uint32_t));
+    }
+
+    // Align the length to 8 bytes
+    return crossbow::align(length, 8);
 }
 
 
@@ -274,16 +305,13 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const {
 
 bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) const {
     LOG_ASSERT(recSize == sizeOfTuple(tuple), "Size has to be the actual tuple size");
-    using uchar = unsigned char;
-    char* res = result;
-    auto headerSize = mSchema.allNotNull() ? 0 : (mFieldMetaData.size() + 7)/8;
-    headerSize = ((headerSize + 7u) & -8u);
-    char* current = res + headerSize;
-    memset(res, 0, recSize);
+    auto headerOffset = headerSize();
+    memset(result, 0, headerOffset);
+    char* current = result + headerOffset;
     for (id_t id = 0; id < mFieldMetaData.size(); ++id) {
         auto& f = mFieldMetaData[id];
         const auto& name = f.first.name();
-        LOG_ASSERT(f.second == std::numeric_limits<int32_t>::min() || current == (res + f.second),
+        LOG_ASSERT(f.second == std::numeric_limits<int32_t>::min() || current == (result + f.second),
                 "Trying to write fixed size field to wrong offset");
 
         // first we need to check whether the value for this field is given
@@ -295,14 +323,13 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
             }
 
             // In this case we set the field to NULL
-            uchar& bitmap = *reinterpret_cast<uchar*>(res + id / 8);
-            uchar pos = uchar(id % 8);
-            bitmap |= uchar(0x1 << pos);
+            setFieldNull(result, id, true);
 
-            // We store a default value for fields, even if the field is null. This is for performance reason (it makes
-            // it faster to access any fixed-size fields). As the memset already set everything to 0 we only increase
-            // the pointer.
-            current += f.first.defaultSize();
+            // Write a string of \0 bytes as a default value for fields if the field is null. This is for performance
+            // reason as any fixed size field has a constant offset.
+            auto fieldLength = f.first.defaultSize();
+            memset(current, 0, fieldLength);
+            current += fieldLength;
         } else {
             // we just need to copy the value to the correct offset.
             switch (f.first.type()) {
@@ -426,9 +453,24 @@ bool Record::isFieldNull(const char* ptr, Record::id_t id) const {
     }
 
     // TODO: Check whether the compiler optimizes this correctly - otherwise this might be inefficient (but more readable)
-    uchar bitmap = *reinterpret_cast<const uchar* const>(ptr + id / 8);
-    unsigned char pos = uchar(id % 8);
-    return (uchar(0x1 << pos) & bitmap) == 0;
+    auto bitmap = *reinterpret_cast<const uchar*>(ptr + id / 8);
+    auto mask = uchar(0x1 << (id % 8));
+    return (bitmap & mask) == 0;
+}
+
+void Record::setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
+    using uchar = unsigned char;
+
+    LOG_ASSERT(!mSchema.allNotNull(), "Trying to set a null field on non-NULL schema")
+
+    auto& bitmap = *reinterpret_cast<uchar*>(ptr + id / 8);
+    auto mask = uchar(0x1 << (id % 8));
+
+    if (isNull) {
+        bitmap |= mask;
+    } else {
+        bitmap &= ~mask;
+    }
 }
 
 } // namespace store

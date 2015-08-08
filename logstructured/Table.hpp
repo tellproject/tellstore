@@ -1,10 +1,10 @@
 #pragma once
 
 #include <config.h>
-#include <util/IteratorEntry.hpp>
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
+#include <util/ScanQuery.hpp>
 #include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
@@ -30,43 +30,31 @@ class VersionRecordIterator;
 using LogImpl = Log<UnorderedLogImpl>;
 
 /**
- * @brief Scan iterator for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
+ * @brief Scan processor for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
  */
-class GcScanIterator : crossbow::non_copyable {
+class GcScanProcessor : crossbow::non_copyable {
 public:
-    using IteratorEntry = BaseIteratorEntry;
+    GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
+            const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
 
-    GcScanIterator(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
-            uint64_t minVersion, const Record* record);
+    GcScanProcessor(GcScanProcessor&& other);
 
-    ~GcScanIterator();
-
-    GcScanIterator(GcScanIterator&& other);
-
-    void next();
-
-    bool done() {
-        return (mPageIt == mPageEnd && mEntryIt == mEntryEnd);
-    }
-
-    const IteratorEntry& value() const {
-        return mCurrentEntry;
-    }
+    /**
+     * @brief Scans over all entries in the log
+     *
+     * Processes all valid entries with the associated scan queries.
+     *
+     * Performs garbage collection while scanning over a page.
+     */
+    void process();
 
 private:
     /**
      * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
      *
-     * The iterator must not be at the end when calling this function.
+     * The processor must not be at the end when calling this function.
      */
     bool advanceEntry();
-
-    /**
-     * @brief Initializes the iterator with the current element or the next valid element
-     *
-     * Performs garbage collection while scanning over a page.
-     */
-    void setCurrentEntry();
 
     /**
      * @brief Recycle the given element
@@ -91,6 +79,7 @@ private:
     bool replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement);
 
     Table& mTable;
+    ScanQueryBatchProcessor mQueries;
     uint64_t mMinVersion;
 
     LogImpl::PageIterator mPagePrev;
@@ -112,8 +101,6 @@ private:
     /// Whether the current page is being recycled
     /// Initialized to false to prevent the first page from being garbage collected
     bool mRecycle;
-
-    IteratorEntry mCurrentEntry;
 };
 
 /**
@@ -123,13 +110,17 @@ class Table : crossbow::non_copyable, crossbow::non_movable {
 public:
     using HashTable = OpenAddressingTable;
 
-    using Iterator = GcScanIterator;
+    using ScanProcessor = GcScanProcessor;
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
             HashTable& hashMap);
 
     uint64_t id() const {
         return mTableId;
+    }
+
+    const Record& record() const {
+        return mRecord;
     }
 
     const Schema& schema() const {
@@ -197,9 +188,12 @@ public:
      * @brief Start a full scan of this table
      *
      * @param numThreads Number of threads to use for the scan
-     * @return Pairs of begin and end iterator for each thread
+     * @param queryBuffer The query buffer containing the combined selection buffer of all attached queries
+     * @param queries Queries attaching to this scan
+     * @return A scan processor for each thread
      */
-    std::vector<Iterator> startScan(int numThreads);
+    std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
+            const std::vector<ScanQuery*>& queries);
 
     /**
      * @brief Starts a garbage collection run
@@ -209,7 +203,7 @@ public:
     void runGC(uint64_t minVersion);
 
 private:
-    friend class GcScanIterator;
+    friend class GcScanProcessor;
     friend class LazyRecordWriter;
     friend class VersionRecordIterator;
 
@@ -268,12 +262,12 @@ public:
 
     StoreImpl(const StorageConfig& config);
 
-    PageManager& pageManager() {
-        return *(mPageManager.get());
-    }
-
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
         return mTableManager.createTable(name, schema, idx, mVersionManager, mHashMap);
+    }
+
+    const Table* getTable(uint64_t id) const {
+        return mTableManager.getTable(id);
     }
 
     const Table* getTable(const crossbow::string& name, uint64_t& id) const {
@@ -303,12 +297,8 @@ public:
         return mTableManager.revert(tableId, key, snapshot);
     }
 
-    int numScanThreads() const {
-        return mTableManager.numScanThreads();
-    }
-
-    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
-        return mTableManager.scan(tableId, query, querySize, impls);
+    bool scan(uint64_t tableId, ScanQuery* query) {
+        return mTableManager.scan(tableId, query);
     }
 
     /**

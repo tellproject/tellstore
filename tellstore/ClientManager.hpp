@@ -56,7 +56,8 @@ public:
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
 
-    std::shared_ptr<ScanResponse> scan(const Table& table, uint32_t queryLength, const char* query);
+    std::shared_ptr<ScanResponse> scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
+            const char* selection, uint32_t queryLength, const char* query);
 
     void commit();
 
@@ -113,7 +114,8 @@ public:
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key, uint64_t version);
 
-    std::shared_ptr<ScanResponse> scan(const Table& table, uint32_t queryLength, const char* query);
+    std::shared_ptr<ScanResponse> scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
+            const char* selection, uint32_t queryLength, const char* query);
 
 private:
     ClientProcessor& mProcessor;
@@ -177,8 +179,10 @@ private:
     }
 
     std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.scan(fiber, tableId, record, queryLength, query, mScanRegion, snapshot);
+            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+            const char* query, const commitmanager::SnapshotDescriptor& snapshot) {
+        return mTellStoreSocket.scan(fiber, tableId, record, queryType, selectionLength, selection, queryLength, query,
+                mScanRegion, snapshot);
     }
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
