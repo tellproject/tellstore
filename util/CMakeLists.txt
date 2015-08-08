@@ -26,6 +26,7 @@ set(UTIL_PRIVATE_HDR
     StorageConfig.hpp
     StoreImpl.hpp
     TableManager.hpp
+    UnsafeAtomic.hpp
     VersionManager.hpp
 )
 
