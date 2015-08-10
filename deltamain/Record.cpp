@@ -9,9 +9,7 @@
 #include <memory.h>
 #include <map>
 
-#if defined USE_COLUMN_MAP
-#include "deltamain/Table.hpp"
-#endif
+#include "Table.hpp"
 
 namespace tell {
 namespace store {
@@ -941,7 +939,11 @@ bool DMRecordImpl<char*>::update(char* next,
                                  const Table *table
 #endif
 ) {
+#if defined USE_COLUMN_MAP
     DISPATCH_METHOD_NCONST(update, next, isValid, snapshot, table);
+#else
+    DISPATCH_METHOD_NCONST(update, next, isValid, snapshot);
+#endif
 } 
 
 template class DMRecordImplBase<const char*>;
