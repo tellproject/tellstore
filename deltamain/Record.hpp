@@ -30,9 +30,7 @@ enum class RecordType : uint8_t {
     MULTI_VERSION_RECORD
 };
 
-#if defined USE_COLUMN_MAP
 class Table;
-#endif
 
 namespace impl {
 struct VersionHolder {
@@ -128,12 +126,9 @@ public:
             uint64_t& version,
             bool& isNewest,
             bool& isValid,
-            bool* wasDeleted = nullptr
-#if defined USE_COLUMN_MAP
-            ,
+            bool* wasDeleted = nullptr,
             const Table *table = nullptr,
             bool copyData = true
-#endif
             ) const;
 
 
@@ -229,11 +224,8 @@ public: // writing functinality
 
     bool update(char* next,
                 bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot
-#if defined USE_COLUMN_MAP
-                ,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 const Table *table = nullptr
-#endif
     );
 
 };

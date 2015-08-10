@@ -380,7 +380,7 @@ bool MVRecord<char*>::update(char* next,
     auto newest = getNewest(table, index, basePtr, capacity);
     if (newest) {
         DMRecord rec(newest);
-        bool res = rec.update(next, isValid, snapshot);
+        bool res = rec.update(next, isValid, snapshot, table);
         if (!res && isValid) return false;
         if (isValid) {
             if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;

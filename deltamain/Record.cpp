@@ -180,12 +180,9 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted
-#if defined USE_COLUMN_MAP
-                     ,
+                     bool* wasDeleted,
                      const Table *table,
                      bool copyData
-#endif
     ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
@@ -275,12 +272,7 @@ class LogInsert<char*> : public LogUpdates<LogInsertBase<char*>> {
 public:
     LogInsert(char* data) : LogUpdates<LogInsertBase<char*>>(data) {}
 
-    bool update(char* next, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot
-#if defined USE_COLUMN_MAP
-            ,
-            const Table *table = nullptr
-#endif
-    ) {
+    bool update(char* next, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot,const Table *table = nullptr) {
         if (!this->isValidDataRecord()) {
             isValid = false;
             return false;
@@ -318,12 +310,9 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted
-#if defined USE_COLUMN_MAP
-                     ,
+                     bool* wasDeleted,
                      const Table *table,
                      bool copyData
-#endif
     ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
@@ -400,12 +389,7 @@ class LogUpdate<char*> : public LogUpdates<LogUpdateBase<char*>> {
 public:
     LogUpdate(char* data) : LogUpdates<LogUpdateBase<char*>>(data) {}
 
-    bool update(char* data, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot
-#if defined USE_COLUMN_MAP
-            ,
-            const Table *table = nullptr
-#endif
-    )
+    bool update(char* data, bool& isValid, const commitmanager::SnapshotDescriptor& snapshot, const Table *table = nullptr)
     {
         LOG_ASSERT(this->isValidDataRecord(), "Invalid log updates should not be reachable");
         isValid = true;
@@ -432,12 +416,9 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted
-#if defined USE_COLUMN_MAP
-                     ,
-                     const Table *table,
-                     bool copyData
-#endif
+                     bool* wasDeleted,
+                     const Table *table = nullptr,
+                     bool copyData = false
     ) const {
         if (!this->isValidDataRecord()) {
             isValid = false;
@@ -522,12 +503,7 @@ class LogDelete<char*> : public LogUpdates<LogDeleteBase<char*>> {
 public:
     LogDelete(char* data) : LogUpdates<LogDeleteBase<char*>>(data) {}
 
-    bool update(char*, bool&, const commitmanager::SnapshotDescriptor&
-#if defined USE_COLUMN_MAP
-            ,
-            const Table *table = nullptr
-#endif
-    )
+    bool update(char*, bool&, const commitmanager::SnapshotDescriptor&, const Table *table = nullptr)
     {
         LOG_ASSERT(false, "Calling update on a deleted record is an invalid operation");
         // the client has to do an insert in this case!!
@@ -559,12 +535,7 @@ public:
     T dataPtr();
     bool isValidDataRecord() const;
     void revert(uint64_t version);
-    bool casNewest(const char* expected, const char* desired
-#if defined USE_COLUMN_MAP
-            ,
-            const Table *table
-#endif
-    ) const;
+    bool casNewest(const char* expected, const char* desired,const Table *table) const;
     int32_t getNumberOfVersions() const;
     const uint64_t* versions() const;
     const int32_t* offsets() const;
@@ -575,12 +546,9 @@ public:
                      uint64_t& version,
                      bool& isNewest,
                      bool& isValid,
-                     bool* wasDeleted
-#if defined USE_COLUMN_MAP
-                     ,
+                     bool* wasDeleted,
                      const Table *table,
                      bool copyData
-#endif
     ) const;
     Type typeOfNewestVersion(bool& isValid) const;
     void collect(impl::VersionMap&, bool&, bool&) const;
@@ -618,11 +586,8 @@ struct MVRecord<char*> : GeneralUpdates<MVRecordBase<char*>> {
     char* dataPtr();
     bool update(char* next,
                 bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot
-#if defined USE_COLUMN_MAP
-                ,
+                const commitmanager::SnapshotDescriptor& snapshot,
                 const Table *table = nullptr
-#endif
     );
 };
 

@@ -428,6 +428,7 @@ bool MVRecord<char*>::update(char* next,
         bool res = rec.update(next, isValid, snapshot);
         if (!res && isValid) return false;
         if (isValid) {
+            //TODO: question: why can this at all be an MVRecord?! GC?
             if (rec.type() == MVRecord::Type::MULTI_VERSION_RECORD) return res;
             return casNewest(newest, next);
         }
