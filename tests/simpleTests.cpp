@@ -1,6 +1,6 @@
 #include <config.h>
 
-#include <deltamain/Table.hpp>
+#include <deltamain/DeltaMainRewriteStore.hpp>
 #include <logstructured/LogstructuredMemoryStore.hpp>
 
 #include "DummyCommitManager.hpp"

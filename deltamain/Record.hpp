@@ -12,7 +12,7 @@
 
 // @braunl: we need this in order to make sure that we have access to
 // the compile parameters...
-#include "config.h"
+#include <config.h>
 
 namespace tell {
 namespace commitmanager {

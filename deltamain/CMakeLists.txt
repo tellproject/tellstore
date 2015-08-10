@@ -14,6 +14,7 @@ set(DELTAMAIN_PRIVATE_HDR
     Page.hpp
     Record.hpp
     Table.hpp
+    DeltaMainRewriteStore.hpp
 )
 
 # Add TellStore delta main library
