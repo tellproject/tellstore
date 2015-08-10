@@ -84,7 +84,7 @@ void MVRecordBase<T>::revert(uint64_t version) {
 }
 
 template<class T>
-bool MVRecordBase<T>::casNewest(const char* expected, const char* desired) const {
+bool MVRecordBase<T>::casNewest(const char* expected, const char* desired, const Table *table) const {
     char* dataPtr = const_cast<char*>(mData);
     auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(dataPtr + 16);
     auto p = ptr->load();
@@ -167,7 +167,10 @@ const char *MVRecordBase<T>::data(const commitmanager::SnapshotDescriptor& snaps
                  uint64_t& version,
                  bool& isNewest,
                  bool& isValid,
-                 bool* wasDeleted) const {
+                 bool* wasDeleted,
+                  const Table *table,
+                  bool copyData
+) const {
     auto numVersions = getNumberOfVersions();
     auto v = versions();
     auto newest = getNewest();
@@ -421,7 +424,8 @@ char* MVRecord<char*>::dataPtr() {
 
 bool MVRecord<char*>::update(char* next,
             bool& isValid,
-            const commitmanager::SnapshotDescriptor& snapshot) {
+            const commitmanager::SnapshotDescriptor& snapshot,
+            const Table *table) {
     auto newest = getNewest();
     if (newest) {
         DMRecord rec(newest);

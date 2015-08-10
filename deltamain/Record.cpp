@@ -535,7 +535,7 @@ public:
     T dataPtr();
     bool isValidDataRecord() const;
     void revert(uint64_t version);
-    bool casNewest(const char* expected, const char* desired,const Table *table) const;
+    bool casNewest(const char* expected, const char* desired,const Table *table = nullptr) const;
     int32_t getNumberOfVersions() const;
     const uint64_t* versions() const;
     const int32_t* offsets() const;
@@ -547,8 +547,8 @@ public:
                      bool& isNewest,
                      bool& isValid,
                      bool* wasDeleted,
-                     const Table *table,
-                     bool copyData
+                     const Table *table = nullptr,
+                     bool copyData = true
     ) const;
     Type typeOfNewestVersion(bool& isValid) const;
     void collect(impl::VersionMap&, bool&, bool&) const;
@@ -794,21 +794,12 @@ const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& s
                                   uint64_t& version,
                                   bool& isNewest,
                                   bool& isValid,
-                                  bool *wasDeleted /* = nullptr */
-#if defined USE_COLUMN_MAP
-                                  ,
+                                  bool *wasDeleted /* = nullptr */,
                                   const Table *table, /* = nullptr */
                                   bool copyData /* = true */
-#endif
-            ) const {
+) const {
     isNewest = true;
-#if defined USE_ROW_STORE
-    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted);
-#elif defined USE_COLUMN_MAP
     DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted, table, copyData);
-#else
-#error "Unknown storage layout"
-#endif
     return nullptr;
 }
 
@@ -898,17 +889,10 @@ void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
 
 bool DMRecordImpl<char*>::update(char* next,
                                  bool& isValid,
-                                 const commitmanager::SnapshotDescriptor& snapshot
-#if defined USE_COLUMN_MAP
-                                 ,
+                                 const commitmanager::SnapshotDescriptor& snapshot,
                                  const Table *table
-#endif
 ) {
-#if defined USE_COLUMN_MAP
     DISPATCH_METHOD_NCONST(update, next, isValid, snapshot, table);
-#else
-    DISPATCH_METHOD_NCONST(update, next, isValid, snapshot);
-#endif
 } 
 
 template class DMRecordImplBase<const char*>;
