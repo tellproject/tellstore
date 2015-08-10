@@ -4,7 +4,6 @@
 set(UTIL_SRCS
     CuckooHash.cpp
     Log.cpp
-    LogOperations.cpp
     OpenAddressingHash.cpp
     PageManager.cpp
     ScanQuery.cpp
@@ -17,7 +16,6 @@ set(UTIL_PRIVATE_HDR
     functional.hpp
     IteratorEntry.hpp
     Log.hpp
-    LogOperations.hpp
     OpenAddressingHash.hpp
     PageManager.hpp
     PredicateBitmap.hpp
