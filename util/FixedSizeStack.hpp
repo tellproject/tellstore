@@ -1,8 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
+#include <cstddef>
 #include <vector>
-#include <assert.h>
 
 namespace tell {
 namespace store {
@@ -26,8 +27,8 @@ private:
     std::atomic<Head> mHead;
 public:
     FixedSizeStack() = delete;
-    FixedSizeStack(size_t size)
-        : mVec(size, nullptr)
+    FixedSizeStack(size_t size, T nullValue)
+        : mVec(size, nullValue)
     {
         mHead.store(Head(0u, 0u));
         assert(mHead.is_lock_free());
@@ -49,7 +50,6 @@ public:
             auto head = mHead.load();
             if (head.writeHead != head.readHead) continue;
             if (head.readHead == 0) {
-                result = nullptr;
                 return false;
             }
             result = mVec[head.readHead - 1];

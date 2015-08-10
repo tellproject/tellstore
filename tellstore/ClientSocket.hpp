@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <system_error>
+#include <tuple>
 
 namespace tell {
 namespace commitmanager {
@@ -123,11 +124,11 @@ class ScanResponse final : public crossbow::infinio::RpcResponseResult<ScanRespo
     using Base = crossbow::infinio::RpcResponseResult<ScanResponse, bool>;
 
 public:
-    ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, const Record& record, uint16_t scanId,
+    ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, Record record, uint16_t scanId,
             const char* data, size_t length)
             : Base(fiber),
               mSocket(socket),
-              mRecord(record),
+              mRecord(std::move(record)),
               mScanId(scanId),
               mData(data),
               mLength(length),
@@ -145,7 +146,7 @@ public:
     /**
      * @brief Advances the iterator to the next position and returns the tuple data
      */
-    const char* next();
+    std::tuple<uint64_t, const char*, size_t> next();
 
 private:
     friend Base;
@@ -162,7 +163,8 @@ private:
     void notifyProgress(uint16_t tupleCount);
 
     ClientSocket& mSocket;
-    const Record& mRecord;
+
+    Record mRecord;
 
     uint16_t mScanId;
 
@@ -213,7 +215,8 @@ public:
             const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            uint32_t queryLength, const char* query, const crossbow::infinio::LocalMemoryRegion& destRegion,
+            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+            const char* query, const crossbow::infinio::LocalMemoryRegion& destRegion,
             const commitmanager::SnapshotDescriptor& snapshot);
 
 private:

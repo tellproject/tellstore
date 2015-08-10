@@ -1,5 +1,7 @@
 #pragma once
 
+#include <util/UnsafeAtomic.hpp>
+
 #include <crossbow/logger.hpp>
 
 #include <atomic>
@@ -9,6 +11,8 @@
 namespace tell {
 namespace store {
 namespace logstructured {
+
+class ChainedVersionRecord;
 
 /**
  * @brief Types of record entries written to the log
@@ -112,11 +116,11 @@ public:
     }
 
     MutableRecordData mutableData() const {
-        return mData.load();
+        return mData.unsafe_load();
     }
 
     void mutableData(const MutableRecordData& data) {
-        mData.store(data);
+        mData.unsafe_store(data);
     }
 
     char* data() {
@@ -157,7 +161,7 @@ public:
      * Should only be used when certain that no other thread is accessing the record concurrently
      */
     void invalidate() {
-        return mData.store(MutableRecordData());
+        mData.unsafe_store(MutableRecordData());
     }
 
     /**
@@ -187,10 +191,9 @@ public:
 private:
     const uint64_t mKey;
     const uint64_t mValidFrom;
-    std::atomic<MutableRecordData> mData;
+    UnsafeAtomic<MutableRecordData> mData;
 };
 
 } // namespace logstructured
 } // namespace store
 } // namespace tell
-

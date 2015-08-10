@@ -235,19 +235,31 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
     auto remoteKey = request.read<uint32_t>();
     crossbow::infinio::RemoteMemoryRegion remoteRegion(remoteAddress, remoteLength, remoteKey);
 
+    auto selectionLength = request.read<uint32_t>();
+    auto selectionData = request.read(selectionLength);
+    std::unique_ptr<char[]> selection(new char[selectionLength]);
+    memcpy(selection.get(), selectionData, selectionLength);
+
+    auto queryType = crossbow::from_underlying<ScanQueryType>(request.read<uint8_t>());
+
+    request.align(sizeof(uint32_t));
     auto queryLength = request.read<uint32_t>();
     auto queryData = request.read(queryLength);
     std::unique_ptr<char[]> query(new char[queryLength]);
     memcpy(query.get(), queryData, queryLength);
 
     request.align(sizeof(uint64_t));
-    handleSnapshot(messageId, request, [this, messageId, tableId, scanId, &remoteRegion, queryLength, &query]
-            (const commitmanager::SnapshotDescriptor& snapshot) {
+    handleSnapshot(messageId, request,
+            [this, messageId, tableId, scanId, &remoteRegion, selectionLength, &selection, queryType, queryLength,
+             &query] (const commitmanager::SnapshotDescriptor& snapshot) {
         auto scanSnapshot = commitmanager::SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
                 snapshot.baseVersion(), snapshot.version(), snapshot.data());
 
-        std::unique_ptr<ClientScanQueryData> scanData(new ClientScanQueryData(messageId, std::move(scanSnapshot),
-                manager().pageRegion(), remoteRegion, mSocket));
+        auto table = mStorage.getTable(tableId);
+
+        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, messageId, queryType,
+                std::move(selection), selectionLength, std::move(query), queryLength, std::move(scanSnapshot),
+                table->record(), manager().scanBufferManager(), std::move(remoteRegion), mSocket));
         auto scanDataPtr = scanData.get();
         auto res = mScans.emplace(scanId, std::move(scanData));
         if (!res.second) {
@@ -255,61 +267,52 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
             return;
         }
 
-        std::vector<ScanQueryImpl*> impls;
-        auto numScans = mStorage.numScanThreads();
-        for (int i = 0; i < numScans; ++i) {
-            impls.push_back(new ClientScanQuery(scanId, scanDataPtr));
-        }
-
-        auto succeeded = mStorage.scan(tableId, query.release(), queryLength, impls);
+        auto succeeded = mStorage.scan(tableId, scanDataPtr);
         if (!succeeded) {
             writeErrorResponse(messageId, error::server_overlad);
-            for (auto impl: impls) {
-                delete impl;
-            }
             mScans.erase(res.first);
         }
     });
 }
 
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
-    // TODO We have to propagate the error to the ClientScanQuery so we can detach the scan
+    // TODO We have to propagate the error to the ServerScanQuery so we can detach the scan
     if (ec) {
         handleSocketError(ec);
         return;
     }
 
-    if (userId == 0x0u || userId > crossbow::to_underlying(ClientScanQueryData::ScanStatus::LAST)) {
-        LOG_ERROR("Scan progress with invalid userid");
-        return;
+    if (bufferId != crossbow::infinio::InfinibandBuffer::INVALID_ID) {
+        auto& scanBufferManager = manager().scanBufferManager();
+        scanBufferManager.releaseBuffer(bufferId);
     }
 
-    switch (crossbow::from_underlying<ClientScanQueryData::ScanStatus>(userId)) {
-
-    case ClientScanQueryData::ScanStatus::ONGOING: {
+    auto status = static_cast<uint16_t>(userId & 0xFFFFu);
+    switch (status) {
+    case crossbow::to_underlying(ScanStatusIndicator::ONGOING): {
         // Nothing to do
     } break;
 
-    case ClientScanQueryData::ScanStatus::DONE: {
-        auto i = mScans.find(bufferId);
+    case crossbow::to_underlying(ScanStatusIndicator::DONE): {
+        auto scanId = static_cast<uint16_t>((userId >> 16) & 0xFFFFu);
+        auto i = mScans.find(scanId);
         if (i == mScans.end()) {
-            return;
-        }
-        if (!i->second->decreaseActive()) {
+            LOG_ERROR("Scan progress with invalid scan ID");
             return;
         }
 
-        LOG_DEBUG("Scan with ID %1% finished", bufferId);
+        LOG_DEBUG("Scan with ID %1% finished", scanId);
         size_t messageLength = sizeof(uint16_t);
-        writeResponse(i->second->messageId(), ResponseType::SCAN, messageLength, [bufferId]
+        writeResponse(i->second->messageId(), ResponseType::SCAN, messageLength, [scanId]
                 (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint16_t>(bufferId);
+            message.write<uint16_t>(scanId);
         });
         mScans.erase(i);
     } break;
 
-    default:
-        break;
+    default: {
+        LOG_ERROR("Scan progress with invalid status");
+    } break;
     }
 }
 
@@ -359,7 +362,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
         const ServerConfig& config)
         : Base(service, config.port),
           mStorage(storage),
-          mPageRegion(service.registerMemoryRegion(mStorage.pageManager().data(), mStorage.pageManager().size(), 0)) {
+          mScanBufferManager(service, config) {
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
     }

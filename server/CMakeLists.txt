@@ -2,13 +2,13 @@
 # TellStore server
 ###################
 set(SERVER_SRCS
-    ClientScanQuery.cpp
+    ServerScanQuery.cpp
     ServerSocket.cpp
 )
 
 set(SERVER_PRIVATE_HDR
-    ClientScanQuery.hpp
     ServerConfig.hpp
+    ServerScanQuery.hpp
     ServerSocket.hpp
     Storage.hpp
 )

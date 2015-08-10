@@ -2,12 +2,17 @@
 # TellStore Logstructured implementation
 ###################
 set(LOGSTRUCTURED_SRCS
+    GcScanProcessor.cpp
     Table.cpp
+    VersionRecordIterator.cpp
 )
 
 set(LOGSTRUCTURED_PRIVATE_HDR
-    Record.hpp
+    ChainedVersionRecord.hpp
+    GcScanProcessor.hpp
+    LogstructuredMemoryStore.hpp
     Table.hpp
+    VersionRecordIterator.hpp
 )
 
 # Add TellStore logstructured library

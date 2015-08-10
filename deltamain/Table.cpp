@@ -12,14 +12,15 @@ namespace store {
 namespace deltamain {
 
 
-Table::Iterator::Iterator(
-        const std::shared_ptr<crossbow::allocator>& alloc,
+Table::ScanProcessor::ScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
         const PageList* pages,
         size_t pageIdx,
         size_t pageEndIdx,
         const LogIterator& logIter,
         const LogIterator& logEnd,
         PageManager* pageManager,
+        const char* queryBuffer,
+        const std::vector<ScanQuery*>& queryData,
         const Record* record)
     : mAllocator(alloc)
     , pages(pages)
@@ -28,14 +29,23 @@ Table::Iterator::Iterator(
     , logIter(logIter)
     , logEnd(logEnd)
     , pageManager(pageManager)
+    , query(queryBuffer, queryData)
     , record(record)
     , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
     , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
+    , currKey(0u)
 {
-    setCurrentEntry();
 }
 
-void Table::Iterator::next()
+void Table::ScanProcessor::process()
+{
+    for (setCurrentEntry(); currVersionIter.isValid(); next()) {
+        query.processRecord(*currVersionIter->record(), currKey, currVersionIter->data(), currVersionIter->size(),
+                currVersionIter->validFrom(), currVersionIter->validTo());
+    }
+}
+
+void Table::ScanProcessor::next()
 {
     // This assures that the iterator is invalid when we reached the end
     if (currVersionIter.isValid() && (++currVersionIter).isValid()) {
@@ -56,12 +66,13 @@ void Table::Iterator::next()
     setCurrentEntry();
 }
 
-void Table::Iterator::setCurrentEntry()
+void Table::ScanProcessor::setCurrentEntry()
 {
     while (logIter != logEnd) {
         if (logIter->sealed()) {
             CDMRecord rec(logIter->data());
             if (rec.isValidDataRecord()) {
+                currKey = rec.key();
                 currVersionIter = rec.getVersionIterator(record);
                 return;
             }
@@ -74,6 +85,7 @@ void Table::Iterator::setCurrentEntry()
         while (pageIter != pageEnd) {
             CDMRecord rec(*pageIter);
             if (rec.isValidDataRecord()) {
+                currKey = rec.key();
                 currVersionIter = rec.getVersionIterator(record);
                 return;
             }
@@ -299,21 +311,23 @@ bool Table::genericUpdate(const Fun& appendFun,
 #endif
 }
 
-std::vector<Table::Iterator> Table::startScan(int numThreads) const
+std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,
+        const std::vector<ScanQuery*>& queries) const
 {
     auto alloc = std::make_shared<crossbow::allocator>();
     auto insIter = mInsertLog.begin();
     auto endIns = mInsertLog.end();
     const auto* pages = mPages.load();
     auto numPages = pages->size();
-    std::vector<Iterator> result;
+    std::vector<ScanProcessor> result;
     result.reserve(numThreads);
     size_t beginIdx = 0;
     auto mod = numPages % numThreads;
     for (decltype(numThreads) i = 0; i < numThreads; ++i) {
         const auto& startIter = (i == numThreads - 1 ? insIter : endIns);
         auto endIdx = beginIdx + numPages / numThreads + (i < mod ? 1 : 0);
-        result.emplace_back(alloc, pages, beginIdx, endIdx, startIter, endIns, &mPageManager, &mRecord);
+        result.emplace_back(alloc, pages, beginIdx, endIdx, startIter, endIns, &mPageManager, queryBuffer, queries,
+                &mRecord);
         beginIdx = endIdx;
     }
     return result;

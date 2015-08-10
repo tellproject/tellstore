@@ -49,6 +49,18 @@ enum class PredicateType : uint8_t {
     IS_NOT_NULL
 };
 
+enum class AggregationType : uint8_t {
+    MIN,
+    MAX,
+    SUM,
+};
+
+enum ScanQueryType : uint8_t {
+    FULL = 0x1u,
+    PROJECTION,
+    AGGREGATION,
+};
+
 template<class NumberType>
 int cmp(NumberType left, NumberType right) {
     static_assert(std::is_floating_point<NumberType>::value ||
@@ -56,6 +68,34 @@ int cmp(NumberType left, NumberType right) {
     if (left < right) return -1;
     if (left > right) return 1;
     return 0;
+}
+
+template <class NumberType>
+void agg(AggregationType type, NumberType* result, NumberType value) {
+    static_assert(std::is_floating_point<NumberType>::value ||
+            std::is_integral<NumberType>::value, "agg is only supported for number types");
+
+    switch (type) {
+    case AggregationType::MIN: {
+        if (*result > value) {
+            *result = value;
+        }
+    } break;
+
+    case AggregationType::MAX: {
+        if (*result < value) {
+            *result = value;
+        }
+    } break;
+
+    case AggregationType::SUM: {
+        *result += value;
+    } break;
+
+    default: {
+        LOG_ASSERT(false, "Unknown aggregation type");
+    } break;
+    }
 }
 
 class FieldBase {
@@ -238,6 +278,39 @@ NUMBER_COMPARE:
             std::terminate();
         }
     }
+
+    void agg(AggregationType type, char* left, const char* right) {
+        switch (mType) {
+        case FieldType::SMALLINT: {
+            tell::store::agg(type, reinterpret_cast<int16_t*>(left), *reinterpret_cast<const int16_t*>(right));
+        } break;
+
+        case FieldType::INT: {
+            tell::store::agg(type, reinterpret_cast<int32_t*>(left), *reinterpret_cast<const int32_t*>(right));
+        } break;
+
+        case FieldType::BIGINT: {
+            tell::store::agg(type, reinterpret_cast<int64_t*>(left), *reinterpret_cast<const int64_t*>(right));
+        } break;
+
+        case FieldType::FLOAT: {
+            tell::store::agg(type, reinterpret_cast<float*>(left), *reinterpret_cast<const float*>(right));
+        } break;
+
+        case FieldType::DOUBLE: {
+            tell::store::agg(type, reinterpret_cast<double*>(left), *reinterpret_cast<const double*>(right));
+        } break;
+
+        case FieldType::TEXT:
+        case FieldType::BLOB: {
+            LOG_ASSERT(false, "Can not do this kind of aggregation on non-numeric types");
+        } break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown type");
+        }
+        }
+    }
 };
 
 class Field : public FieldBase {
@@ -374,6 +447,10 @@ public:
 
     size_t sizeOfTuple(const char* ptr) const;
 
+    size_t headerSize() const;
+
+    size_t minimumSize() const;
+
     bool idOf(const crossbow::string& name, id_t& result) const;
 
     const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
@@ -386,13 +463,20 @@ public:
     */
     char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
 
+    size_t fieldCount() const {
+        return mFieldMetaData.size();
+    }
+
     const std::pair<Field, int32_t>& getFieldMeta(id_t id) const {
         return mFieldMetaData.at(id);
     }
+
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
 
     bool isFieldNull(const char* ptr, id_t id) const;
+
+    void setFieldNull(char* ptr, Record::id_t id, bool isNull) const;
 };
 
 } // namespace store

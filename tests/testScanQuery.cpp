@@ -52,8 +52,6 @@ protected:
 
     bool checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record);
 
-    ScanQuery mQuery;
-
     Schema mSchema;
 
     uint64_t mTuple1Size;
@@ -64,9 +62,9 @@ protected:
 };
 
 bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record) {
-    mQuery.query = qbuffer;
-    auto res = mQuery.check(tuple, mQuery.query, record);
-    EXPECT_EQ(qbuffer + qsize, mQuery.query) << "Returned pointer does not point at end of qbuffer";
+    auto q = qbuffer;
+    auto res = ScanQueryBatchProcessor::check(q, tuple, record);
+    EXPECT_EQ(qbuffer + qsize, q) << "Returned pointer does not point at end of qbuffer";
     return res;
 }
 

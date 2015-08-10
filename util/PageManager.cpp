@@ -12,7 +12,7 @@ namespace store {
 
 PageManager::PageManager(size_t size)
     : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)), mSize(size), mPages(
-    size / TELL_PAGE_SIZE)
+    size / TELL_PAGE_SIZE, nullptr)
 {
     if (mData == MAP_FAILED) {
         throw std::bad_alloc();

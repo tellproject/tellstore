@@ -1,7 +1,7 @@
 #include <config.h>
 
 #include <deltamain/Table.hpp>
-#include <logstructured/Table.hpp>
+#include <logstructured/LogstructuredMemoryStore.hpp>
 
 #include "DummyCommitManager.hpp"
 

@@ -4,7 +4,7 @@
 #include <util/TableManager.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
-#include <util/IteratorEntry.hpp>
+#include <util/ScanQuery.hpp>
 #include <util/StoreImpl.hpp>
 #include <util/VersionManager.hpp>
 
@@ -42,9 +42,7 @@ class Table {
     const uint32_t mNumberOfVarSizedFields;
 #endif
 public:
-    class Iterator {
-    public:
-        using IteratorEntry = BaseIteratorEntry;
+    class ScanProcessor {
     private:
         friend class Table;
         using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
@@ -56,36 +54,38 @@ public:
         LogIterator logIter;
         LogIterator logEnd;
         PageManager* pageManager;
+        ScanQueryBatchProcessor query;
         const Record* record;
     private: // calculated members
+        void next();
+
         void setCurrentEntry();
 
         Page::Iterator pageIter;
         Page::Iterator pageEnd;
+        uint64_t currKey;
         CDMRecord::VersionIterator currVersionIter;
     public:
-        Iterator(const std::shared_ptr<crossbow::allocator>& alloc,
+        ScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
                  const PageList* pages,
                  size_t pageIdx,
                  size_t pageEndIdx,
                  const LogIterator& logIter,
                  const LogIterator& logEnd,
                  PageManager* pageManager,
+                 const char* queryBuffer,
+                 const std::vector<ScanQuery*>& queryData,
                  const Record* record);
 
-        void next();
-
-        bool done() {
-            return !currVersionIter.isValid();
-        }
-
-        const IteratorEntry& value() {
-            return *currVersionIter;
-        }
+        void process();
     };
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
 
     ~Table();
+
+    const Record& record() const {
+        return mRecord;
+    }
 
     const Schema& schema() const {
         return mRecord.schema();
@@ -146,7 +146,8 @@ public:
 
     void runGC(uint64_t minVersion);
 
-    std::vector<Iterator> startScan(int numThreads) const;
+    std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
+            const std::vector<ScanQuery*>& queries) const;
 private:
     template<class Fun>
     bool genericUpdate(const Fun& appendFun,
@@ -175,10 +176,6 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
 
     StoreImpl(const StorageConfig& config, size_t totalMem);
 
-    PageManager& pageManager() {
-        return *(mPageManager.get());
-    }
-
     bool createTable(const crossbow::string &name,
                      const Schema& schema,
                      uint64_t& idx)
@@ -186,7 +183,13 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return tableManager.createTable(name, schema, idx);
     }
 
-    const Table* getTable(const crossbow::string& name, uint64_t& id) const {
+    const Table* getTable(uint64_t id) const
+    {
+        return tableManager.getTable(id);
+    }
+
+    const Table* getTable(const crossbow::string& name, uint64_t& id) const
+    {
         return tableManager.getTable(name, id);
     }
 
@@ -234,12 +237,9 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> {
         return tableManager.revert(tableId, key, snapshot);
     }
 
-    int numScanThreads() const {
-        return tableManager.numScanThreads();
-    }
-
-    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
-        return tableManager.scan(tableId, query, querySize, impls);
+    bool scan(uint64_t tableId, ScanQuery* query)
+    {
+        return tableManager.scan(tableId, query);
     }
 
     /**

@@ -46,7 +46,6 @@ int main(int argc, const char** argv) {
     infinibandLimits.sendBufferCount = 128;
     infinibandLimits.bufferLength = 32 * 1024;
     infinibandLimits.sendQueueLength = 128;
-    infinibandLimits.maxScatterGather = 32;
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 

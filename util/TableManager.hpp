@@ -34,11 +34,12 @@ inline size_t tbb_hasher(const crossbow::string& str)
 namespace tell {
 namespace store {
 
+class ScanQuery;
+class PageManager;
+
 class NoGC {
 public:
 };
-
-class PageManager;
 
 template<class Table, class GC>
 class TableManager {
@@ -130,6 +131,10 @@ public:
         return true;
     }
 
+    const Table* getTable(uint64_t id) const {
+        return lookupTable(id);
+    }
+
     const Table* getTable(const crossbow::string& name, uint64_t& id) const {
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         auto res = mNames.find(name);
@@ -193,18 +198,8 @@ public:
         return lookupTable(tableId)->revert(key, snapshot);
     }
 
-    int numScanThreads() const {
-        return mScanThreads.numThreads();
-    }
-
-    bool scan(uint64_t tableId, char* query, size_t querySize, const std::vector<ScanQueryImpl*>& impls) {
-        ScanRequest<Table> request;
-        request.tableId = tableId;
-        request.table = lookupTable(tableId);
-        request.query = query;
-        request.querySize = querySize;
-        request.impls = impls;
-        return mScanThreads.scan(std::move(request));
+    bool scan(uint64_t tableId, ScanQuery* query) {
+        return mScanThreads.scan(tableId, lookupTable(tableId), query);
     }
 
     void forceGC() {
