@@ -13,6 +13,9 @@ set(DELTAMAIN_PRIVATE_HDR
     InsertMap.hpp
     Page.hpp
     Record.hpp
+    LogRecord.hpp
+    rowstore/RowStoreRecord.hpp
+    colstore/ColumnMapRecord.hpp
     Table.hpp
     DeltaMainRewriteStore.hpp
 )

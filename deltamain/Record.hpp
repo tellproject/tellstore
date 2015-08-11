@@ -89,7 +89,6 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  */
 #if defined USE_COLUMN_MAP
         #define IS_MV_RECORD ((reinterpret_cast<uint64_t>(mData) >> 1) % 2)
-        #define MV_BASE_ADDRESS (mData - 2)
 #endif
 
 template<class T>
@@ -103,10 +102,20 @@ public:
     DMRecordImplBase(T data) : mData(data) {}
 
     RecordType type() const {
+#if defined USE_COLUMN_MAP
+// if we use columnMap, finding the type is slightly more tricky
+        if (IS_MV_RECORD)
+            return RecordType::MULTI_VERSION_RECORD;
+#endif
         return crossbow::from_underlying<Type>(*mData);
     }
 
     uint64_t key() const {
+#if defined USE_COLUMN_MAP
+// if we use columnMap, the key is at a different offset
+        if (IS_MV_RECORD)
+            return *reinterpret_cast<const uint64_t*>(mData -2);
+#endif
         return *reinterpret_cast<const uint64_t*>(mData + 8);
     }
 
