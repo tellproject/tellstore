@@ -5,8 +5,9 @@ set(DELTAMAIN_SRCS
     Page.cpp
     Record.cpp
     Table.cpp
-#    RowStoreRecord.cpp
-#    ColumnMapRecord.cpp
+    rowstore/RowStoreVersionIterator.cpp
+    rowstore/RowStoreScanProcessor.cpp
+    colstore/ColumnMapScanProcessor.cpp
 )
 
 set(DELTAMAIN_PRIVATE_HDR
@@ -15,7 +16,10 @@ set(DELTAMAIN_PRIVATE_HDR
     Record.hpp
     LogRecord.hpp
     rowstore/RowStoreRecord.hpp
+    rowstore/RowStoreVersionIterator.hpp
+    rowstore/RowStoreScanProcessor.hpp
     colstore/ColumnMapRecord.hpp
+    colstore/ColumnMapScanProcessor.hpp
     Table.hpp
     DeltaMainRewriteStore.hpp
 )

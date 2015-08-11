@@ -14,6 +14,8 @@
 #include <functional>
 
 #include "Page.hpp"
+#include "rowstore/RowStoreScanProcessor.hpp"
+#include "colstore/ColumnMapScanProcessor.hpp"
 
 namespace tell {
 namespace commitmanager {
@@ -37,47 +39,19 @@ class Table {
     std::atomic<PageList*> mPages;
     const uint32_t mNumberOfFixedSizedFields;   //@braunl: added for speedup
     const uint32_t mNumberOfVarSizedFields;     //@braunl: added for speedup
+
 public:
-    class ScanProcessor {
-    private:
-        friend class Table;
-        using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
-    private: // assigned members
-        std::shared_ptr<crossbow::allocator> mAllocator;
-        const PageList* pages;
-        size_t pageIdx;
-        size_t pageEndIdx;
-        LogIterator logIter;
-        LogIterator logEnd;
-        PageManager* pageManager;
-        ScanQueryBatchProcessor query;
-        const Record* record;
-    private: // calculated members
-        void next();
-
-        void setCurrentEntry();
-
-        Page::Iterator pageIter;
-        Page::Iterator pageEnd;
-        uint64_t currKey;
-        CDMRecord::VersionIterator currVersionIter;
-    public:
-        ScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-                 const PageList* pages,
-                 size_t pageIdx,
-                 size_t pageEndIdx,
-                 const LogIterator& logIter,
-                 const LogIterator& logEnd,
-                 PageManager* pageManager,
-                 const char* queryBuffer,
-                 const std::vector<ScanQuery*>& queryData,
-                 const Record* record);
-
-        void process();
-    };
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
 
     ~Table();
+
+#if defined USE_ROW_STORE
+    using ScanProcessor = RowStoreScanProcessor;
+#elif defined USE_COLUMN_MAP
+    using ScanProcessor = ColumnMapScanProcessor;
+#else
+#error "Unknown storage layout"
+#endif
 
     const Record& record() const {
         return mRecord;
@@ -146,6 +120,14 @@ public:
 
     void runGC(uint64_t minVersion);
 
+    /**
+     * prepares a shared scan executed in parallel for the given number
+     * of threads, the queryBuffer and the queries themselves. Returns one
+     * ScanProcessor object per thread that encapsulates all relevant information
+     * to perform the scan (using ScanProcessor.process()). The method assigns
+     * each thread the same amount (storage) pages and the last thread gets the
+     * insert log in addition.
+     */
     std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries) const;
 private:
