@@ -107,12 +107,9 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mPages(crossbow::allocator::construct<PageList>())
-#if defined USE_COLUMN_MAP
-    ,
+    , mPages(crossbow::allocator::construct<PageList>()),
     mNumberOfFixedSizedFields(schema.fixedSizeFields().size()),
     mNumberOfVarSizedFields(schema.varSizeFields().size())
-#endif
 {}
 
 Table::~Table() {
@@ -184,13 +181,7 @@ void Table::insert(uint64_t key,
 
         uint64_t version;
         size_t s;
-#if defined USE_ROW_STORE
-        rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted);
-#elif defined USE_COLUMN_MAP
         rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted, this, false);
-#else
-#error "Unknown storage layout"
-#endif
 
         if (isValid && !(wasDeleted && isNewest)) {
             if (succeeded) *succeeded = false;
@@ -302,13 +293,7 @@ bool Table::genericUpdate(const Fun& appendFun,
     char* nextPtr = appendFun();
     DMRecord rec(reinterpret_cast<char*>(ptr));
     bool isValid;
-#if defined USE_ROW_STORE
-    return rec.update(nextPtr, isValid, snapshot);
-#elif defined USE_COLUMN_MAP
     return rec.update(nextPtr, isValid, snapshot, this);
-#else
-#error "Unknown storage layout"
-#endif
 }
 
 std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,

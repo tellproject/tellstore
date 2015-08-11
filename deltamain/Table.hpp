@@ -35,10 +35,8 @@ class Table {
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<PageList*> mPages;
-#if defined USE_COLUMN_MAP
-    const uint32_t mNumberOfFixedSizedFields;
-    const uint32_t mNumberOfVarSizedFields;
-#endif
+    const uint32_t mNumberOfFixedSizedFields;   //@braunl: added for speedup
+    const uint32_t mNumberOfVarSizedFields;     //@braunl: added for speedup
 public:
     class ScanProcessor {
     private:
@@ -89,7 +87,9 @@ public:
         return mRecord.schema();
     }
 
-#if defined USE_COLUMN_MAP
+/**
+ * @braunl: added the following helper functions used by the columnMap store
+ */
     const PageManager* pageManager() const {
         return pageManager();
     }
@@ -112,7 +112,9 @@ public:
     const int32_t getNumberOfVarSizedFields() const {
         return mNumberOfVarSizedFields;
     }
-#endif
+/**
+ * @braunl: end of helper functions
+ */
 
     TableType type() const {
         return mRecord.schema().type();
