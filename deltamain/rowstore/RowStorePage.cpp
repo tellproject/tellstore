@@ -1,42 +1,42 @@
-#include "Page.hpp"
-#include "InsertMap.hpp"
+#include "RowStorePage.hpp"
+#include "deltamain/InsertMap.hpp"
 #include <util/CuckooHash.hpp>
 
 namespace tell {
 namespace store {
 namespace deltamain {
 
-auto Page::Iterator::operator++() -> Iterator&
+auto RowStorePage::Iterator::operator++() -> Iterator&
 {
     CDMRecord rec(current);
     current += rec.size();
     return *this;
 }
 
-auto Page::Iterator::operator++(int) -> Iterator
+auto RowStorePage::Iterator::operator++(int) -> Iterator
 {
     auto res = *this;
     ++(*this);
     return res;
 }
 
-const char* Page::Iterator::operator*() const {
+const char* RowStorePage::Iterator::operator*() const {
     return current;
 }
 
-bool Page::Iterator::operator== (const Iterator& other) const {
+bool RowStorePage::Iterator::operator== (const Iterator& other) const {
     return current == other.current;
 }
 
-auto Page::begin() const -> Iterator {
+auto RowStorePage::begin() const -> Iterator {
     return Iterator(mData + 8);
 }
 
-auto Page::end() const -> Iterator {
+auto RowStorePage::end() const -> Iterator {
     return Iterator(mData + usedMemory());
 }
 
-char* Page::gc(
+char* RowStorePage::gc(
         uint64_t lowestActiveVersion,
         InsertMap& insertMap,
         char*& fillPage,
@@ -112,7 +112,7 @@ char* Page::gc(
         return res;
 }
 
-void Page::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
+void RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
 {
     auto fillOffset = *reinterpret_cast<uint64_t*>(fillPage);
     char dummyRecord[40];

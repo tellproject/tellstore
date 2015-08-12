@@ -3,7 +3,7 @@
 #include <util/Log.hpp>
 
 #include "RowStoreVersionIterator.hpp"
-#include "deltamain/Page.hpp"
+#include "RowStorePage.hpp"
 
 namespace tell {
 namespace store {
@@ -29,8 +29,8 @@ private: // calculated members
 
     void setCurrentEntry();
 
-    Page::Iterator pageIter;
-    Page::Iterator pageEnd;
+    RowStorePage::Iterator pageIter;
+    RowStorePage::Iterator pageEnd;
     uint64_t currKey;
     RowStoreVersionIterator currVersionIter;
 public:

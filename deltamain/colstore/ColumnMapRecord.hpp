@@ -69,6 +69,7 @@ namespace impl {
  * current record within the page (return value).
  */
 inline uint32_t getBaseKnowledge(const char* data, const Table *table, const char *&basePtr, uint32_t &capacity) {
+    LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
     basePtr = table->pageManager()->getPageStart(data);
     capacity = *(reinterpret_cast<const uint32_t*>(basePtr));
     return (reinterpret_cast<uint64_t>(data-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
@@ -160,12 +161,8 @@ public:
     using Type = typename DMRecordImplBase<T>::Type;
     ColMapMVRecordBase(T data) : mData(data) {}
 
-    /**
-     * TODO: For now, this function has default parameter in order for the
-     * VersionIterator to compile. Once we really want to make it useful
-     * we have to force the caller to give non-null arguments!
-     */
-    T getNewest(const Table *table = nullptr, const uint32_t index = 0, const char * basePtr = nullptr, const uint32_t capacity = 0) const {
+    T getNewest(const Table *table, const uint32_t index, const char * basePtr, const uint32_t capacity) const {
+        LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
         GET_NEWEST
         return reinterpret_cast<char*>(p);
     }

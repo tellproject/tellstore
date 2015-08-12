@@ -2,7 +2,7 @@
 
 #include <util/Log.hpp>
 
-#include "deltamain/Page.hpp"
+#include "ColumnMapPage.hpp"
 
 namespace tell {
 namespace store {
@@ -25,8 +25,6 @@ private: // assigned members
     const Record* record;
 private: // calculated members
 
-    Page::Iterator pageIter;
-    Page::Iterator pageEnd;
     uint64_t currKey;
 public:
     ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,

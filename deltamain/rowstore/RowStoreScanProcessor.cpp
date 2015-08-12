@@ -25,8 +25,8 @@ RowStoreScanProcessor::RowStoreScanProcessor(const std::shared_ptr<crossbow::all
     , pageManager(pageManager)
     , query(queryBuffer, queryData)
     , record(record)
-    , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
-    , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
+    , pageIter(RowStorePage(*pageManager, (*pages)[pageIdx]).begin())
+    , pageEnd (RowStorePage(*pageManager, (*pages)[pageIdx]).end())
     , currKey(0u)
 {
 }
@@ -53,7 +53,7 @@ void RowStoreScanProcessor::next()
         ++pageIdx;
         if (pageIdx >= pageEndIdx)
             return;
-        Page p(*pageManager, (*pages)[pageIdx]);
+        RowStorePage p(*pageManager, (*pages)[pageIdx]);
         pageIter = p.begin();
         pageEnd = p.end();
     }
@@ -88,7 +88,7 @@ void RowStoreScanProcessor::setCurrentEntry()
         ++pageIdx;
         if (pageIdx >= pageEndIdx)
             return;
-        Page p(*pageManager, (*pages)[pageIdx]);
+        RowStorePage p(*pageManager, (*pages)[pageIdx]);
         pageIter = p.begin();
         pageEnd = p.end();
     }

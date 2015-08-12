@@ -13,7 +13,8 @@
 #include <atomic>
 #include <functional>
 
-#include "Page.hpp"
+#include "rowstore/RowStorePage.hpp"
+#include "colstore/ColumnMapPage.hpp"
 #include "rowstore/RowStoreScanProcessor.hpp"
 #include "colstore/ColumnMapScanProcessor.hpp"
 
@@ -47,8 +48,10 @@ public:
 
 #if defined USE_ROW_STORE
     using ScanProcessor = RowStoreScanProcessor;
+    using Page = RowStorePage;
 #elif defined USE_COLUMN_MAP
     using ScanProcessor = ColumnMapScanProcessor;
+    using Page = ColumnMapPage;
 #else
 #error "Unknown storage layout"
 #endif
@@ -127,6 +130,8 @@ public:
      * to perform the scan (using ScanProcessor.process()). The method assigns
      * each thread the same amount (storage) pages and the last thread gets the
      * insert log in addition.
+     * TODO: question: what happens with the update-log?! Shouldn't that be
+     * scanned as well?
      */
     std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries) const;
@@ -137,6 +142,9 @@ private:
                        const commitmanager::SnapshotDescriptor& snapshot);
 };
 
+//TODO: question: isn't that code that could be shared between different approaches?
+//Do we really need a separate garbage collector class for every approach? And is this
+//the right place to put it?
 class GarbageCollector {
 public:
     void run(const std::vector<Table*>& tables, uint64_t minVersion);

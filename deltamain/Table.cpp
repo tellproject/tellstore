@@ -1,6 +1,7 @@
 #include "Table.hpp"
 #include "Record.hpp"
-#include "Page.hpp"
+#include "rowstore/RowStorePage.hpp"
+#include "colstore/ColumnMapPage.hpp"
 #include "InsertMap.hpp"
 
 #include <commitmanager/SnapshotDescriptor.hpp>

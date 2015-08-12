@@ -2,23 +2,25 @@
 # TellStore Delta Main implementation
 ###################
 set(DELTAMAIN_SRCS
-    Page.cpp
     Record.cpp
     Table.cpp
     rowstore/RowStoreVersionIterator.cpp
+    rowstore/RowStorePage.cpp
     rowstore/RowStoreScanProcessor.cpp
+    colstore/ColumnMapPage.cpp
     colstore/ColumnMapScanProcessor.cpp
 )
 
 set(DELTAMAIN_PRIVATE_HDR
     InsertMap.hpp
-    Page.hpp
     Record.hpp
     LogRecord.hpp
     rowstore/RowStoreRecord.hpp
     rowstore/RowStoreVersionIterator.hpp
+    rowstore/RowStorePage.hpp
     rowstore/RowStoreScanProcessor.hpp
     colstore/ColumnMapRecord.hpp
+    colstore/ColumnMapPage.hpp
     colstore/ColumnMapScanProcessor.hpp
     Table.hpp
     DeltaMainRewriteStore.hpp

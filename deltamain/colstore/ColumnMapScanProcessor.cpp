@@ -25,8 +25,6 @@ ColumnMapScanProcessor::ColumnMapScanProcessor(const std::shared_ptr<crossbow::a
     , pageManager(pageManager)
     , query(queryBuffer, queryData)
     , record(record)
-    , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
-    , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
     , currKey(0u)
 {
 }
