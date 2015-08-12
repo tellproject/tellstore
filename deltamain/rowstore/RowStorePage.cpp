@@ -1,5 +1,7 @@
 #include "RowStorePage.hpp"
 #include "deltamain/InsertMap.hpp"
+#include "deltamain/Record.hpp"
+
 #include <util/CuckooHash.hpp>
 
 namespace tell {

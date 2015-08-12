@@ -1,5 +1,7 @@
 #include "ColumnMapPage.hpp"
 #include "deltamain/InsertMap.hpp"
+#include "deltamain/Record.hpp"
+
 #include <util/CuckooHash.hpp>
 
 namespace tell {
@@ -13,7 +15,14 @@ char* ColumnMapPage::gc(
         bool& done,
         Modifier& hashTable)
 {
-    //TODO: implement
+    CDMRecord rec(mData + 8);
+    if (rec.needsCleaning(lowestActiveVersion, insertMap)) {
+        // we are done - no cleaning needed for this page
+        done = true;
+        return mData;
+    }
+    //TODO: continue here
+
     return nullptr;
 }
 

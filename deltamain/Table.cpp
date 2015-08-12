@@ -271,6 +271,7 @@ void Table::runGC(uint64_t minVersion) {
     }
     // now we can process the inserts
     while (!insertMap.empty()) {
+        //TODO: question: isnt't it that fill page could actually still poit to a page that was not pushed to nPages yet??
         fillPage = reinterpret_cast<char*>(mPageManager.alloc());
         Page::fillWithInserts(minVersion, insertMap, fillPage, hashTable);
         nPages.push_back(fillPage);

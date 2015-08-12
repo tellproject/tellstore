@@ -26,7 +26,7 @@ namespace impl {
  *   how much space the var-sized values will need, it might be that the actual
  *   count of records is smaller than the capacity.
  * - count: int32 to store the number of records that are actually stored in
- *   this page.
+ *   this page. This actually only important for scans.
  * - key-version column: an array of size capcity of 16-byte values in format:
  *   |key (8 byte)|version (8 byte)|
  * - newest-pointers: an array of size capacity of 8-byte pointers to newest
@@ -222,10 +222,33 @@ public:
         std::terminate();
     }
 
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
-        //TODO: implement
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
+    /**
+     * in contrast to the row-store variant, this method checks an entire
+     * page for cleaning at once!
+     */
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap, const Table* table) const {
+        COMPUTE_BASE_KNOWLEDGE(mData, table)
+        auto nullBitMapSize = getNullBitMapSize(table);
+
+        // check whether there are some versions below base versions and whether the key appears in the insert map
+        uint64_t *keyPtr = const_cast<uint64_t *>(getKeyAt(0, basePtr));
+        for (uint i = 0; i < capacity; keyPtr +=2) {
+            if (keyPtr[1] < lowestActiveVersion) return true;
+            if (insertMap.count(keyPtr[0])) return true;
+        }
+
+        // check whether there were updates (newestptrs start right after key-version column)
+        for (uint i = 0; i < capacity; ++keyPtr) {
+            if (*keyPtr) return true;
+        }
+
+        // check whether there were deletions or reverts
+        int32_t *varlengthPtr = const_cast<int32_t *>(getVarsizedLenghtAt(0, basePtr, capacity, nullBitMapSize));
+        for (uint i = 0; i < capacity; ++varlengthPtr) {
+            if (*varlengthPtr <= 0) return true;
+        }
+
+        return false;
     }
 
     /**

@@ -155,7 +155,7 @@ public:
 
     RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap,  const Table* table = nullptr) const;
     void collect(
             impl::VersionMap& versions,
             bool& newestIsDelete,
