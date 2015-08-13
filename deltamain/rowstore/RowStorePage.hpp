@@ -7,8 +7,8 @@
 #include <util/PageManager.hpp>
 #include <util/Scan.hpp>
 
-#include "Record.hpp"
-#include "InsertMap.hpp"
+#include "deltamain/Record.hpp"
+#include "deltamain/InsertMap.hpp"
 
 #include <crossbow/allocator.hpp>
 
@@ -20,13 +20,13 @@ class Modifier;
 
 namespace deltamain {
 
-class Page {
+class RowStorePage {
     PageManager& mPageManager;
     char* mData;
     uint64_t mStartOffset;
 public:
     class Iterator {
-        friend class Page;
+        friend class RowStorePage;
     private:
         const char* current;
         Iterator(const char* current) : current(current) {}
@@ -43,7 +43,7 @@ public:
         }
         const char* operator*() const;
     };
-    Page(PageManager& pageManager, char* data)
+    RowStorePage(PageManager& pageManager, char* data)
         : mPageManager(pageManager)
         , mData(data)
         , mStartOffset(8) {}

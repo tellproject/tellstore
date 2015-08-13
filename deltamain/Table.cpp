@@ -1,6 +1,7 @@
 #include "Table.hpp"
 #include "Record.hpp"
-#include "Page.hpp"
+#include "rowstore/RowStorePage.hpp"
+#include "colstore/ColumnMapPage.hpp"
 #include "InsertMap.hpp"
 
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -10,96 +11,6 @@
 namespace tell {
 namespace store {
 namespace deltamain {
-
-
-Table::ScanProcessor::ScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-        const PageList* pages,
-        size_t pageIdx,
-        size_t pageEndIdx,
-        const LogIterator& logIter,
-        const LogIterator& logEnd,
-        PageManager* pageManager,
-        const char* queryBuffer,
-        const std::vector<ScanQuery*>& queryData,
-        const Record* record)
-    : mAllocator(alloc)
-    , pages(pages)
-    , pageIdx(pageIdx)
-    , pageEndIdx(pageEndIdx)
-    , logIter(logIter)
-    , logEnd(logEnd)
-    , pageManager(pageManager)
-    , query(queryBuffer, queryData)
-    , record(record)
-    , pageIter(Page(*pageManager, (*pages)[pageIdx]).begin())
-    , pageEnd (Page(*pageManager, (*pages)[pageIdx]).end())
-    , currKey(0u)
-{
-}
-
-void Table::ScanProcessor::process()
-{
-    for (setCurrentEntry(); currVersionIter.isValid(); next()) {
-        query.processRecord(*currVersionIter->record(), currKey, currVersionIter->data(), currVersionIter->size(),
-                currVersionIter->validFrom(), currVersionIter->validTo());
-    }
-}
-
-void Table::ScanProcessor::next()
-{
-    // This assures that the iterator is invalid when we reached the end
-    if (currVersionIter.isValid() && (++currVersionIter).isValid()) {
-        return;
-    }
-    if (logIter != logEnd) {
-        ++logIter;
-    } else if (pageIter != pageEnd) {
-        ++pageIter;
-    } else {
-        ++pageIdx;
-        if (pageIdx >= pageEndIdx)
-            return;
-        Page p(*pageManager, (*pages)[pageIdx]);
-        pageIter = p.begin();
-        pageEnd = p.end();
-    }
-    setCurrentEntry();
-}
-
-void Table::ScanProcessor::setCurrentEntry()
-{
-    while (logIter != logEnd) {
-        if (logIter->sealed()) {
-            CDMRecord rec(logIter->data());
-            if (rec.isValidDataRecord()) {
-                currKey = rec.key();
-                currVersionIter = rec.getVersionIterator(record);
-                return;
-            }
-        }
-        ++logIter;
-    }
-    if (pageIdx >= pageEndIdx)
-        return;
-    while (true) {
-        while (pageIter != pageEnd) {
-            CDMRecord rec(*pageIter);
-            if (rec.isValidDataRecord()) {
-                currKey = rec.key();
-                currVersionIter = rec.getVersionIterator(record);
-                return;
-            }
-            ++pageIter;
-        }
-        ++pageIdx;
-        if (pageIdx >= pageEndIdx)
-            return;
-        Page p(*pageManager, (*pages)[pageIdx]);
-        pageIter = p.begin();
-        pageEnd = p.end();
-    }
-}
-
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)

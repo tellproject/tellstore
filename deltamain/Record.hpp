@@ -4,11 +4,10 @@
 #include <map>
 #include <atomic>
 
+#include <crossbow/enum_underlying.hpp>
 #include <util/IteratorEntry.hpp>
 
 #include "InsertMap.hpp"
-
-#include <crossbow/enum_underlying.hpp>
 
 // @braunl: we need this in order to make sure that we have access to
 // the compile parameters...
@@ -40,6 +39,7 @@ struct VersionHolder {
     std::atomic<const char*>* nextPtr;
 };
 using VersionMap = std::map<uint64_t, VersionHolder>;
+
 }
 
 /**
@@ -83,6 +83,13 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  */
 
 /**
+ * VersionIterator only makes sense for row stores!
+ */
+class RowStoreVersionIterator;
+using VersionIterator = RowStoreVersionIterator;
+
+
+/**
  * if we use columnMap, MV records need a special treatment for data pointers
  * as pointers point directly to a key but have the second last bit set to 1 to
  * indicate that this is an MV and not any kind of log record.
@@ -99,6 +106,7 @@ protected:
     T mData;
 public:
     using Type = RecordType;
+
     DMRecordImplBase(T data) : mData(data) {}
 
     RecordType type() const {
@@ -171,26 +179,7 @@ public:
      */
     bool isValidDataRecord() const;
 
-public: // Interface for iterating over all versions
-    class VersionIterator {
-    public:
-        using IteratorEntry = BaseIteratorEntry;
-    private:
-        friend class DMRecordImplBase<T>;
-        IteratorEntry currEntry;
-        const Record* record;
-        const char* current = nullptr;
-        int idx = 0;
-        VersionIterator(const Record* record, const char* current);
-        void initRes();
-    public: // access
-        VersionIterator() {}
-        bool isValid() const { return current != nullptr; }
-        VersionIterator& operator++();
-        const IteratorEntry& operator*() const;
-        const IteratorEntry* operator->() const;
-    };
-    VersionIterator getVersionIterator(const Record* record) const;
+    const VersionIterator getVersionIterator(const Record *record) const;
 };
 
 template<class T>
