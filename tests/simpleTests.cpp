@@ -114,9 +114,9 @@ public:
         mSchema.addField(FieldType::TEXT, "text2", true);
 
         Record record(mSchema);
-        for (int32_t i = 0; i < mTuple.size(); ++i) {
+        for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
             GenericTuple insertTuple({
-                    std::make_pair<crossbow::string, boost::any>("number", i),
+                    std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
                     std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
                     std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
                     std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
@@ -150,7 +150,7 @@ public:
             EXPECT_TRUE(isNewest);
 
             auto numberData = getTupleData(getData, record, "number");
-            EXPECT_EQ(key % mTuple.size(), *reinterpret_cast<const int32_t*>(numberData));
+            EXPECT_EQ(static_cast<int32_t>(key % mTuple.size()), *reinterpret_cast<const int32_t*>(numberData));
 
             auto text1Data = getTupleData(getData, record, "text1");
             EXPECT_EQ(gTupleText1, crossbow::string(text1Data + sizeof(uint32_t),

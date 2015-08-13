@@ -296,7 +296,7 @@ bool Table::genericUpdate(const Fun& appendFun,
     return rec.update(nextPtr, isValid, snapshot, this);
 }
 
-std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,
+std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,
         const std::vector<ScanQuery*>& queries) const
 {
     auto alloc = std::make_shared<crossbow::allocator>();

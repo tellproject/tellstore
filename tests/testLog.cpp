@@ -50,9 +50,9 @@ protected:
  */
 TEST_F(LogPageTest, entrySize) {
     auto entry = mPage->append(31);
-    EXPECT_EQ(31, entry->size()) << "Size is not the same as in append";
-    EXPECT_EQ(48, entry->entrySize()) << "Entry size is not 16 byte padded";
-    EXPECT_EQ(0, (reinterpret_cast<uintptr_t>(entry->data()) % 16)) << "Entry data is not 16 byte aligned";
+    EXPECT_EQ(31u, entry->size()) << "Size is not the same as in append";
+    EXPECT_EQ(48u, entry->entrySize()) << "Entry size is not 16 byte padded";
+    EXPECT_EQ(0u, (reinterpret_cast<uintptr_t>(entry->data()) % 16)) << "Entry data is not 16 byte aligned";
 }
 
 /**
@@ -74,7 +74,7 @@ TEST_F(LogPageTest, sealEntry) {
 
     entry->seal();
     EXPECT_TRUE(entry->sealed()) << "Sealed entry is not sealed";
-    EXPECT_EQ(31, entry->size()) << "Size is not the same as in append";
+    EXPECT_EQ(31u, entry->size()) << "Size is not the same as in append";
 }
 
 /**
@@ -237,7 +237,7 @@ TEST_F(UnorderedLogTest, appendPage) {
     page2->next().store(page1);
     mLog.appendPage(page2, page1);
 
-    EXPECT_EQ(3, mLog.pages()) << "Page count not incremented";
+    EXPECT_EQ(3u, mLog.pages()) << "Page count not incremented";
     EXPECT_NE(page1, mLog.head()) << "Head pointing to appended page";
     EXPECT_NE(page2, mLog.head()) << "Head pointing to appended page";
 
@@ -266,11 +266,11 @@ TEST_F(UnorderedLogTest, appendPage) {
 TEST_F(UnorderedLogTest, appendMultiplePage) {
     auto page1 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page1);
-    EXPECT_EQ(2, mLog.pages()) << "Page count not incremented";
+    EXPECT_EQ(2u, mLog.pages()) << "Page count not incremented";
 
     auto page2 = new(mPageManager->alloc()) LogPage();
     mLog.appendPage(page2);
-    EXPECT_EQ(3, mLog.pages()) << "Page count not incremented";
+    EXPECT_EQ(3u, mLog.pages()) << "Page count not incremented";
 
     auto i = mLog.pageBegin();
     auto end = mLog.pageEnd();

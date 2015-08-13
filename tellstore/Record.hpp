@@ -106,20 +106,23 @@ public:
 public:
     bool isFixedSized() const {
         switch (mType) {
-            case FieldType::NULLTYPE:
-                return true;
-            case FieldType::SMALLINT:
-            case FieldType::INT:
-            case FieldType::BIGINT:
-            case FieldType::FLOAT:
-            case FieldType::DOUBLE:
-                return true;
-            case FieldType::TEXT:
-            case FieldType::BLOB:
-                return false;
-            case FieldType::NOTYPE:
-                LOG_ASSERT(false, "One should never use a field of type NOTYPE");
-                return false;
+        case FieldType::NULLTYPE:
+            return true;
+        case FieldType::SMALLINT:
+        case FieldType::INT:
+        case FieldType::BIGINT:
+        case FieldType::FLOAT:
+        case FieldType::DOUBLE:
+            return true;
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return false;
+        case FieldType::NOTYPE:
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return false;
+        default:
+            LOG_ASSERT(false, "Unknown type");
+            return false;
         }
     }
 
@@ -156,6 +159,9 @@ public:
             return std::numeric_limits<size_t>::max();
         case FieldType::NOTYPE:
             LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            LOG_ASSERT(false, "Unknown type");
             return std::numeric_limits<size_t>::max();
         }
     }

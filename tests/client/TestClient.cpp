@@ -97,9 +97,9 @@ TestClient::TestClient(crossbow::infinio::InfinibandService& service, const Clie
           mNumTransactions(numTransactions),
           mActiveTransactions(0) {
     LOG_INFO("Initialized TellStore client");
-    for (int32_t i = 0; i < mTuple.size(); ++i) {
+    for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
-                std::make_pair<crossbow::string, boost::any>("number", i),
+                std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
                 std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
                 std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
                 std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
@@ -210,7 +210,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         }
 
         LOG_TRACE("Check tuple");
-        if (table.field<int32_t>("number", tuple->data()) != (key % mTuple.size())) {
+        if (table.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
             LOG_ERROR("Number value does not match");
             return;
         }
@@ -302,7 +302,7 @@ void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& tran
         scanDataSize += tupleLength;
 
         LOG_TRACE("Check tuple");
-        if (table.field<int32_t>("number", tuple) != (key % mTuple.size())) {
+        if (table.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
             LOG_ERROR("Number value of tuple %1% does not match", scanCount);
             return;
         }
@@ -396,7 +396,7 @@ void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction
         scanDataSize += tupleLength;
 
         LOG_TRACE("Check tuple");
-        if (resultTable.field<int32_t>("number", tuple) != (key % mTuple.size())) {
+        if (resultTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
             LOG_ERROR("Number value of tuple %1% does not match", scanCount);
             return;
         }

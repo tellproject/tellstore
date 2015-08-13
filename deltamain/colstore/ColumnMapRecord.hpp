@@ -107,7 +107,7 @@ inline size_t getNullBitMapSize(const Table *table) {
     if (table->schema().allNotNull())
         return 0;
     else
-        (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
+        return (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
 }
 
 inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {

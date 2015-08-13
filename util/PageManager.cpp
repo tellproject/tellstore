@@ -23,7 +23,7 @@ PageManager::PageManager(size_t size)
     char* data = reinterpret_cast<char*>(mData);
     data += size - TELL_PAGE_SIZE; // data does now point to the last page
     for (size_t i = 0ul; i < numPages; ++i) {
-        bool res = mPages.push(data);
+        __attribute__((unused)) auto res = mPages.push(data);
         assert(res);
         data -= TELL_PAGE_SIZE;
     }
@@ -35,7 +35,7 @@ PageManager::~PageManager() {
 
 void* PageManager::alloc() {
     void* res = nullptr;
-    bool success = mPages.pop(res);
+    __attribute__((unused)) auto success = mPages.pop(res);
     assert(success == (res != nullptr));
     assert(res >= mData && res < reinterpret_cast<char*>(mData) + mSize);
     assert((reinterpret_cast<char*>(res) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0);

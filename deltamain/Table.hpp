@@ -146,7 +146,7 @@ public:
 
     void runGC(uint64_t minVersion);
 
-    std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
+    std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries) const;
 private:
     template<class Fun>

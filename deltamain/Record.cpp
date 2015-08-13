@@ -195,6 +195,11 @@ case Type::MULTI_VERSION_RECORD:\
         impl::MVRecord<T> rec(this->mData);\
         return rec.methodName(__VA_ARGS__);\
     }\
+default:\
+    {\
+        LOG_ERROR("Unknown record type");\
+        std::terminate();\
+    }\
 }
 
 #define DISPATCH_METHODT(methodName,  ...) DISPATCH_METHOD(T, methodName, __VA_ARGS__)
@@ -238,11 +243,14 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
 #if defined USE_ROW_STORE
         return 24;
 #elif defined USE_COLUMN_MAP
-        LOG_ERROR("You are not supposed to call this on a columMap MVRecord");
-        std::terminate();
+        LOG_ASSERT(false, "You are not supposed to call this on a columMap MVRecord");
+        return 0;
 #else
 #error "Unknown storage layout"
 #endif
+    default:
+        LOG_ASSERT(false, "Unknown record type");
+        return 0;
     }
 }
 
