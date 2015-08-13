@@ -68,7 +68,7 @@ public:
         return uint64_t(en->size());
     }
 
-    uint64_t needsCleaning(uint64_t, InsertMap&, const Table *table) const {
+    uint64_t needsCleaning(uint64_t, InsertMap&) const {
         LOG_ERROR("needsCleaning does not make sense on Log operations");
         std::terminate();
     }

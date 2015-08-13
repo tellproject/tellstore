@@ -66,11 +66,11 @@ char* RowStorePage::gc(
         }
         // At this point we know that we will need to clean the page
         auto fillOffset = usedMemory(fillPage);
-        char* res = fillOffset == 0 ? fillPage : nullptr;
+        char* res = fillOffset == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at the last iteration of gc
         if (fillOffset == 0) fillOffset = 8;
         // now we also know that we will have to recycle the current
         // read only page
-        markCurrentForDeletion();
+        markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
         // now we need to iterate over the page again
         offset = mStartOffset;
         while (offset < size) {

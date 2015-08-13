@@ -1,10 +1,13 @@
 #pragma once
 
+#include "rowstore/RowStorePage.hpp"
+#include "colstore/ColumnMapPage.hpp"
+#include "rowstore/RowStoreScanProcessor.hpp"
+#include "colstore/ColumnMapScanProcessor.hpp"
+
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
-
 #include <tellstore/Record.hpp>
-
 #include <crossbow/allocator.hpp>
 
 #include <memory>
@@ -12,11 +15,6 @@
 #include <limits>
 #include <atomic>
 #include <functional>
-
-#include "rowstore/RowStorePage.hpp"
-#include "colstore/ColumnMapPage.hpp"
-#include "rowstore/RowStoreScanProcessor.hpp"
-#include "colstore/ColumnMapScanProcessor.hpp"
 
 namespace tell {
 namespace commitmanager {
@@ -40,6 +38,7 @@ class Table {
     std::atomic<PageList*> mPages;
     const uint32_t mNumberOfFixedSizedFields;   //@braunl: added for speedup
     const uint32_t mNumberOfVarSizedFields;     //@braunl: added for speedup
+    const uint32_t mPageCapacity;               //@braunl: added for speedup
 
 public:
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
@@ -82,12 +81,16 @@ public:
         return id < mNumberOfFixedSizedFields ? mRecord.schema().fixedSizeFields().at(id).defaultSize() : 8;
     }
 
-    const int32_t getNumberOfFixedSizedFields() const {
+    const uint32_t getNumberOfFixedSizedFields() const {
         return mNumberOfFixedSizedFields;
     }
 
-    const int32_t getNumberOfVarSizedFields() const {
+    const uint32_t getNumberOfVarSizedFields() const {
         return mNumberOfVarSizedFields;
+    }
+
+    const uint32_t getPageCapacity() const {
+        return mPageCapacity;
     }
 /**
  * @braunl: end of helper functions

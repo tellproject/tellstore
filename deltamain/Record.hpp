@@ -4,14 +4,12 @@
 #include <map>
 #include <atomic>
 
+#include <config.h>
 #include <crossbow/enum_underlying.hpp>
 #include <util/IteratorEntry.hpp>
 
 #include "InsertMap.hpp"
 
-// @braunl: we need this in order to make sure that we have access to
-// the compile parameters...
-#include <config.h>
 
 namespace tell {
 namespace commitmanager {
@@ -155,7 +153,7 @@ public:
 
     RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap,  const Table* table = nullptr) const;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
     void collect(
             impl::VersionMap& versions,
             bool& newestIsDelete,

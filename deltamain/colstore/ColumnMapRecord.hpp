@@ -17,16 +17,20 @@ namespace store {
 namespace deltamain {
 namespace impl {
 
+#include "ColumnMapUtils.in" // includes convenience functions for colum-layout
+
 /**
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a
  * column map page which is layed out the following way:
  *
- * - capacity: int32 to store the number of records that whould actually fit
+ * - capacity: uint32 to store the number of records that would actually fit
  *   into the columns part of the storage. However, as we do not know in advance
  *   how much space the var-sized values will need, it might be that the actual
- *   count of records is smaller than the capacity.
- * - count: int32 to store the number of records that are actually stored in
- *   this page. This actually only important for scans.
+ *   count of records is smaller than the capacity. During garbage collection,
+ *   this field is used to indicate the offset to new values in the var-sized
+ *   heap.
+ * - count: uint32 to store the number of records that are actually stored in
+ *   this page. This is only used in scans and during garbage collection.
  * - key-version column: an array of size capcity of 16-byte values in format:
  *   |key (8 byte)|version (8 byte)|
  * - newest-pointers: an array of size capacity of 8-byte pointers to newest
@@ -56,89 +60,6 @@ namespace impl {
  * MV records are stored as single records in such a way that they are clustered
  * together and ordered by version DESC (which facilitates get-operations).
  */
-
-/**
- *************************************************************************
- * The following convenience functions and macros are used to get pointers
- * to items of interest within the colum-oriented page.
- */
-
-/**
- * Given a reference to table, computes the beginning of the page (basePtr),
- * the total number of records in this page (capacity) and the index of the
- * current record within the page (return value).
- */
-inline uint32_t getBaseKnowledge(const char* data, const Table *table, const char *&basePtr, uint32_t &capacity) {
-    LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
-    basePtr = table->pageManager()->getPageStart(data);
-    capacity = *(reinterpret_cast<const uint32_t*>(basePtr));
-    return (reinterpret_cast<uint64_t>(data-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
-}
-
-/**
- * As we always use computeBaseKnowledge in the same way, we have a macro for that.
- */
-#define COMPUTE_BASE_KNOWLEDGE(data, table) const char *basePtr; \
-    uint32_t capacity; \
-    uint32_t index; \
-    index = getBaseKnowledge(data, table, basePtr, capacity);
-
-inline const uint32_t getRecordCount(const char *basePtr) {
-    return *(reinterpret_cast<uint32_t*>(const_cast<char *>(basePtr + 4)));
-}
-
-inline const char *getKeyVersionPtrAt(const uint32_t index, const char * basePtr) {
-    return basePtr + 8 + (index*16);
-}
-
-inline const uint64_t *getKeyAt(const uint32_t index, const char * basePtr) {
-    return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr));
-}
-
-inline const uint64_t *getVersionAt(const uint32_t index, const char * basePtr) {
-    return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8);
-}
-
-inline const char *getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t capacity) {
-    return basePtr + 8 + (capacity*16) + (index*8);
-
-}
-
-inline size_t getNullBitMapSize(const Table *table) {
-    if (table->schema().allNotNull())
-        return 0;
-    else
-        (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
-}
-
-inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
-    return const_cast<char *>(basePtr + 8 + (capacity*24) + (index*nullBitMapSize));
-}
-
-inline const int32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
-    return reinterpret_cast<const int32_t*>(basePtr + 8 + (capacity*(24 + nullBitMapSize)) + (index*4));
-}
-
-inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
-    // end of var-sized = beginning of fixed-sized columns
-    char *res = const_cast<char *>(reinterpret_cast<const char *>(getVarsizedLenghtAt(capacity, basePtr, capacity, nullBitMapSize)));
-    const uint32_t fixedSizedFields= table->getNumberOfFixedSizedFields();
-    uint32_t offset = 0;
-    if (N > fixedSizedFields)   // we deal with a var-sized field, but not the first of them
-        offset = table->getFieldOffset(fixedSizedFields);
-    else                        // we deal with a fixed-sized or the first var-sized field
-        offset = table->getFieldOffset(N);
-    offset -= table->getFieldOffset(0); // subtract header part (which does not exist in column format)
-    res += capacity * offset;
-    if (N > fixedSizedFields)
-        res += capacity * (N - fixedSizedFields) * 8;
-    res += index * table->getFieldSize(N);
-    return res;
-}
-
-/**
- * End of convenience functions
- *******************************/
 
 //TODO: check whether this loop does the correct thing... doesn't
 //this assume that the newestPtr is stored at the beginning of a
@@ -222,37 +143,13 @@ public:
         std::terminate();
     }
 
-    /**
-     * in contrast to the row-store variant, this method checks an entire
-     * page for cleaning at once!
-     */
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap, const Table* table) const {
-        COMPUTE_BASE_KNOWLEDGE(mData, table)
-        auto nullBitMapSize = getNullBitMapSize(table);
-
-        // check whether there are some versions below base versions and whether the key appears in the insert map
-        uint64_t *keyPtr = const_cast<uint64_t *>(getKeyAt(0, basePtr));
-        for (uint i = 0; i < capacity; keyPtr +=2) {
-            if (keyPtr[1] < lowestActiveVersion) return true;
-            if (insertMap.count(keyPtr[0])) return true;
-        }
-
-        // check whether there were updates (newestptrs start right after key-version column)
-        for (uint i = 0; i < capacity; ++keyPtr) {
-            if (*keyPtr) return true;
-        }
-
-        // check whether there were deletions or reverts
-        int32_t *varlengthPtr = const_cast<int32_t *>(getVarsizedLenghtAt(0, basePtr, capacity, nullBitMapSize));
-        for (uint i = 0; i < capacity; ++varlengthPtr) {
-            if (*varlengthPtr <= 0) return true;
-        }
-
-        return false;
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord, call it directly on the page instead");
+        std::terminate();
     }
 
     /**
-     * BE CAREFUL: in contrast to the row-oriented version, this call might actually
+     * BE CAREFUL: in contrast to the row-oriented variant, this call might actually
      * allocate new data (in sequential row-format) if the copyData flag is set (which
      * it is by default). In that case the ptr the newly allocated data is returned,
      * otherwise a nullptr is returned.

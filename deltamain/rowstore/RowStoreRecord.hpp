@@ -140,7 +140,7 @@ public:
         return off[v];
     }
 
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap, const Table* table) const {
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
         if (getNewest()) return true;
         auto offs = offsets();
         auto nV = getNumberOfVersions();

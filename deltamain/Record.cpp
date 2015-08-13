@@ -98,8 +98,8 @@ size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
 }
 
 template<class T>
-bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap, const Table* table) const {
-    DISPATCH_METHODT(needsCleaning, lowestActiveVersion, insertMap, table);
+bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+    DISPATCH_METHODT(needsCleaning, lowestActiveVersion, insertMap);
 }
 
 template<class T>

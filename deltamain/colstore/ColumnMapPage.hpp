@@ -20,14 +20,27 @@ class Modifier;
 
 namespace deltamain {
 
+/**
+ * Contains the functionality for garbagabe collection and scan of a memory
+ * page in column format. Please find the page layout description and the
+ * single-record operation details in ColumnMapRecord.hpp.
+ */
 class ColumnMapPage {
     PageManager& mPageManager;
     char* mData;
+    Table *mTable;
 public:
 
-    ColumnMapPage(PageManager& pageManager, char* data)
+    ColumnMapPage(PageManager& pageManager, char* data, Table *table)
         : mPageManager(pageManager)
-        , mData(data) {}
+        , mData(data)
+        , mTable(table) {}
+
+    void markCurrentForDeletion() {
+        auto oldPage = mData;
+        auto& pageManager = mPageManager;
+        crossbow::allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
+    }
 
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);
     static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable);
