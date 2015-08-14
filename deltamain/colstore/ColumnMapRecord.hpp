@@ -218,7 +218,7 @@ public:
                 char *src;
                 char *dest = res;
                 // copy nullbitmap
-                src = getNullBitMapAt(index, basePtr, capacity, nullBitMapSize);
+                src = const_cast<char *>(getNullBitMapAt(index, basePtr, capacity, nullBitMapSize));
                 memcpy(dest, src, nullBitMapSize);
                 dest += nullBitMapSize;
 

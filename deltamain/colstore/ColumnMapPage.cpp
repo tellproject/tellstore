@@ -6,6 +6,7 @@
 #include <util/CuckooHash.hpp>
 
 #include <unordered_set>
+#include <vector>
 
 namespace tell {
 namespace store {
@@ -22,21 +23,22 @@ inline std::unordered_set<uint64_t> needCleaning(
                           const uint32_t startIndex,
                           const char * basePtr,
                           const uint32_t capacity,
+                          const uint32_t count,
                           const size_t nullBitMapSize) {
 
     std::unordered_set<uint64_t> res;
 
     // check whether there are some versions below base versions and whether the key appears in the insert map
     auto keyPtr = getKeyAt(startIndex, basePtr);
-    for (auto keyPtrEnd = keyPtr + 2*capacity; keyPtr < keyPtrEnd; keyPtr +=2) {
+    for (auto keyPtrEnd = keyPtr + 2*count; keyPtr < keyPtrEnd; keyPtr +=2) {
         if (keyPtr[1] < lowestActiveVersion || insertMap.count(keyPtr[0]))
             res.emplace(keyPtr[0]);
     }
 
-    // check whether there were updates (newestptrs start right after key-version column)
+    // check whether there were updates
     uint64_t key = startIndex;
-    keyPtr += startIndex;
-    for (auto keyPtrEnd = keyPtr + capacity; keyPtr < keyPtrEnd; ++keyPtr, ++key) {
+    keyPtr = reinterpret_cast<const uint64_t *>(getNewestPtrAt(startIndex, basePtr, capacity));
+    for (auto keyPtrEnd = keyPtr + count; keyPtr < keyPtrEnd; ++keyPtr, ++key) {
         if (*keyPtr)
             res.emplace(key);
     }
@@ -44,7 +46,7 @@ inline std::unordered_set<uint64_t> needCleaning(
     // check whether there were deletions or reverts
     key = startIndex;
     auto varlengthPtr = getVarsizedLenghtAt(startIndex, basePtr, capacity, nullBitMapSize);
-    for (auto varlengthPtrEnd = varlengthPtr + capacity; varlengthPtr < varlengthPtrEnd; ++varlengthPtr, ++key) {
+    for (auto varlengthPtrEnd = varlengthPtr + count; varlengthPtr < varlengthPtrEnd; ++varlengthPtr, ++key) {
         if (*varlengthPtr <= 0)
             res.emplace(key);
     }
@@ -61,7 +63,7 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
                            const uint64_t *keyPtr,
                            uint32_t *varHeapOffsetPtr,
                            uint32_t *countPtr,
-                           const char *sourceBasePtr,
+                           const char *srcBasePtr,
                            const char *destBasePtr,
                            Table *table,
                            const uint32_t numColumns,   //total number of columns (fixed and var)
@@ -70,7 +72,8 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
         )
 {
     uint recordSize = 1;
-    uint varLenghtSize = 0;
+    uint totalVarLenghtSize = 0;
+    std::vector<uint32_t> varLengthOffsets;
     if (cleaningMap.count(*keyPtr))
     {
         // (a) perform cleaning
@@ -82,29 +85,54 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
         // compute size of record and var-heap consumption for copying
         for (;; ++recordSize, keyPtr +=2)
         {
-            varLenghtSize =+ (*getVarsizedLenghtAt(*startIndex, sourceBasePtr, capacity, nullBitMapSize));
+            varLengthOffsets.emplace_back(*varHeapOffsetPtr + totalVarLenghtSize);
+            totalVarLenghtSize =+ (*getVarsizedLenghtAt(*startIndex, srcBasePtr, capacity, nullBitMapSize));
             if (keyPtr[0] <= keyPtr[2]) break;
         }
-        if (((*countPtr) + recordSize > capacity) || ((*varHeapOffsetPtr) + varLenghtSize > TELL_PAGE_SIZE))
+        if (((*countPtr) + recordSize > capacity) || ((*varHeapOffsetPtr) + totalVarLenghtSize > TELL_PAGE_SIZE))
             return false;
         // copy special columns
+        memcpy(const_cast<char *>(getKeyVersionPtrAt(*countPtr, destBasePtr)), getKeyVersionPtrAt(*startIndex, srcBasePtr), 16*recordSize);
+        // newest ptrs are all 0 therefore do need to copy
+        mempcpy(
+            const_cast<char *>(getNullBitMapAt(*countPtr, destBasePtr, capacity, nullBitMapSize)),
+            getNullBitMapAt(*startIndex, srcBasePtr, capacity, nullBitMapSize),
+            recordSize * nullBitMapSize);
+        memcpy(
+            const_cast<uint32_t *>(getVarsizedLenghtAt(*countPtr, destBasePtr, capacity, nullBitMapSize)),
+            getVarsizedLenghtAt(*startIndex, srcBasePtr, capacity, nullBitMapSize),
+            recordSize * 4);
 
         // copy fixed-sized and var-sized column data
         for (uint col = 0; col < numColumns; ++col) {
             memcpy(
                 getColumnNAt(table, col, *countPtr, destBasePtr, capacity, nullBitMapSize),
-                getColumnNAt(table, col, *startIndex, sourceBasePtr, capacity, nullBitMapSize),
+                getColumnNAt(table, col, *startIndex, srcBasePtr, capacity, nullBitMapSize),
                 recordSize * table->getFieldSize(col));
         }
 
-        // copy var-sized heap data and adjust offsets in var-sized columns
+        // copy var-sized heap data
+        memcpy(
+            const_cast<char *>(destBasePtr + *varHeapOffsetPtr),
+            srcBasePtr + *(reinterpret_cast<uint32_t*>(getColumnNAt(table, table->getNumberOfFixedSizedFields(), *startIndex, srcBasePtr, capacity, nullBitMapSize))),
+            totalVarLenghtSize);
+
+        // adjust var-sized offsets
+        for (uint col = table->getNumberOfFixedSizedFields(); col < numColumns; ++col) {
+            auto varLenghtptrCountPtr = getColumnNAt(table, col, *startIndex, srcBasePtr, capacity, nullBitMapSize);
+            for (uint i = 0; i < recordSize; ++i, varLenghtptrCountPtr += 2) {
+                *varLenghtptrCountPtr = varLengthOffsets[i];
+                varLengthOffsets[i] += *(reinterpret_cast<const uint32_t *>(destBasePtr + *(reinterpret_cast<uint32_t*>(varLengthOffsets[i]))));
+            }
+        }
 
         // adjust pointers in hash map
+        //todo: implement
     }
 
     (*startIndex) += recordSize;
     (*countPtr) += recordSize;
-    (*varHeapOffsetPtr) += varLenghtSize;
+    (*varHeapOffsetPtr) += totalVarLenghtSize;
     return true;
 }
 
@@ -122,8 +150,9 @@ char* ColumnMapPage::gc(
     auto capacity = mTable->getPageCapacity();
     auto nullBitMapSize = getNullBitMapSize(mTable);
     auto numColumns = mTable->getNumberOfFixedSizedFields() + mTable->getNumberOfVarSizedFields();
+    auto srcCount = *(reinterpret_cast<uint32_t*>(mTable+4));
 
-    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap, mStartIndex, mData, capacity, nullBitMapSize);
+    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap, mStartIndex, mData, capacity, srcCount, nullBitMapSize);
     if (cleaningMap.size() == 0) {
         // we are done - no cleaning needed for this page
         done = true;
@@ -149,6 +178,8 @@ char* ColumnMapPage::gc(
             // In this case we will either allocate a new fillPage (if
             // the old one got inserted before), or we will return to
             // indicate that we need a new fillPage
+            // in either case, we have to seal the fillpage (by setting capacity correclty)
+            *(reinterpret_cast<uint32_t *>(fillPage)) = capacity;
             if (res) {
                 done = false;
                 return res;
@@ -163,7 +194,6 @@ char* ColumnMapPage::gc(
         }
     }
     // we are done. It might now be, that this page has some free space left
-    *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
     fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
     done = true;
     return res;
@@ -171,7 +201,7 @@ char* ColumnMapPage::gc(
 
 void ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
 {
-
+    //TODO: implement
 }
 
 } // namespace deltamain
