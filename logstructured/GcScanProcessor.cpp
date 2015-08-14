@@ -81,7 +81,7 @@ void GcScanProcessor::process() {
         }
 
         auto type = crossbow::from_underlying<VersionRecordType>(mEntryIt->type());
-        if (context.validTo() < mMinVersion) {
+        if (context.validTo() <= mMinVersion) {
             // No version can read the current element - Mark it as invalid and increase the garbage counter
 #ifdef NDEBUG
             record->invalidate();
@@ -91,7 +91,7 @@ void GcScanProcessor::process() {
 #endif
             mGarbage += mEntryIt->entrySize();
             continue;
-        } else if ((type == VersionRecordType::DELETION) && (record->validFrom() < mMinVersion)) {
+        } else if ((type == VersionRecordType::DELETION) && (record->validFrom() <= mMinVersion)) {
             // Try to mark the deletion as invalid and set the next pointer to null
             // This basically truncates the version list and marks the deletion entry as deleted in the version history
             // Because the entry is still alive (i.e. can be accessed by other transactions) we have to use a CAS to

@@ -22,14 +22,9 @@ void VersionRecordIterator::next() {
 
     mPrev = mCurrent;
     mPrevData = mCurrentData;
-    mCurrent = peekNext();
+    mCurrent = mCurrentData.next();
 
     setCurrentEntry();
-}
-
-ChainedVersionRecord* VersionRecordIterator::peekNext() {
-    // If the current version is already before the min version then the next element is (or will be) invalid
-    return (mCurrent->validFrom() < mMinVersion ? nullptr : mCurrentData.next());
 }
 
 bool VersionRecordIterator::find(ChainedVersionRecord* element) {
