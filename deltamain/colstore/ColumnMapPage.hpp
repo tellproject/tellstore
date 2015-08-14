@@ -29,12 +29,14 @@ class ColumnMapPage {
     PageManager& mPageManager;
     char* mData;
     Table *mTable;
+    uint32_t mStartIndex;    //index of the first key that needs to be inspected in gc
 public:
 
     ColumnMapPage(PageManager& pageManager, char* data, Table *table)
         : mPageManager(pageManager)
         , mData(data)
-        , mTable(table) {}
+        , mTable(table)
+        , mStartIndex(0) {}
 
     void markCurrentForDeletion() {
         auto oldPage = mData;

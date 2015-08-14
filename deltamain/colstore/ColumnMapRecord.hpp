@@ -97,8 +97,8 @@ public:
     //    //TODO: once you need this function, you have to add Table *table as an argument
     //    COMPUTE_BASE_KNOWLEDGE(mData, table)
     //    size_t nullBitMapSize = getNullBitMapSize(table);
-    //    uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
-    //    int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize));
+    //    auto key = getKeyAt(index, basePtr);
+    //    auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
     //    for (; ; index++, key += 2, varLength++) {
     //        if (*varLength > 0) return true;
     //        if (key[2] != key[0])  // loop exit condition
@@ -184,8 +184,8 @@ public:
         isValid = false;
 
         bool found = false;
-        uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
-        int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize));
+        auto key = getKeyAt(index, basePtr);
+        auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
         for (; ; index++, key += 2, varLength++) {
             if (*varLength < 0) continue;
             isValid = true;
@@ -257,8 +257,8 @@ public:
     //        if (isValid) return res;
     //    }
     //    isValid = true;
-    //    uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
-    //    int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize));
+    //    auto key = getKeyAt(index, basePtr);
+    //    auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
     //    for (; ; index++, key += 2, varLength++) {
     //        if (*varLength > 0) return Type::MULTI_VERSION_RECORD;
     //        if (key[2] != key[0])  // loop exit condition
@@ -277,8 +277,7 @@ public:
             uint64_t maxSize,
             bool& success) const
     {
-        //TODO: implement
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
+        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord, call it directly on the page instead");
         std::terminate();
     }
 
@@ -342,8 +341,8 @@ struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
             }
         }
 
-        uint64_t *key = const_cast<uint64_t *>(getKeyAt(index, basePtr));
-        int32_t *varLength = const_cast<int32_t *>(getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table)));
+        auto key = getKeyAt(index, basePtr);
+        auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table));
         for (; ; index++, key += 2, varLength++) {
             if (*varLength >= 0) break;
             if (key[2] != key[0])  // loop exit condition

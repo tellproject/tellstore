@@ -56,8 +56,8 @@ inline char *getNullBitMapAt(const uint32_t index, const char * basePtr, const u
     return const_cast<char *>(basePtr + 8 + (capacity*24) + (index*nullBitMapSize));
 }
 
-inline const int32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
-    return reinterpret_cast<const int32_t*>(basePtr + 8 + (capacity*(24 + nullBitMapSize)) + (index*4));
+inline const uint32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
+    return reinterpret_cast<const uint32_t*>(basePtr + 8 + (capacity*(24 + nullBitMapSize)) + (index*4));
 }
 
 inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t capacity, const size_t nullBitMapSize) {
