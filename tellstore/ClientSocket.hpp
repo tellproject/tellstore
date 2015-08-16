@@ -182,8 +182,8 @@ private:
  */
 class ClientSocket final : public crossbow::infinio::RpcClientSocket {
 public:
-    ClientSocket(crossbow::infinio::InfinibandSocket socket)
-            : crossbow::infinio::RpcClientSocket(std::move(socket)),
+    ClientSocket(crossbow::infinio::InfinibandSocket socket, size_t maxPendingResponses)
+            : crossbow::infinio::RpcClientSocket(std::move(socket), maxPendingResponses),
               mScanId(0x0u) {
         mScans.set_empty_key(0x0u);
         mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
