@@ -49,7 +49,7 @@ bool Table::get(uint64_t key,
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
         if (isValid && !(wasDeleted && isNewest)) {
-            return !wasDeleted;
+            return (data != nullptr && !wasDeleted);
         }
     }
     // in this case we need to scan through the insert log
@@ -67,10 +67,13 @@ bool Table::get(uint64_t key,
                 // then updated - in this case we to continue scanning
                 continue;
             }
-            return !wasDeleted;
+            return (data != nullptr && !wasDeleted);
         }
     }
     // in this case the tuple does not exist
+    isNewest = true;
+    size = 0u;
+    data = nullptr;
     return false;
 }
 
