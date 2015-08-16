@@ -59,7 +59,13 @@ GcScanProcessor::GcScanProcessor(GcScanProcessor&& other)
 }
 
 void GcScanProcessor::process() {
-    if (mPageIt == mPageEnd && mEntryIt == mEntryEnd) {
+    // Abort if the processor already is at the end
+    if (mPageIt == mPageEnd) {
+        return;
+    }
+
+    // Advance to the next page if the first page contains no entries
+    if (mEntryIt == mEntryEnd && !advancePage()) {
         return;
     }
 
@@ -136,29 +142,37 @@ bool GcScanProcessor::advanceEntry() {
     }
 
     // Advance to next page
-    if (mRecycle) {
-        ++mPageIt;
-        mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
-    } else {
-        // Only store the garbage statistic when every entry in the page was sealed
-        if (mSealed) {
-            mPageIt->context().store(mGarbage);
+    return advancePage();
+}
+
+bool GcScanProcessor::advancePage() {
+    do {
+        // Advance to next page
+        if (mRecycle) {
+            ++mPageIt;
+            mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
+        } else {
+            // Only store the garbage statistic when every entry in the page was sealed
+            if (mSealed) {
+                mPageIt->context().store(mGarbage);
+            }
+            mPagePrev = mPageIt++;
         }
-        mPagePrev = mPageIt++;
-    }
 
-    if (mPageIt == mPageEnd) {
-        return false;
-    }
-    mEntryIt = mPageIt->begin();
-    mEntryEnd = mPageIt->end();
+        if (mPageIt == mPageEnd) {
+            return false;
+        }
+        mEntryIt = mPageIt->begin();
+        mEntryEnd = mPageIt->end();
 
-    // Retrieve usage statistics of the current page
-    mGarbage = 0x0u;
-    uint32_t offset;
-    std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
-    auto size = offset - mPageIt->context().load();
-    mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
+        // Retrieve usage statistics of the current page
+        mGarbage = 0x0u;
+        uint32_t offset;
+        std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
+        auto currentGarbage = mPageIt->context().load();
+        auto size = (currentGarbage >= offset ? 0u : offset - currentGarbage);
+        mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
+    } while (mEntryIt == mEntryEnd);
 
     return true;
 }
