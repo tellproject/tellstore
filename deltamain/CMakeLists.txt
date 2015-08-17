@@ -19,6 +19,7 @@ set(DELTAMAIN_PRIVATE_HDR
     rowstore/RowStoreVersionIterator.hpp
     rowstore/RowStorePage.hpp
     rowstore/RowStoreScanProcessor.hpp
+#    colstore/ColumnMapUtils.hpp
     colstore/ColumnMapRecord.hpp
     colstore/ColumnMapPage.hpp
     colstore/ColumnMapScanProcessor.hpp

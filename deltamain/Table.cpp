@@ -1,9 +1,8 @@
 #include "Table.hpp"
 #include "Record.hpp"
-#include "rowstore/RowStorePage.hpp"
-#include "colstore/ColumnMapPage.hpp"
 #include "InsertMap.hpp"
 
+#include <config.h>
 #include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <memory>
@@ -12,15 +11,24 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+// this is just a very rough heuristic, but should hopefully be good enough
+#define GET_PAGE_CAPACITY(schema, record) \
+2 * ((uint) ( \
+    (double) TELL_PAGE_SIZE / (28.0 \
+        + mRecord.getFieldMeta(mNumberOfFixedSizedFields).second) \
+        + mNumberOfVarSizedFields * (12.0 + 4.0*VAR_SIZED_OVERHEAD) \
++ 1.0) / 2)
+
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
     , mRecord(schema)
     , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mPages(crossbow::allocator::construct<PageList>()),
-    mNumberOfFixedSizedFields(schema.fixedSizeFields().size()),
-    mNumberOfVarSizedFields(schema.varSizeFields().size())
+    , mPages(crossbow::allocator::construct<PageList>())
+    , mNumberOfFixedSizedFields(schema.fixedSizeFields().size())
+    , mNumberOfVarSizedFields(schema.varSizeFields().size())
+    , mPageCapacity(GET_PAGE_CAPACITY(schema, mRecord))
 {}
 
 Table::~Table() {
@@ -253,10 +261,11 @@ void Table::runGC(uint64_t minVersion) {
     auto nPagesPtr = crossbow::allocator::construct<PageList>(roPages);
     auto& nPages = *nPagesPtr;
     auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
+    //TODO: question: what exactly happens to newPages? Shouldn't this get added to the existing mPages at some point?
     PageList newPages;
     // this loop just iterates over all pages
     for (size_t i = 0; i < nPages.size(); ++i) {
-        Page page(mPageManager, nPages[i]);
+        Page page(mPageManager, nPages[i], this);
         bool done;
         nPages[i] = page.gc(minVersion, insertMap, fillPage, done, hashTable);
         while (!done) {
@@ -274,6 +283,7 @@ void Table::runGC(uint64_t minVersion) {
     }
     // now we can process the inserts
     while (!insertMap.empty()) {
+        //TODO: question: isnt't it that fill page could actually still poit to a page that was not pushed to nPages yet??
         fillPage = reinterpret_cast<char*>(mPageManager.alloc());
         Page::fillWithInserts(minVersion, insertMap, fillPage, hashTable);
         nPages.push_back(fillPage);

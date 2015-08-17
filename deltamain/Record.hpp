@@ -4,14 +4,12 @@
 #include <map>
 #include <atomic>
 
+#include <config.h>
 #include <crossbow/enum_underlying.hpp>
 #include <util/IteratorEntry.hpp>
 
 #include "InsertMap.hpp"
 
-// @braunl: we need this in order to make sure that we have access to
-// the compile parameters...
-#include <config.h>
 
 namespace tell {
 namespace commitmanager {

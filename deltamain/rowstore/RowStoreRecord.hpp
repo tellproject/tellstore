@@ -165,6 +165,7 @@ public:
             // If the newest version is smaller than the
             // lowest active version, we can delete the whole
             // entry.
+            //TODO: shouldn't that be: versions()[NV] < lowestActiveVersion
             if (nV < lowestActiveVersion) return true;
             // otherwise we need to keep it, but it could be
             // that there was an insert

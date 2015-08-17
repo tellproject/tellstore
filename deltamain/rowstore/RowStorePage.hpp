@@ -43,7 +43,7 @@ public:
         }
         const char* operator*() const;
     };
-    RowStorePage(PageManager& pageManager, char* data)
+    RowStorePage(PageManager& pageManager, char* data, Table *table = nullptr)
         : mPageManager(pageManager)
         , mData(data)
         , mStartOffset(8) {}
@@ -63,6 +63,15 @@ public:
         crossbow::allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
     }
 
+    /**
+     * performs a gc step on this page and returns a pointer to a newly filled
+     * page that needs to be kept in / added to the page list. New entries are
+     * written into the fillpage first and then possibly into another newly
+     * allocated page. A gc scheduler must call this function on every existing
+     * page making sure that if page-ptr is returned, the page is kept active and
+     * that if done is set to false, the call is repeated (with a newly allocated/
+     * non-full fillpage) on the same page again.
+     */
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, bool& done, Modifier& hashTable);
     static void fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable);
 

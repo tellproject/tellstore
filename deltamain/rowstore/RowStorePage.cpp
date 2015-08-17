@@ -1,5 +1,7 @@
 #include "RowStorePage.hpp"
 #include "deltamain/InsertMap.hpp"
+#include "deltamain/Record.hpp"
+
 #include <util/CuckooHash.hpp>
 
 namespace tell {
@@ -36,6 +38,9 @@ auto RowStorePage::end() const -> Iterator {
     return Iterator(mData + usedMemory());
 }
 
+//TODO: question: this implementation relies on the fact that fresh pages are meset to 0s. Is that actually the case?
+//TODO: question: will mStartOffset be valid for the whole GC phase? Can it happen that the page is called later again
+// by GC, but with a newly generated Page object (and mStartIndex reset to 8)?
 char* RowStorePage::gc(
         uint64_t lowestActiveVersion,
         InsertMap& insertMap,
@@ -64,11 +69,14 @@ char* RowStorePage::gc(
         }
         // At this point we know that we will need to clean the page
         auto fillOffset = usedMemory(fillPage);
-        char* res = fillOffset == 0 ? fillPage : nullptr;
+        //TODO: question: in fact, fillPage will always be a fresh page, right?
+        //At least this is how this function is used within table. Is this generally true?
+        //Or do we want to allow the gc step "half-full" pages into account? --> which actually could make sense?!
+        char* res = fillOffset == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at the last iteration of gc
         if (fillOffset == 0) fillOffset = 8;
         // now we also know that we will have to recycle the current
         // read only page
-        markCurrentForDeletion();
+        markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
         // now we need to iterate over the page again
         offset = mStartOffset;
         while (offset < size) {
@@ -107,7 +115,7 @@ char* RowStorePage::gc(
         // we are done. It might now be, that this page has some free space left
         *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
         fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
-        // now we write back the new size
+        //now we write back the new size --> todo: implement!
         done = true;
         return res;
 }
