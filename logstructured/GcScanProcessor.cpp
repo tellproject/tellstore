@@ -59,7 +59,13 @@ GcScanProcessor::GcScanProcessor(GcScanProcessor&& other)
 }
 
 void GcScanProcessor::process() {
-    if (mPageIt == mPageEnd && mEntryIt == mEntryEnd) {
+    // Abort if the processor already is at the end
+    if (mPageIt == mPageEnd) {
+        return;
+    }
+
+    // Advance to the next page if the first page contains no entries
+    if (mEntryIt == mEntryEnd && !advancePage()) {
         return;
     }
 
@@ -81,7 +87,7 @@ void GcScanProcessor::process() {
         }
 
         auto type = crossbow::from_underlying<VersionRecordType>(mEntryIt->type());
-        if (context.validTo() < mMinVersion) {
+        if (context.validTo() <= mMinVersion) {
             // No version can read the current element - Mark it as invalid and increase the garbage counter
 #ifdef NDEBUG
             record->invalidate();
@@ -91,7 +97,7 @@ void GcScanProcessor::process() {
 #endif
             mGarbage += mEntryIt->entrySize();
             continue;
-        } else if ((type == VersionRecordType::DELETION) && (record->validFrom() < mMinVersion)) {
+        } else if ((type == VersionRecordType::DELETION) && (record->validFrom() <= mMinVersion)) {
             // Try to mark the deletion as invalid and set the next pointer to null
             // This basically truncates the version list and marks the deletion entry as deleted in the version history
             // Because the entry is still alive (i.e. can be accessed by other transactions) we have to use a CAS to
@@ -136,29 +142,37 @@ bool GcScanProcessor::advanceEntry() {
     }
 
     // Advance to next page
-    if (mRecycle) {
-        ++mPageIt;
-        mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
-    } else {
-        // Only store the garbage statistic when every entry in the page was sealed
-        if (mSealed) {
-            mPageIt->context().store(mGarbage);
+    return advancePage();
+}
+
+bool GcScanProcessor::advancePage() {
+    do {
+        // Advance to next page
+        if (mRecycle) {
+            ++mPageIt;
+            mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
+        } else {
+            // Only store the garbage statistic when every entry in the page was sealed
+            if (mSealed) {
+                mPageIt->context().store(mGarbage);
+            }
+            mPagePrev = mPageIt++;
         }
-        mPagePrev = mPageIt++;
-    }
 
-    if (mPageIt == mPageEnd) {
-        return false;
-    }
-    mEntryIt = mPageIt->begin();
-    mEntryEnd = mPageIt->end();
+        if (mPageIt == mPageEnd) {
+            return false;
+        }
+        mEntryIt = mPageIt->begin();
+        mEntryEnd = mPageIt->end();
 
-    // Retrieve usage statistics of the current page
-    mGarbage = 0x0u;
-    uint32_t offset;
-    std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
-    auto size = offset - mPageIt->context().load();
-    mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
+        // Retrieve usage statistics of the current page
+        mGarbage = 0x0u;
+        uint32_t offset;
+        std::tie(offset, mSealed) = mPageIt->offsetAndSealed();
+        auto currentGarbage = mPageIt->context().load();
+        auto size = (currentGarbage >= offset ? 0u : offset - currentGarbage);
+        mRecycle = (mSealed && ((size * 100) / LogPage::MAX_DATA_SIZE < gGcThreshold));
+    } while (mEntryIt == mEntryEnd);
 
     return true;
 }

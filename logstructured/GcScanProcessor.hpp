@@ -41,8 +41,19 @@ private:
      * @brief Advance the entry iterator to the next entry, advancing to the next page if necessary
      *
      * The processor must not be at the end when calling this function.
+     *
+     * @return True if the iterator points to a valid element, false if it reached the end
      */
     bool advanceEntry();
+
+    /**
+     * @brief Advance the page iterator to the next page containing a valid entry
+     *
+     * The processor must be at the end of a page but not at the end of the log when calling this function.
+     *
+     * @return True if the iterator points to a valid element, false if it reached the end
+     */
+    bool advancePage();
 
     /**
      * @brief Recycle the given element

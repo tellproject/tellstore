@@ -136,7 +136,7 @@ public:
      * TODO: question: what happens with the update-log?! Shouldn't that be
      * scanned as well?
      */
-    std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
+    std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries) const;
 private:
     template<class Fun>

@@ -56,7 +56,9 @@ public:
      *
      * Must not be called when already at the end.
      */
-    ChainedVersionRecord* peekNext();
+    ChainedVersionRecord* peekNext() {
+        return mCurrentData.next();
+    }
 
     /**
      * @brief Whether the iterator points to the newest element in the version list

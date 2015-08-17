@@ -64,7 +64,6 @@ private:
         std::unique_lock<std::mutex> lock(mGCMutex);
         auto begin = Clock::now();
         auto duration = std::chrono::seconds(mConfig.gcIntervall);
-        auto oldLowestActiveVersion = 0x1u;
         while (!mShutDown.load()) {
             auto now = Clock::now();
             if (begin + duration > now) {
@@ -199,6 +198,7 @@ public:
     }
 
     bool scan(uint64_t tableId, ScanQuery* query) {
+        mVersionManager.addSnapshot(query->snapshot());
         return mScanThreads.scan(tableId, lookupTable(tableId), query);
     }
 

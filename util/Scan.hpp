@@ -51,7 +51,6 @@ template<class Table>
 class ScanThreads {
     using ScanRequest = std::tuple<uint64_t, Table*, ScanQuery*>;
 
-    int mNumThreads;
     crossbow::SingleConsumerQueue<ScanRequest, MAX_QUERY_SHARING> queryQueue;
     std::vector<ScanRequest> mEnqueuedQueries;
     std::vector<ScanThread<typename Table::ScanProcessor>> threadObjs;
@@ -59,19 +58,20 @@ class ScanThreads {
     std::atomic<bool> stopScans;
     std::atomic<bool> stopSlaves;
 public:
-    ScanThreads(int numThreads)
-        : mNumThreads(numThreads)
-        , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
+    ScanThreads(size_t numThreads)
+        : mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
         , threadObjs(numThreads, ScanThread<typename Table::ScanProcessor>(stopSlaves))
         , stopScans(false)
         , stopSlaves(false)
     {}
+
     ~ScanThreads() {
         stopScans.store(true);
         for (auto& t : threads) t.join();
     }
+
     void run() {
-        for (int i = 0; i < mNumThreads; ++i) {
+        for (decltype(threadObjs.size()) i = 0; i < threadObjs.size(); ++i) {
             if (i == 0) {
                 // the first thread is the master thread
                 threads.emplace_back([this]()
@@ -85,10 +85,6 @@ public:
                 threads.emplace_back([this, i](){ threadObjs[i](); });
             }
         }
-    }
-
-    int numThreads() const {
-        return mNumThreads;
     }
 
     bool scan(uint64_t tableId, Table* table, ScanQuery* query) {
@@ -139,8 +135,8 @@ private:
             crossbow::allocator _;
 
             // now we generated the QBuffer - we now give it to all the scan threads
-            auto processors = table->startScan(mNumThreads, queryBuffer.get(), queries);
-            for (size_t i = 0; i < threadObjs.size(); ++i) {
+            auto processors = table->startScan(threadObjs.size(), queryBuffer.get(), queries);
+            for (decltype(threadObjs.size()) i = 0; i < threadObjs.size(); ++i) {
                 // we do not need to synchronize here, the scan threads start as soon as the processor is set
                 threadObjs[i].scanProcessor.store(&processors[i]);
             }

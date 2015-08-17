@@ -57,7 +57,7 @@ bool Table::get(uint64_t key,
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
         if (isValid && !(wasDeleted && isNewest)) {
-            return !wasDeleted;
+            return (data != nullptr && !wasDeleted);
         }
     }
     // in this case we need to scan through the insert log
@@ -75,10 +75,13 @@ bool Table::get(uint64_t key,
                 // then updated - in this case we to continue scanning
                 continue;
             }
-            return !wasDeleted;
+            return (data != nullptr && !wasDeleted);
         }
     }
     // in this case the tuple does not exist
+    isNewest = true;
+    size = 0u;
+    data = nullptr;
     return false;
 }
 
@@ -215,7 +218,7 @@ bool Table::genericUpdate(const Fun& appendFun,
     return rec.update(nextPtr, isValid, snapshot, this);
 }
 
-std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,
+std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,
         const std::vector<ScanQuery*>& queries) const
 {
     auto alloc = std::make_shared<crossbow::allocator>();

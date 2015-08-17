@@ -127,7 +127,7 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
         const char* data = nullptr;
         uint64_t version = 0x0u;
         bool isNewest = false;
-        auto success = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
+        __attribute__((unused)) auto success = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
         LOG_ASSERT(success || (size == 0x0u), "Size of 0 does not indicate element-not-found");
 
         // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data

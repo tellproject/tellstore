@@ -247,8 +247,9 @@ size_t Record::sizeOfTuple(const char* ptr) const {
         pos = f.second + f.first.staticSize();
     } else {
         auto baseId = mSchema.fixedSizeFields().size();
-        pos = mFieldMetaData[baseId].second;
-        LOG_ASSERT(pos >= 0, "Offset for first variable length field is smaller than 0");
+        auto offset = mFieldMetaData[baseId].second;
+        LOG_ASSERT(offset >= 0, "Offset for first variable length field is smaller than 0");
+        pos = offset;
 
         for (; baseId < mFieldMetaData.size(); ++baseId) {
             // we know, that now all fields are variable length - that means the first four bytes are always the field
@@ -281,11 +282,11 @@ size_t Record::minimumSize() const {
         length = f.second + f.first.staticSize();
     } else {
         auto baseId = mSchema.fixedSizeFields().size();
-        length = mFieldMetaData[baseId].second;
-        LOG_ASSERT(length >= 0, "Offset for first variable length field is smaller than 0");
+        auto offset = mFieldMetaData[baseId].second;
+        LOG_ASSERT(offset >= 0, "Offset for first variable length field is smaller than 0");
 
         // Variable sized fields are always at least 4 bytes to indicate a NULL length
-        length += (mSchema.varSizeFields().size() * sizeof(uint32_t));
+        length = offset + (mSchema.varSizeFields().size() * sizeof(uint32_t));
     }
 
     // Align the length to 8 bytes

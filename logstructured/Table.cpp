@@ -237,7 +237,7 @@ bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
     return false;
 }
 
-std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* queryBuffer,
+std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,
         const std::vector<ScanQuery*>& queries) {
     std::vector<ScanProcessor> result;
     result.reserve(numThreads);
@@ -252,7 +252,7 @@ std::vector<Table::ScanProcessor> Table::startScan(int numThreads, const char* q
     for (decltype(numThreads) i = 1; i < numThreads; ++i) {
         auto step = numPages / numThreads + (i < mod ? 1 : 0);
         // Increment the page iterator by step pages (but not beyond the end page)
-        for (auto j = 0; j < step && iter != end; ++j, ++iter) {
+        for (decltype(step) j = 0; j < step && iter != end; ++j, ++iter) {
         }
 
         result.emplace_back(*this, begin, iter, queryBuffer, queries, version);

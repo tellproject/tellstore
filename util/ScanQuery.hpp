@@ -153,6 +153,10 @@ public:
         return AggregationIterator(mQueryDataEnd);
     }
 
+    const commitmanager::SnapshotDescriptor& snapshot() const {
+        return *mSnapshot;
+    }
+
     /**
      * @brief Checks if the tuple's version matches the client's snapshot descriptor
      *

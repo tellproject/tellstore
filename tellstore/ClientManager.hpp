@@ -129,7 +129,7 @@ class ClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
     ClientProcessor(crossbow::infinio::InfinibandService& service, crossbow::infinio::AllocatedMemoryRegion& scanRegion,
             const crossbow::infinio::Endpoint& commitManager, const crossbow::infinio::Endpoint& tellStore,
-            uint64_t processorNum);
+            size_t maxPendingResponses, uint64_t processorNum);
 
     uint64_t transactionCount() const {
         return mTransactionCount.load();

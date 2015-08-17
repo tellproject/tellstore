@@ -117,7 +117,7 @@ public:
      * @param queries Queries attaching to this scan
      * @return A scan processor for each thread
      */
-    std::vector<ScanProcessor> startScan(int numThreads, const char* queryBuffer,
+    std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries);
 
     /**

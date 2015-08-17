@@ -29,32 +29,32 @@ TEST(commit_manager_test, many_transactions) {
     // start 1024 transactions
     std::vector<uint64_t> versions;
     versions.reserve(1024);
-    for (int i = 0; i < 1024; ++i) {
+    for (uint64_t i = 0; i < 1024; ++i) {
         descriptors.emplace_back(commitManager.startTx());
         auto version = descriptors[i]->version();
-        EXPECT_EQ(version, i + 1) << "Expected version " << i + 1 << " does not match actual version " << version;
+        EXPECT_EQ(i + 1, version) << "Expected version " << i + 1 << " does not match actual version " << version;
         versions.push_back(version);
     }
     // committing every second transaction
-    for (int i = 0; i < 1024; i  += 2) {
+    for (uint64_t i = 0; i < 1024; i  += 2) {
         descriptors[i].commit();
     }
     auto snapshot = commitManager.startTx();
     // now every second version should be in the read set
-    for (int i = 0; i < 1024; ++i) {
-        EXPECT_EQ(snapshot->inReadSet(versions[i]), i % 2 == 0) << i << "th transaction (" << versions[i] <<
+    for (uint64_t i = 0; i < 1024; ++i) {
+        EXPECT_EQ(i % 2 == 0, snapshot->inReadSet(versions[i])) << i << "th transaction (" << versions[i] <<
             ") should " << (i % 2 == 0 ? "" : "not ") << "be in the read set";
     }
     // Commit the other transactions
-    for (int i = 1; i < 1024; i += 2) {
+    for (uint64_t i = 1; i < 1024; i += 2) {
         descriptors[i].commit();
     }
     auto allCommitted = commitManager.startTx();
-    for (int i = 0; i < 1024; ++i) {
-        EXPECT_EQ(snapshot->inReadSet(versions[i]), i % 2 == 0);
+    for (uint64_t i = 0; i < 1024; ++i) {
+        EXPECT_EQ(i % 2 == 0, snapshot->inReadSet(versions[i]));
         EXPECT_TRUE(allCommitted->inReadSet(versions[i]));
     }
-    EXPECT_EQ(allCommitted->baseVersion(), 1024);
+    EXPECT_EQ(1024u, allCommitted->baseVersion());
     snapshot.commit();
 }
 

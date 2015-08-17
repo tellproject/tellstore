@@ -194,11 +194,11 @@ std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, ScanQueryTy
 
 ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
         crossbow::infinio::AllocatedMemoryRegion& scanRegion, const crossbow::infinio::Endpoint& commitManager,
-        const crossbow::infinio::Endpoint& tellStore, uint64_t processorNum)
+        const crossbow::infinio::Endpoint& tellStore, size_t maxPendingResponses, uint64_t processorNum)
         : mScanRegion(scanRegion),
           mProcessor(service.createProcessor()),
-          mCommitManagerSocket(service.createSocket(*mProcessor)),
-          mTellStoreSocket(service.createSocket(*mProcessor)),
+          mCommitManagerSocket(service.createSocket(*mProcessor), maxPendingResponses),
+          mTellStoreSocket(service.createSocket(*mProcessor), maxPendingResponses),
           mProcessorNum(processorNum),
           mTransactionCount(0x0u) {
     mCommitManagerSocket.connect(commitManager);
@@ -243,7 +243,8 @@ ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, cons
                 IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE)) {
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config.commitManager, config.tellStore, i));
+        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config.commitManager, config.tellStore,
+                config.maxPendingResponses, i));
     }
 }
 
