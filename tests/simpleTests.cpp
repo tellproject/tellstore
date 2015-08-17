@@ -304,11 +304,11 @@ using HeavyStorageTestImplementations = ::testing::Types<StoreImpl<Implementatio
 TYPED_TEST_CASE(HeavyStorageTest, HeavyStorageTestImplementations);
 
 TYPED_TEST(HeavyStorageTest, DISABLED_heavy) {
-    std::array<std::thread, 3> threads = {
+    std::array<std::thread, 3> threads = {{
         std::thread(this->runFunction(0, 2500000)),
         std::thread(this->runFunction(2500000, 5000000)),
         std::thread(this->runFunction(5000000, 7500000))
-    };
+    }};
 
     this->mGo.store(true);
     this->run(7500000, 10000000);

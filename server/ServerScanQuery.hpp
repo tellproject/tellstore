@@ -18,7 +18,7 @@
 namespace tell {
 namespace store {
 
-class ServerConfig;
+struct ServerConfig;
 
 /**
  * @brief Status of the scan
