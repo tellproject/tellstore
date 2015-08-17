@@ -29,10 +29,11 @@ template<>
 struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : crossbow::non_copyable, crossbow::non_movable {
 public:
     using Table = logstructured::Table;
-    using GC = logstructured::GarbageCollector;
+    using GC = Table::GarbageCollector;
 
     StoreImpl(const StorageConfig& config)
             : mPageManager(PageManager::construct(config.totalMemory)),
+              mGc(*this),
               mTableManager(*mPageManager, config, mGc, mVersionManager),
               mHashMap(config.hashMapCapacity) {
     }

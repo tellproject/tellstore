@@ -198,7 +198,9 @@ public:
     }
 
     bool scan(uint64_t tableId, ScanQuery* query) {
-        mVersionManager.addSnapshot(query->snapshot());
+        if (query) {
+            mVersionManager.addSnapshot(query->snapshot());
+        }
         return mScanThreads.scan(tableId, lookupTable(tableId), query);
     }
 

@@ -265,13 +265,9 @@ std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char
     return result;
 }
 
-void Table::runGC(uint64_t minVersion) {
-    // TODO Implement
-}
-
 uint64_t Table::minVersion() const {
     if (mRecord.schema().type() == TableType::NON_TRANSACTIONAL) {
-        return ChainedVersionRecord::ACTIVE_VERSION;
+        return ChainedVersionRecord::ACTIVE_VERSION - 0x1u;
     } else {
         return mVersionManager.lowestActiveVersion();
     }
@@ -343,10 +339,6 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
     }
 
     return false;
-}
-
-void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
-    // TODO Implement
 }
 
 } // namespace logstructured

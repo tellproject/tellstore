@@ -111,6 +111,9 @@ private:
                 auto res = queryMap.emplace(tableId, std::make_tuple(table, 0, std::vector<ScanQuery*>()));
                 iter = res.first;
             }
+            if (!query) {
+                continue;
+            }
             std::get<1>(iter->second) += query->selectionLength();
             std::get<2>(iter->second).emplace_back(query);
         }
@@ -124,7 +127,7 @@ private:
             std::vector<ScanQuery*> queries;
             std::tie(table, bufferLength, queries) = std::move(q.second);
 
-            std::unique_ptr<char[]> queryBuffer(new char[bufferLength]);
+            std::unique_ptr<char[]> queryBuffer(bufferLength == 0u ? nullptr : new char[bufferLength]);
             auto result = queryBuffer.get();
             for (auto p : queries) {
                 // Copy the selection query into the qbuffer

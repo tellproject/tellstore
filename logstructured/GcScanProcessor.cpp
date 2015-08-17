@@ -1,6 +1,7 @@
 #include "GcScanProcessor.hpp"
 
 #include "ChainedVersionRecord.hpp"
+#include "LogstructuredMemoryStore.hpp"
 #include "Table.hpp"
 #include "VersionRecordIterator.hpp"
 
@@ -239,6 +240,16 @@ bool GcScanProcessor::replaceElement(ChainedVersionRecord* oldElement, ChainedVe
         LOG_ASSERT(newElement->mutableData().isInvalid(), "New element not in version list but not invalid");
     }
     return true;
+}
+
+void GcScanGarbageCollector::run(const std::vector<Table*>& tables, uint64_t /* minVersion */) {
+    for (auto i : tables) {
+        LOG_TRACE("Starting garbage collection on table %1%", i->id());
+        if (!mStorage.scan(i->id(), nullptr)) {
+            LOG_ERROR("Unable to start Garbage Collection scan");
+            return;
+        }
+    }
 }
 
 } // namespace logstructured

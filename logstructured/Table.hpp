@@ -37,6 +37,8 @@ public:
 
     using ScanProcessor = GcScanProcessor;
 
+    using GarbageCollector = ScanProcessor::GarbageCollector;
+
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
             HashTable& hashMap);
 
@@ -120,13 +122,6 @@ public:
     std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries);
 
-    /**
-     * @brief Starts a garbage collection run
-     *
-     * @param minVersion Minimum version of the tuples to keep
-     */
-    void runGC(uint64_t minVersion);
-
 private:
     friend class GcScanProcessor;
     friend class LazyRecordWriter;
@@ -163,14 +158,6 @@ private:
     const uint64_t mTableId;
 
     LogImpl mLog;
-};
-
-/**
- * @brief Garbage collector to reclaim unused pages in the Log-Structured Memory approach
- */
-class GarbageCollector {
-public:
-    void run(const std::vector<Table*>& tables, uint64_t minVersion);
 };
 
 } // namespace logstructured

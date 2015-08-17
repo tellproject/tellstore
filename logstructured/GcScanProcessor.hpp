@@ -2,6 +2,7 @@
 
 #include <util/Log.hpp>
 #include <util/ScanQuery.hpp>
+#include <util/StoreImpl.hpp>
 
 #include <crossbow/non_copyable.hpp>
 
@@ -13,6 +14,7 @@ namespace store {
 namespace logstructured {
 
 class ChainedVersionRecord;
+class GcScanGarbageCollector;
 class Table;
 
 /**
@@ -21,6 +23,8 @@ class Table;
 class GcScanProcessor : crossbow::non_copyable {
 public:
     using LogImpl = Log<UnorderedLogImpl>;
+
+    using GarbageCollector = GcScanGarbageCollector;
 
     GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
             const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
@@ -100,6 +104,21 @@ private:
     /// Whether the current page is being recycled
     /// Initialized to false to prevent the first page from being garbage collected
     bool mRecycle;
+};
+
+/**
+ * @brief Garbage collector for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
+ */
+class GcScanGarbageCollector {
+public:
+    GcScanGarbageCollector(StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& storage)
+            : mStorage(storage) {
+    }
+
+    void run(const std::vector<Table*>& tables, uint64_t minVersion);
+
+private:
+    StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& mStorage;
 };
 
 } // namespace logstructured
