@@ -258,37 +258,31 @@ void Table::runGC(uint64_t minVersion) {
         insertMap[InsertMapKey(k)].push_back(insIter->data());
     }
     auto& roPages = *mPages.load();
-    auto nPagesPtr = crossbow::allocator::construct<PageList>(roPages);
+    auto nPagesPtr = crossbow::allocator::construct<PageList>();
     auto& nPages = *nPagesPtr;
-    auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-    //TODO: question: what exactly happens to newPages? Shouldn't this get added to the existing mPages at some point?
-    PageList newPages;
     // this loop just iterates over all pages
-    for (size_t i = 0; i < nPages.size(); ++i) {
-        Page page(mPageManager, nPages[i], this);
+    Page page(mPageManager, nullptr, this);
+    for (auto& roPage: roPages) {
+        page.reset(roPage);
         bool done;
-        nPages[i] = page.gc(minVersion, insertMap, fillPage, done, hashTable);
+        auto newPage = page.gc(minVersion, insertMap, done, hashTable);
         while (!done) {
-            if (nPages[i]) {
-                newPages.push_back(nPages[i]);
-            }
-            fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-            nPages[i] = page.gc(minVersion, insertMap, fillPage, done, hashTable);
+            LOG_ASSERT(newPage != nullptr, "newPage should not be NULL when done is false!")
+            nPages.push_back(newPage);
+            newPage = page.gc(minVersion, insertMap, done, hashTable);
         }
-        if (nPages[i] == nullptr) {
-            // This means that this page got merged with the older page.
-            // Therefore we can remove it from the list
-            nPages.erase(nPages.begin() + i);
+        if (newPage) {
+            nPages.push_back(newPage);
         }
     }
+
     // now we can process the inserts
     while (!insertMap.empty()) {
-        //TODO: question: isnt't it that fill page could actually still poit to a page that was not pushed to nPages yet??
-        fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-        Page::fillWithInserts(minVersion, insertMap, fillPage, hashTable);
-        nPages.push_back(fillPage);
+        nPages.push_back(page.fillWithInserts(minVersion, insertMap, hashTable));
     }
+
     // The garbage collection is finished - we can now reset the read only table
+    // Todo: question: should hash table be SWAPed first or page list?!
     {
         auto p = mPages.load();
         mPages.store(nPagesPtr);

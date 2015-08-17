@@ -35,26 +35,23 @@ auto RowStorePage::begin() const -> Iterator {
 }
 
 auto RowStorePage::end() const -> Iterator {
-    return Iterator(mData + usedMemory());
+    return Iterator(mData + mSize);
 }
 
 //TODO: question: this implementation relies on the fact that fresh pages are meset to 0s. Is that actually the case?
 //TODO: question: will mStartOffset be valid for the whole GC phase? Can it happen that the page is called later again
 // by GC, but with a newly generated Page object (and mStartIndex reset to 8)?
-char* RowStorePage::gc(
-        uint64_t lowestActiveVersion,
+char* RowStorePage::gc(uint64_t lowestActiveVersion,
         InsertMap& insertMap,
-        char*& fillPage,
         bool& done,
         Modifier& hashTable)
 {
         // We iterate throgh our page
-        auto size = usedMemory();
         uint64_t offset = mStartOffset;
         // in the first iteration we just decide wether we
         // need to collect any garbage here
         bool hasToClean = mStartOffset != 8;
-        while (offset <= size && !hasToClean) {
+        while (offset <= mSize && !hasToClean) {
             CDMRecord rec(mData + offset);
             if (rec.needsCleaning(lowestActiveVersion, insertMap)) {
                 hasToClean = true;
@@ -67,62 +64,49 @@ char* RowStorePage::gc(
             done = true;
             return mData;
         }
+
         // At this point we know that we will need to clean the page
-        auto fillOffset = usedMemory(fillPage);
-        //TODO: question: in fact, fillPage will always be a fresh page, right?
-        //At least this is how this function is used within table. Is this generally true?
-        //Or do we want to allow the gc step "half-full" pages into account? --> which actually could make sense?!
-        char* res = fillOffset == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at the last iteration of gc
-        if (fillOffset == 0) fillOffset = 8;
-        // now we also know that we will have to recycle the current
-        // read only page
-        markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
-        // now we need to iterate over the page again
+        // if its the first gc call to that page, we have to mark it for deletion
+        if (mStartOffset == 8)
+            markCurrentForDeletion();
+
+        // construct new fill page if needed
+        constructFillPage();
+
         offset = mStartOffset;
-        while (offset < size) {
+        while (offset < mSize) {
             CDMRecord rec(mData + offset);
             bool couldRelocate = false;
             auto nSize = rec.copyAndCompact(lowestActiveVersion,
                     insertMap,
-                    fillPage + fillOffset,
-                    TELL_PAGE_SIZE - fillOffset,
+                    mFillPage + mFillOffset,
+                    TELL_PAGE_SIZE - mFillOffset,
                     couldRelocate);
             if (!couldRelocate) {
-                // Before we do anything, we need to write back the new size
-                // of the fillPage
-                *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
                 // The current fillPage is full
-                // In this case we will either allocate a new fillPage (if
-                // the old one got inserted before), or we will return to
-                // indicate that we need a new fillPage
-                if (res) {
-                    done = false;
-                    mStartOffset = offset;
-                    return res;
-                } else {
-                    // In this case the fillPage is already in the pageList.
-                    // We can safely allocate a new page and allocate this one.
-                    fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-                    res = fillPage;
-                    // now we can try again
-                    continue;
-                }
+                // In this case we set its used memory, return it and set mFillPage to null
+                *reinterpret_cast<uint64_t*>(mFillPage) = mFillOffset;
+                auto res = mFillPage;
+                mFillPage = nullptr;
+                done = false;
+                return res;
             }
-            fillOffset += nSize;
-            hashTable.insert(rec.key(), fillPage + fillOffset, true);
+            mFillOffset += nSize;
+            hashTable.insert(rec.key(), mFillPage + mFillOffset, true);
             offset += rec.size();
         }
         // we are done. It might now be, that this page has some free space left
-        *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
-        fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
-        //now we write back the new size --> todo: implement!
         done = true;
-        return res;
+        if (insertMap.size())
+            return fillWithInserts(lowestActiveVersion, insertMap, hashTable);  // this will return a non-nullptr
+        return nullptr;
 }
 
-void RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
+char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable)
 {
-    auto fillOffset = *reinterpret_cast<uint64_t*>(fillPage);
+    // construct new fill page if needed
+    constructFillPage();
+
     char dummyRecord[40];
     dummyRecord[0] = crossbow::to_underlying(RecordType::MULTI_VERSION_RECORD);
     // there are 0 number of versions
@@ -140,19 +124,22 @@ void RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& inse
         // there are still some inserts that got processed in the previous GC phase
         if (hashTable.get(key)) { insertMap.erase(fst); continue; }
         dummy.writeKey(key);
-        fillOffset += dummy.copyAndCompact(lowestActiveVersion,
+        mFillOffset += dummy.copyAndCompact(lowestActiveVersion,
                 insertMap,
-                fillPage + fillOffset,
-                TELL_PAGE_SIZE - fillOffset,
+                mFillPage + mFillOffset,
+                TELL_PAGE_SIZE - mFillOffset,
                 couldRelocate);
         if (couldRelocate) {
-            hashTable.insert(key, fillPage + fillOffset);
+            hashTable.insert(key, mFillPage + mFillOffset);
             insertMap.erase(fst);
         } else {
             break;
         }
     }
-    *reinterpret_cast<uint64_t*>(fillPage) = fillOffset;
+    *reinterpret_cast<uint64_t*>(mFillPage) = mFillOffset;
+    auto res = mFillPage;
+    mFillPage = nullptr;
+    return res;
 }
 
 } // namespace deltamain

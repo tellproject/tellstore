@@ -136,70 +136,66 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
     return true;
 }
 
-//TODO: question: this implementation relies on the fact that fresh pages are meset to 0s. Is that actually the case?
-//TODO: question: will mStartIndex be valid for the whole GC phase? Can it happen that the page is called later again
-// by GC, but with a newly generated Page object (and mStartIndex reset to 0)?
-char* ColumnMapPage::gc(
-        uint64_t lowestActiveVersion,
+char* ColumnMapPage::gc(uint64_t lowestActiveVersion,
         InsertMap& insertMap,
-        char*& fillPage,
         bool& done,
         Modifier& hashTable)
 {
+    //TODO: continue here!!!
     // general base knowedge
-    auto capacity = mTable->getPageCapacity();
-    auto nullBitMapSize = getNullBitMapSize(mTable);
-    auto numColumns = mTable->getNumberOfFixedSizedFields() + mTable->getNumberOfVarSizedFields();
-    auto srcCount = *(reinterpret_cast<uint32_t*>(mTable+4));
 
-    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap, mStartIndex, mData, capacity, srcCount, nullBitMapSize);
-    if (cleaningMap.size() == 0) {
-        // we are done - no cleaning needed for this page
-        done = true;
-        return mData;
-    }
+//    auto nullBitMapSize = getNullBitMapSize(mTable);
+//    auto numColumns = mTable->getNumberOfFixedSizedFields() + mTable->getNumberOfVarSizedFields();
 
-    // At this point we know that we will need to clean the page
-    uint32_t *varHeapOffsetPtr = (reinterpret_cast<uint32_t*>(fillPage));
-    if ((*varHeapOffsetPtr) == 0)
-        (*varHeapOffsetPtr) = reinterpret_cast<uint64_t>(getColumnNAt(mTable, numColumns, 0, fillPage, capacity, nullBitMapSize))
-            - reinterpret_cast<uint64_t>(fillPage);
-    uint32_t *countPtr = (reinterpret_cast<uint32_t*>(fillPage+4));
-    char* res = (*countPtr) == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at another iteration of gc
-    // now we also know that we will have to recycle the current
-    // read only page
-    markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
+//    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap, mStartIndex, mData, capacity, srcCount, nullBitMapSize);
+//    if (cleaningMap.size() == 0) {
+//        // we are done - no cleaning needed for this page
+//        done = true;
+//        return mData;
+//    }
 
-    // now we need to iterate over the page and simply copy or clean records as necessary
-    auto keyPtr = getKeyAt(mStartIndex, mData);
-    for (auto keyPtrEnd = keyPtr + 2*capacity; keyPtr < keyPtrEnd; keyPtr +=2) {
-        if(!copyAndCompact(cleaningMap, &mStartIndex, keyPtr, varHeapOffsetPtr, countPtr, mData, fillPage, mTable, numColumns, capacity, nullBitMapSize)) {
-            // The current fillPage is full
-            // In this case we will either allocate a new fillPage (if
-            // the old one got inserted before), or we will return to
-            // indicate that we need a new fillPage
-            // in either case, we have to seal the fillpage (by setting capacity correclty)
-            *(reinterpret_cast<uint32_t *>(fillPage)) = capacity;
-            if (res) {
-                done = false;
-                return res;
-            } else {
-                // In this case the fillPage is already in the pageList.
-                // We can safely allocate a new page and allocate this one.
-                fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-                res = fillPage;
-                // now we can try again
-                continue;
-            }
-        }
-    }
-    // we are done. It might now be, that this page has some free space left
-    fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
-    done = true;
-    return res;
+//    // At this point we know that we will need to clean the page
+//    uint32_t *varHeapOffsetPtr = (reinterpret_cast<uint32_t*>(fillPage));
+//    if ((*varHeapOffsetPtr) == 0)
+//        (*varHeapOffsetPtr) = reinterpret_cast<uint64_t>(getColumnNAt(mTable, numColumns, 0, fillPage, capacity, nullBitMapSize))
+//            - reinterpret_cast<uint64_t>(fillPage);
+//    uint32_t *countPtr = (reinterpret_cast<uint32_t*>(fillPage+4));
+//    char* res = (*countPtr) == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at another iteration of gc
+//    // now we also know that we will have to recycle the current
+//    // read only page
+//    markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
+
+//    // now we need to iterate over the page and simply copy or clean records as necessary
+//    auto keyPtr = getKeyAt(mStartIndex, mData);
+//    for (auto keyPtrEnd = keyPtr + 2*capacity; keyPtr < keyPtrEnd; keyPtr +=2) {
+//        if(!copyAndCompact(cleaningMap, &mStartIndex, keyPtr, varHeapOffsetPtr, countPtr, mData, fillPage, mTable, numColumns, capacity, nullBitMapSize)) {
+//            // The current fillPage is full
+//            // In this case we will either allocate a new fillPage (if
+//            // the old one got inserted before), or we will return to
+//            // indicate that we need a new fillPage
+//            // in either case, we have to seal the fillpage (by setting capacity correclty)
+//            *(reinterpret_cast<uint32_t *>(fillPage)) = capacity;
+//            if (res) {
+//                done = false;
+//                return res;
+//            } else {
+//                // In this case the fillPage is already in the pageList.
+//                // We can safely allocate a new page and allocate this one.
+//                fillPage = reinterpret_cast<char*>(mPageManager.alloc());
+//                res = fillPage;
+//                // now we can try again
+//                continue;
+//            }
+//        }
+//    }
+//    // we are done. It might now be, that this page has some free space left
+//    fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
+//    done = true;
+//    return res;
+    return nullptr;
 }
 
-void ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, char*& fillPage, Modifier& hashTable)
+char *ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable)
 {
     //TODO: implement
 }

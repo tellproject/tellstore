@@ -23,31 +23,27 @@ namespace impl {
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a
  * column map page which is layed out the following way:
  *
- * - capacity: uint32 to store the number of records that would actually fit
- *   into the columns part of the storage. However, as we do not know in advance
- *   how much space the var-sized values will need, it might be that the actual
- *   count of records is smaller than the capacity. During garbage collection,
- *   this field is used to indicate the offset to new values in the var-sized
- *   heap.
  * - count: uint32 to store the number of records that are actually stored in
- *   this page. This is only used in scans and during garbage collection.
- * - key-version column: an array of size capcity of 16-byte values in format:
+ *   this page.
+ * - count^: count rounded up to the next multiple of 2. This helps with proper
+ *   8-byte alignment of values
+ * - key-version column: an array of size count of 16-byte values in format:
  *   |key (8 byte)|version (8 byte)|
- * - newest-pointers: an array of size capacity of 8-byte pointers to newest
+ * - newest-pointers: an array of size count of 8-byte pointers to newest
  *   versions of records in the logs (as their is only one newest ptr per MV
  *   record and not per record version, only the first newestptr of every MV
  *   record is valid)
  * - null-bitmatrix: a bitmatrix of size capacity x (|Columns|+7)/8 bytes
- * - var-size-meta-data column: an array of size capacity of signed 4-byte values
+ * - var-size-meta-data column: an array of size count^ of signed 4-byte values
  *   indicating the total size of all var-sized values of each record. This is
  *   used to allocate enough space for a record on a get request.
  *   MOREOVER: We set this size to zero to denote a version of a deleted tuple
  *   and to a negative number if the tuple is marked as reverted and will be
  *   deleted at the next GC phase. In that case, the absolute denotes the size.
  * - fixed-sized data columns: for each column there is an array of size
- *   capacity  x value-size (4 or 8 bytes, as defined in schema)
+ *   count^ x value-size (4 or 8 bytes, as defined in schema)
  * - var-sized data columns: for each colum there is an array of
- *   capacity  x 8 bytes in format:
+ *   count  x 8 bytes in format:
  *   |4-byte-offset from page start into var-sized heap|4-byte prefix of value|
  * - var-sized heap: values referred from var-sized columns in the format
  *   |4-byte size (including the size field)|value|
@@ -67,7 +63,7 @@ namespace impl {
 /**
  * The following macro is used to chare the common code in getNewest and casNewest.
  */
-#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, capacity))); \
+#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, recordCount))); \
     auto p = ptr->load(); \
     while (ptr->load() % 2) { \
         ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1); \
@@ -82,7 +78,7 @@ public:
     using Type = typename DMRecordImplBase<T>::Type;
     ColMapMVRecordBase(T data) : mData(data) {}
 
-    T getNewest(const Table *table, const uint32_t index, const char * basePtr, const uint32_t capacity) const {
+    T getNewest(const Table *table, const uint32_t index, const char * basePtr, const uint32_t recordCount) const {
         LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
         GET_NEWEST
         return reinterpret_cast<char*>(p);
@@ -166,7 +162,7 @@ public:
         COMPUTE_BASE_KNOWLEDGE(mData, table)
         const size_t nullBitMapSize = getNullBitMapSize(table);
 
-        auto newest = getNewest(table, index, basePtr, capacity);
+        auto newest = getNewest(table, index, basePtr, recordCount);
         if (newest) {
             DMRecordImplBase<T> rec(newest);
             bool b;
@@ -185,7 +181,7 @@ public:
 
         bool found = false;
         auto key = getKeyAt(index, basePtr);
-        auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
+        auto varLength = getVarsizedLenghtAt(index, basePtr, recordCount, nullBitMapSize);
         for (; ; index++, key += 2, varLength++) {
             if (*varLength < 0) continue;
             isValid = true;
@@ -212,26 +208,26 @@ public:
 
                 auto fixedSizeFields = table->getNumberOfFixedSizedFields();
                 uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
-                        + *getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table));
+                        + *getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
                 std::unique_ptr<char[]> buf(new char[recordSize]);  //TODO: is this what it should look like? Am I using the right allocator?
                 char *res = buf.get();
                 char *src;
                 char *dest = res;
                 // copy nullbitmap
-                src = const_cast<char *>(getNullBitMapAt(index, basePtr, capacity, nullBitMapSize));
+                src = const_cast<char *>(getNullBitMapAt(index, basePtr, recordCount, nullBitMapSize));
                 memcpy(dest, src, nullBitMapSize);
                 dest += nullBitMapSize;
 
                 // copy fixed-sized columns
                 for (uint i = 0; i < fixedSizeFields; i++)
                 {
-                    src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, capacity, nullBitMapSize));
+                    src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, recordCount, nullBitMapSize));
                     auto fieldSize = table->getFieldSize(i);
                     memcpy(dest, src, fieldSize);
                     dest += fieldSize;
                 }
                 // copy var-sized colums in a batch
-                src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, capacity, nullBitMapSize));
+                src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, recordCount, nullBitMapSize));
                 src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
                 memcpy(dest, src, *varLength);
 
@@ -330,7 +326,7 @@ struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
                 const commitmanager::SnapshotDescriptor& snapshot,
                 const Table *table) {
         COMPUTE_BASE_KNOWLEDGE(mData, table)
-        auto newest = getNewest(table, index, basePtr, capacity);
+        auto newest = getNewest(table, index, basePtr, recordCount);
         if (newest) {
             DMRecord rec(newest);
             bool res = rec.update(next, isValid, snapshot, table);
@@ -342,7 +338,7 @@ struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
         }
 
         auto key = getKeyAt(index, basePtr);
-        auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, getNullBitMapSize(table));
+        auto varLength = getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
         for (; ; index++, key += 2, varLength++) {
             if (*varLength >= 0) break;
             if (key[2] != key[0])  // loop exit condition
