@@ -20,9 +20,6 @@ struct ClientConfig {
 
     /// Number of network threads to process transactions on
     size_t numNetworkThreads = 2ull;
-
-    /// Size of memory region to reserve for scans
-    size_t scanMemory = 0x80000000ull;
 };
 
 } // namespace store

@@ -4,6 +4,7 @@
 set(CLIENT_SRCS
     ClientManager.cpp
     ClientSocket.cpp
+    ScanMemory.cpp
     Table.cpp
 )
 
@@ -11,6 +12,7 @@ set(CLIENT_PUBLIC_HDR
     ClientConfig.hpp
     ClientManager.hpp
     ClientSocket.hpp
+    ScanMemory.hpp
     Table.hpp
 )
 
@@ -28,6 +30,11 @@ set_target_properties(tellstore-client PROPERTIES PUBLIC_HEADER
         "${COMMON_PUBLIC_HDR_ABSOLUTE};${CLIENT_PUBLIC_HDR_ABSOLUTE}")
 target_include_directories(tellstore-client PUBLIC $<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${INCLUDE_INSTALL_DIR}>
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
+
+# Workaround for link failure with GCC 5 (GCC Bug 65913)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    target_link_libraries(tellstore-client PUBLIC atomic)
+endif()
 
 # Link against TellStore common
 target_link_libraries(tellstore-client PRIVATE tellstore-common)

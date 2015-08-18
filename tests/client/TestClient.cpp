@@ -2,6 +2,7 @@
 #include <tellstore/ClientManager.hpp>
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/Record.hpp>
+#include <tellstore/ScanMemory.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/enum_underlying.hpp>
@@ -58,8 +59,8 @@ private:
 
 class TestClient {
 public:
-    TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
-            size_t numTransactions);
+    TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t scanMemoryLength,
+            size_t numTuple, size_t numTransactions);
 
     void shutdown();
 
@@ -79,6 +80,8 @@ private:
 
     ClientManager mManager;
 
+    ScanMemoryManager mScanMemory;
+
     /// Number of tuples to insert per transaction
     size_t mNumTuple;
 
@@ -90,9 +93,10 @@ private:
     std::array<GenericTuple, 4> mTuple;
 };
 
-TestClient::TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config, size_t numTuple,
-        size_t numTransactions)
+TestClient::TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+        size_t scanMemoryLength, size_t numTuple, size_t numTransactions)
         : mManager(service, config),
+          mScanMemory(service, 1u, scanMemoryLength),
           mNumTuple(numTuple),
           mNumTransactions(numTransactions),
           mActiveTransactions(0) {
@@ -283,7 +287,8 @@ void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& tran
     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(table, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u, nullptr);
+    auto scanFuture = transaction.scan(table, mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u,
+            nullptr);
     if (!scanFuture->waitForResult()) {
         auto& ec = scanFuture->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
@@ -376,8 +381,8 @@ void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction
     Table resultTable(table.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(resultTable, ScanQueryType::PROJECTION, selectionLength, selection.get(),
-            projectionLength, projection.get());
+    auto scanFuture = transaction.scan(resultTable, mScanMemory, ScanQueryType::PROJECTION, selectionLength,
+            selection.get(), projectionLength, projection.get());
     if (!scanFuture->waitForResult()) {
         auto& ec = scanFuture->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
@@ -461,8 +466,8 @@ void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransactio
     Table resultTable(table.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(resultTable, ScanQueryType::AGGREGATION, selectionLength, selection.get(),
-            aggregationLength, aggregation.get());
+    auto scanFuture = transaction.scan(resultTable, mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
+            selection.get(), aggregationLength, aggregation.get());
     if (!scanFuture->waitForResult()) {
         auto& ec = scanFuture->error();
         LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
@@ -508,6 +513,7 @@ void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransactio
 int main(int argc, const char** argv) {
     crossbow::string commitManagerHost;
     crossbow::string tellStoreHost;
+    size_t scanMemoryLength = 0x80000000ull;
     size_t numTuple = 1000000ull;
     size_t numTransactions = 10;
     tell::store::ClientConfig clientConfig;
@@ -519,7 +525,7 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'l'>("log-level", &logLevel),
             crossbow::program_options::value<'c'>("commit-manager", &commitManagerHost),
             crossbow::program_options::value<'s'>("server", &tellStoreHost),
-            crossbow::program_options::value<'m'>("memory", &clientConfig.scanMemory),
+            crossbow::program_options::value<'m'>("memory", &scanMemoryLength),
             crossbow::program_options::value<'n'>("tuple", &numTuple),
             crossbow::program_options::value<'t'>("transactions", &numTransactions),
             crossbow::program_options::value<-1>("network-threads", &clientConfig.numNetworkThreads,
@@ -553,13 +559,13 @@ int main(int argc, const char** argv) {
     LOG_INFO("--- Commit Manager: %1%", clientConfig.commitManager);
     LOG_INFO("--- TellStore: %1%", clientConfig.tellStore);
     LOG_INFO("--- Network Threads: %1%", clientConfig.numNetworkThreads);
-    LOG_INFO("--- Scan Memory: %1%GB", double(clientConfig.scanMemory) / double(1024 * 1024 * 1024));
+    LOG_INFO("--- Scan Memory: %1%GB", double(scanMemoryLength) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Number of tuples: %1%", numTuple);
     LOG_INFO("--- Number of transactions: %1%", numTransactions);
 
     // Initialize network stack
     crossbow::infinio::InfinibandService service(infinibandLimits);
-    TestClient client(service, clientConfig, numTuple, numTransactions);
+    TestClient client(service, clientConfig, scanMemoryLength, numTuple, numTransactions);
     service.run();
 
     LOG_INFO("Exiting TellStore client");

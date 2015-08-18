@@ -51,6 +51,20 @@ void ModificationResponse::processResponse(crossbow::buffer_reader& message) {
     setResult(succeeded);
 }
 
+ScanResponse::ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, ScanMemory memory, Record record,
+        uint16_t scanId)
+        : Base(fiber),
+          mSocket(socket),
+          mMemory(std::move(memory)),
+          mRecord(std::move(record)),
+          mScanId(scanId),
+          mPos(reinterpret_cast<const char*>(mMemory.data())),
+          mTuplePending(0x0u) {
+    if (!mMemory.valid()) {
+        setError(std::make_error_code(std::errc::not_enough_memory));
+    }
+}
+
 bool ScanResponse::hasNext() {
     while (mTuplePending == 0x0u) {
         if (done()) {
@@ -253,27 +267,30 @@ std::shared_ptr<ModificationResponse> ClientSocket::revert(crossbow::infinio::Fi
 }
 
 std::shared_ptr<ScanResponse> ClientSocket::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        const Record& record, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
-        uint32_t queryLength, const char* query, const crossbow::infinio::LocalMemoryRegion& destRegion,
+        const Record& record, ScanMemory scanMemory, ScanQueryType queryType, uint32_t selectionLength,
+        const char* selection, uint32_t queryLength, const char* query,
         const commitmanager::SnapshotDescriptor& snapshot) {
-    ++mScanId;
-    auto response = std::make_shared<ScanResponse>(fiber, *this, record, mScanId,
-            reinterpret_cast<const char*>(destRegion.address()), destRegion.length());
+    auto scanId = ++mScanId;
+    auto response = std::make_shared<ScanResponse>(fiber, *this, std::move(scanMemory), record, scanId);
+    if (response->done()) {
+        return response;
+    }
 
     uint32_t messageLength = 6 * sizeof(uint64_t) + selectionLength + queryLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
     messageLength += sizeof(uint64_t) + snapshot.serializedLength();
 
     sendAsyncRequest(response, RequestType::SCAN, messageLength,
-            [this, tableId, queryType, selectionLength, selection, queryLength, query, &destRegion, &snapshot]
+            [this, &response, tableId, queryType, selectionLength, selection, queryLength, query, &snapshot]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
-        message.write<uint16_t>(mScanId);
+        message.write<uint16_t>(response->scanId());
 
+        auto& memory = response->scanMemory();
         message.align(sizeof(uint64_t));
-        message.write<uint64_t>(destRegion.address());
-        message.write<uint64_t>(destRegion.length());
-        message.write<uint32_t>(destRegion.rkey());
+        message.write<uint64_t>(reinterpret_cast<uintptr_t>(memory.data()));
+        message.write<uint64_t>(memory.length());
+        message.write<uint32_t>(memory.key());
 
         message.write<uint32_t>(selectionLength);
         message.write(selection, selectionLength);

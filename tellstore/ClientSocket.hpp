@@ -4,6 +4,7 @@
 #include <tellstore/MessageTypes.hpp>
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/Record.hpp>
+#include <tellstore/ScanMemory.hpp>
 #include <tellstore/Table.hpp>
 
 #include <crossbow/byte_buffer.hpp>
@@ -124,17 +125,8 @@ class ScanResponse final : public crossbow::infinio::RpcResponseResult<ScanRespo
     using Base = crossbow::infinio::RpcResponseResult<ScanResponse, bool>;
 
 public:
-    ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, Record record, uint16_t scanId,
-            const char* data, size_t length)
-            : Base(fiber),
-              mSocket(socket),
-              mRecord(std::move(record)),
-              mScanId(scanId),
-              mData(data),
-              mLength(length),
-              mPos(mData),
-              mTuplePending(0x0u) {
-    }
+    ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, ScanMemory memory, Record record,
+            uint16_t scanId);
 
     /**
      * @brief Whether the scan has pending tuples to read
@@ -158,18 +150,26 @@ private:
         return error::get_error_category();
     }
 
+    uint16_t scanId() const {
+        return mScanId;
+    }
+
+    const ScanMemory& scanMemory() const {
+        return mMemory;
+    }
+
     void processResponse(crossbow::buffer_reader& message);
 
     void notifyProgress(uint16_t tupleCount);
 
     ClientSocket& mSocket;
 
+    ScanMemory mMemory;
+
     Record mRecord;
 
     uint16_t mScanId;
 
-    const char* mData;
-    size_t mLength;
     const char* mPos;
 
     size_t mTuplePending;
@@ -215,9 +215,8 @@ public:
             const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-            const char* query, const crossbow::infinio::LocalMemoryRegion& destRegion,
-            const commitmanager::SnapshotDescriptor& snapshot);
+            ScanMemory scanMemory, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
+            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot);
 
 private:
     friend class ScanResponse;

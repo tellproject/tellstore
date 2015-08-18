@@ -82,12 +82,13 @@ std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& tab
     });
 }
 
-std::shared_ptr<ScanResponse> ClientTransaction::scan(const Table& table, ScanQueryType queryType,
-        uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query) {
+std::shared_ptr<ScanResponse> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
+        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+        const char* query) {
     return executeInTransaction<ScanResponse>(table,
-            [this, &table, queryType, selectionLength, selection, queryLength, query] () {
-        return mProcessor.scan(mFiber, table.tableId(), table.record(), queryType, selectionLength, selection,
-                queryLength, query, *mSnapshot);
+            [this, &table, &memoryManager, queryType, selectionLength, selection, queryLength, query] () {
+        return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
+                selection, queryLength, query, *mSnapshot);
     });
 }
 
@@ -183,20 +184,20 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, u
     return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
 }
 
-std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
-        const char* selection, uint32_t queryLength, const char* query) {
+std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, ScanMemoryManager& memoryManager,
+        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+        const char* query) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.scan(mFiber, table.tableId(), table.record(), queryType, selectionLength, selection, queryLength,
-            query, *snapshot);
+    return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
+            selection, queryLength, query, *snapshot);
 }
 
 ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
-        crossbow::infinio::AllocatedMemoryRegion& scanRegion, const crossbow::infinio::Endpoint& commitManager,
-        const crossbow::infinio::Endpoint& tellStore, size_t maxPendingResponses, uint64_t processorNum)
-        : mScanRegion(scanRegion),
-          mProcessor(service.createProcessor()),
+        const crossbow::infinio::Endpoint& commitManager, const crossbow::infinio::Endpoint& tellStore,
+        size_t maxPendingResponses, uint64_t processorNum)
+        : mProcessor(service.createProcessor()),
           mCommitManagerSocket(service.createSocket(*mProcessor), maxPendingResponses),
           mTellStoreSocket(service.createSocket(*mProcessor), maxPendingResponses),
           mProcessorNum(processorNum),
@@ -238,12 +239,10 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
     }
 }
 
-ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config)
-        : mScanRegion(service.allocateMemoryRegion(config.scanMemory,
-                IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE)) {
+ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config.commitManager, config.tellStore,
+        mProcessor.emplace_back(new ClientProcessor(service, config.commitManager, config.tellStore,
                 config.maxPendingResponses, i));
     }
 }
