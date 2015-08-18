@@ -4,6 +4,7 @@
 #include <crossbow/infinio/InfinibandLimits.hpp>
 
 #include <cstdint>
+#include <vector>
 
 namespace tell {
 namespace store {
@@ -13,7 +14,7 @@ struct ClientConfig {
     crossbow::infinio::Endpoint commitManager;
 
     /// Address of the TellStore to connect to
-    crossbow::infinio::Endpoint tellStore;
+    std::vector<crossbow::infinio::Endpoint> tellStore;
 
     /// Maximum number of concurrent pending network requests (per connection)
     size_t maxPendingResponses = 100ull;

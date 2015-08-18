@@ -32,13 +32,12 @@ class ClientSocket;
  * @brief Response for a Create-Table request
  */
 class CreateTableResponse final
-        : public crossbow::infinio::RpcResponseResult<CreateTableResponse, Table> {
-    using Base = crossbow::infinio::RpcResponseResult<CreateTableResponse, Table>;
+        : public crossbow::infinio::RpcResponseResult<CreateTableResponse, uint64_t> {
+    using Base = crossbow::infinio::RpcResponseResult<CreateTableResponse, uint64_t>;
 
 public:
-    CreateTableResponse(crossbow::infinio::Fiber& fiber, const Schema& schema)
-            : Base(fiber),
-              mSchema(schema) {
+    CreateTableResponse(crossbow::infinio::Fiber& fiber)
+            : Base(fiber) {
     }
 
 private:
@@ -51,8 +50,6 @@ private:
     }
 
     void processResponse(crossbow::buffer_reader& message);
-
-    Schema mSchema;
 };
 
 /**

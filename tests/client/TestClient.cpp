@@ -69,14 +69,11 @@ private:
 
     void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey);
 
-    void doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& record,
-            float selectivity);
+    void doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
 
-    void doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
-            float selectivity);
+    void doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
 
-    void doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
-            float selectivity);
+    void doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
 
     ClientManager mManager;
 
@@ -91,12 +88,14 @@ private:
     std::atomic<size_t> mActiveTransactions;
 
     std::array<GenericTuple, 4> mTuple;
+
+    Table mTable;
 };
 
 TestClient::TestClient(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
         size_t scanMemoryLength, size_t numTuple, size_t numTransactions)
         : mManager(service, config),
-          mScanMemory(service, 1u, scanMemoryLength),
+          mScanMemory(service, config.tellStore.size(), scanMemoryLength / config.tellStore.size()),
           mNumTuple(numTuple),
           mNumTransactions(numTransactions),
           mActiveTransactions(0) {
@@ -129,12 +128,7 @@ void TestClient::addTable(ClientHandle& client) {
     schema.addField(FieldType::TEXT, "text2", true);
 
     auto startTime = std::chrono::steady_clock::now();
-    auto createTableFuture = client.createTable("testTable", schema);
-    if (!createTableFuture->waitForResult()) {
-        auto& ec = createTableFuture->error();
-        LOG_ERROR("Error adding table [error = %1% %2%]", ec, ec.message());
-        return;
-    }
+    mTable = client.createTable("testTable", std::move(schema));
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("Adding table took %1%ns", duration.count());
@@ -148,23 +142,9 @@ void TestClient::addTable(ClientHandle& client) {
 }
 
 void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey) {
-    LOG_TRACE("Opening table");
-    auto openTableStartTime = std::chrono::steady_clock::now();
-    auto openTableFuture = client.getTable("testTable");
-    if (!openTableFuture->waitForResult()) {
-        auto& ec = openTableFuture->error();
-        LOG_ERROR("Error opening table [error = %1% %2%]", ec, ec.message());
-    }
-    auto openTableEndTime = std::chrono::steady_clock::now();
-    auto openTableDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(openTableEndTime
-            - openTableStartTime);
-    auto table = openTableFuture->get();
-    LOG_TRACE("Opening table took %1%ns", openTableDuration.count());
-
     LOG_TRACE("Starting transaction");
     auto transaction = client.startTransaction();
     LOG_INFO("TID %1%] Started transaction", transaction.version());
-
 
     OperationTimer insertTimer;
     OperationTimer getTimer;
@@ -172,7 +152,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
-        auto insertFuture = transaction.insert(table, key, mTuple[key % mTuple.size()], true);
+        auto insertFuture = transaction.insert(mTable, key, mTuple[key % mTuple.size()], true);
         if (!insertFuture->waitForResult()) {
             auto& ec = insertFuture->error();
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
@@ -190,7 +170,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 
         LOG_TRACE("Get tuple");
         getTimer.start();
-        auto getFuture = transaction.get(table, key);
+        auto getFuture = transaction.get(mTable, key);
         if (!getFuture->waitForResult()) {
             auto& ec = getFuture->error();
             LOG_ERROR("Error getting tuple [error = %1% %2%]", ec, ec.message());
@@ -214,19 +194,19 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         }
 
         LOG_TRACE("Check tuple");
-        if (table.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
+        if (mTable.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
             LOG_ERROR("Number value does not match");
             return;
         }
-        if (table.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
+        if (mTable.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
             LOG_ERROR("Text1 value does not match");
             return;
         }
-        if (table.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
+        if (mTable.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
             LOG_ERROR("Text2 value does not match");
             return;
         }
-        if (table.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
+        if (mTable.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
             LOG_ERROR("Text2 value does not match");
             return;
         }
@@ -251,24 +231,23 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     }
 
     auto scanTransaction = client.startTransaction();
-    doScan(client.fiber(), scanTransaction, table, 1.0);
-    doScan(client.fiber(), scanTransaction, table, 0.5);
-    doScan(client.fiber(),scanTransaction, table, 0.25);
-    doProjection(client.fiber(), scanTransaction, table, 1.0);
-    doProjection(client.fiber(), scanTransaction, table, 0.5);
-    doProjection(client.fiber(), scanTransaction, table, 0.25);
-    doAggregation(client.fiber(), scanTransaction, table, 1.0);
-    doAggregation(client.fiber(), scanTransaction, table, 0.5);
-    doAggregation(client.fiber(), scanTransaction, table, 0.25);
+    doScan(client.fiber(), scanTransaction, 1.0);
+    doScan(client.fiber(), scanTransaction, 0.5);
+    doScan(client.fiber(),scanTransaction, 0.25);
+    doProjection(client.fiber(), scanTransaction, 1.0);
+    doProjection(client.fiber(), scanTransaction, 0.5);
+    doProjection(client.fiber(), scanTransaction, 0.25);
+    doAggregation(client.fiber(), scanTransaction, 1.0);
+    doAggregation(client.fiber(), scanTransaction, 0.5);
+    doAggregation(client.fiber(), scanTransaction, 0.25);
 }
 
-void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
-        float selectivity) {
+void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
     LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t recordField;
-    if (!table.record().idOf("number", recordField)) {
+    if (!mTable.record().idOf("number", recordField)) {
         LOG_ERROR("number field not found");
         return;
     }
@@ -287,45 +266,51 @@ void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& tran
     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(table, mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(), 0x0u,
-            nullptr);
-    if (!scanFuture->waitForResult()) {
-        auto& ec = scanFuture->error();
-        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
-        return;
+    auto scanFutures = transaction.scan(mTable, mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(),
+            0x0u, nullptr);
+    for (auto& future : scanFutures) {
+        if (!future->get()) {
+            LOG_ERROR("Error scanning table");
+            return;
+        }
+        fiber.yield();
+
+        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
     }
     auto scanEndTime = std::chrono::steady_clock::now();
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
-    while (scanFuture->hasNext()) {
-        uint64_t key;
-        const char* tuple;
-        size_t tupleLength;
-        std::tie(key, tuple, tupleLength) = scanFuture->next();
-        ++scanCount;
-        scanDataSize += tupleLength;
+    for (auto& future : scanFutures) {
+        while (future->hasNext()) {
+            uint64_t key;
+            const char* tuple;
+            size_t tupleLength;
+            std::tie(key, tuple, tupleLength) = future->next();
+            ++scanCount;
+            scanDataSize += tupleLength;
 
-        LOG_TRACE("Check tuple");
-        if (table.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
-            LOG_ERROR("Number value of tuple %1% does not match", scanCount);
-            return;
-        }
-        if (table.field<crossbow::string>("text1", tuple) != gTupleText1) {
-            LOG_ERROR("Text1 value does not match of tuple %1%", scanCount);
-            return;
-        }
-        if (table.field<int64_t>("largenumber", tuple) != gTupleLargenumber) {
-            LOG_ERROR("largenumber value of tuple %1% does not match", scanCount);
-            return;
-        }
-        if (table.field<crossbow::string>("text2", tuple) != gTupleText2) {
-            LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
-            return;
-        }
-        LOG_TRACE("Tuple check successful");
-        if (scanCount % 250 == 0) {
-            fiber.yield();
+            LOG_TRACE("Check tuple");
+            if (mTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+                return;
+            }
+            if (mTable.field<crossbow::string>("text1", tuple) != gTupleText1) {
+                LOG_ERROR("Text1 value does not match of tuple %1%", scanCount);
+                return;
+            }
+            if (mTable.field<int64_t>("largenumber", tuple) != gTupleLargenumber) {
+                LOG_ERROR("largenumber value of tuple %1% does not match", scanCount);
+                return;
+            }
+            if (mTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
+                LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+                return;
+            }
+            LOG_TRACE("Tuple check successful");
+            if (scanCount % 250 == 0) {
+                fiber.yield();
+            }
         }
     }
 
@@ -338,19 +323,18 @@ void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& tran
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
-void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
-        float selectivity) {
+void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
     LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t numberField;
-    if (!table.record().idOf("number", numberField)) {
+    if (!mTable.record().idOf("number", numberField)) {
         LOG_ERROR("number field not found");
         return;
     }
 
     Record::id_t text2Field;
-    if (!table.record().idOf("text2", text2Field)) {
+    if (!mTable.record().idOf("text2", text2Field)) {
         LOG_ERROR("text2 field not found");
         return;
     }
@@ -375,43 +359,49 @@ void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction
     projectionWriter.write<uint16_t>(numberField);
     projectionWriter.write<uint16_t>(text2Field);
 
-    Schema resultSchema(table.tableType());
+    Schema resultSchema(mTable.tableType());
     resultSchema.addField(FieldType::INT, "number", true);
     resultSchema.addField(FieldType::TEXT, "text2", true);
-    Table resultTable(table.tableId(), std::move(resultSchema));
+    Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(resultTable, mScanMemory, ScanQueryType::PROJECTION, selectionLength,
+    auto scanFutures = transaction.scan(resultTable, mScanMemory, ScanQueryType::PROJECTION, selectionLength,
             selection.get(), projectionLength, projection.get());
-    if (!scanFuture->waitForResult()) {
-        auto& ec = scanFuture->error();
-        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
-        return;
+    for (auto& future : scanFutures) {
+        if (!future->get()) {
+            LOG_ERROR("Error scanning table");
+            return;
+        }
+        fiber.yield();
+
+        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
     }
     auto scanEndTime = std::chrono::steady_clock::now();
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
-    while (scanFuture->hasNext()) {
-        uint64_t key;
-        const char* tuple;
-        size_t tupleLength;
-        std::tie(key, tuple, tupleLength) = scanFuture->next();
-        ++scanCount;
-        scanDataSize += tupleLength;
+    for (auto& future : scanFutures) {
+        while (future->hasNext()) {
+            uint64_t key;
+            const char* tuple;
+            size_t tupleLength;
+            std::tie(key, tuple, tupleLength) = future->next();
+            ++scanCount;
+            scanDataSize += tupleLength;
 
-        LOG_TRACE("Check tuple");
-        if (resultTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
-            LOG_ERROR("Number value of tuple %1% does not match", scanCount);
-            return;
-        }
-        if (resultTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
-            LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
-            return;
-        }
-        LOG_TRACE("Tuple check successful");
-        if (scanCount % 250 == 0) {
-            fiber.yield();
+            LOG_TRACE("Check tuple");
+            if (resultTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+                return;
+            }
+            if (resultTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
+                LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+                return;
+            }
+            LOG_TRACE("Tuple check successful");
+            if (scanCount % 250 == 0) {
+                fiber.yield();
+            }
         }
     }
 
@@ -424,13 +414,12 @@ void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
-void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, const Table& table,
-        float selectivity) {
+void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
     LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
     Record::id_t recordField;
-    if (!table.record().idOf("number", recordField)) {
+    if (!mTable.record().idOf("number", recordField)) {
         LOG_ERROR("number field not found");
         return;
     }
@@ -459,19 +448,23 @@ void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransactio
     aggregationWriter.write<uint16_t>(recordField);
     aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::MAX));
 
-    Schema resultSchema(table.tableType());
+    Schema resultSchema(mTable.tableType());
     resultSchema.addField(FieldType::INT, "sum", true);
     resultSchema.addField(FieldType::INT, "min", true);
     resultSchema.addField(FieldType::INT, "max", true);
-    Table resultTable(table.tableId(), std::move(resultSchema));
+    Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFuture = transaction.scan(resultTable, mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
+    auto scanFutures = transaction.scan(resultTable, mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
             selection.get(), aggregationLength, aggregation.get());
-    if (!scanFuture->waitForResult()) {
-        auto& ec = scanFuture->error();
-        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
-        return;
+    for (auto& future : scanFutures) {
+        if (!future->get()) {
+            LOG_ERROR("Error scanning table");
+            return;
+        }
+        fiber.yield();
+
+        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
     }
     auto scanEndTime = std::chrono::steady_clock::now();
 
@@ -480,19 +473,21 @@ void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransactio
     int32_t totalSum = 0;
     int32_t totalMin = std::numeric_limits<int32_t>::max();
     int32_t totalMax = std::numeric_limits<int32_t>::min();
-    while (scanFuture->hasNext()) {
-        const char* tuple;
-        size_t tupleLength;
-        std::tie(std::ignore, tuple, tupleLength) = scanFuture->next();
-        ++scanCount;
-        scanDataSize += tupleLength;
+    for (auto& future : scanFutures) {
+        while (future->hasNext()) {
+            const char* tuple;
+            size_t tupleLength;
+            std::tie(std::ignore, tuple, tupleLength) = future->next();
+            ++scanCount;
+            scanDataSize += tupleLength;
 
-        totalSum += resultTable.field<int32_t>("sum", tuple);
-        totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
-        totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
+            totalSum += resultTable.field<int32_t>("sum", tuple);
+            totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
+            totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
 
-        if (scanCount % 250 == 0) {
-            fiber.yield();
+            if (scanCount % 250 == 0) {
+                fiber.yield();
+            }
         }
     }
 
@@ -545,7 +540,19 @@ int main(int argc, const char** argv) {
     }
 
     clientConfig.commitManager = crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), commitManagerHost);
-    clientConfig.tellStore = crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(), tellStoreHost);
+
+    if (!tellStoreHost.empty()) {
+        size_t i = 0;
+        while (true) {
+            auto pos = tellStoreHost.find(';', i);
+            clientConfig.tellStore.emplace_back(crossbow::infinio::Endpoint(crossbow::infinio::Endpoint::ipv4(),
+                    tellStoreHost.substr(i, pos)));
+            if (pos == crossbow::string::npos) {
+                break;
+            }
+            i = pos + 1;
+        }
+    }
 
     crossbow::infinio::InfinibandLimits infinibandLimits;
     infinibandLimits.receiveBufferCount = 128;
@@ -557,7 +564,9 @@ int main(int argc, const char** argv) {
 
     LOG_INFO("Starting TellStore client");
     LOG_INFO("--- Commit Manager: %1%", clientConfig.commitManager);
-    LOG_INFO("--- TellStore: %1%", clientConfig.tellStore);
+    for (auto& ep : clientConfig.tellStore) {
+        LOG_INFO("--- TellStore Shards: %1%", ep);
+    }
     LOG_INFO("--- Network Threads: %1%", clientConfig.numNetworkThreads);
     LOG_INFO("--- Scan Memory: %1%GB", double(scanMemoryLength) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Number of tuples: %1%", numTuple);

@@ -27,7 +27,7 @@ void writeSnapshot(crossbow::buffer_writer& message, const commitmanager::Snapsh
 
 void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
-    setResult(tableId, std::move(mSchema));
+    setResult(tableId);
 }
 
 void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
@@ -119,7 +119,7 @@ void ClientSocket::shutdown() {
 
 std::shared_ptr<CreateTableResponse> ClientSocket::createTable(crossbow::infinio::Fiber& fiber,
         const crossbow::string& name, const Schema& schema) {
-    auto response = std::make_shared<CreateTableResponse>(fiber, schema);
+    auto response = std::make_shared<CreateTableResponse>(fiber);
 
     auto nameLength = name.size();
     auto schemaLength = schema.schemaSize();
