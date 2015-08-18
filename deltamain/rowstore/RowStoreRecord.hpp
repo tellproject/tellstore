@@ -24,7 +24,7 @@ namespace impl {
  *    -4 bytes integer storing the number of versions
  *    -8 bytes: key
  *
- *    - A pointer to the newest version
+ *    - An 8-byte pointer to the newest version
  *    - An array of version numbers
  *    - An array of size number_of_versions + 1 of 4 byte integers
  *      to store the offsets to
@@ -37,7 +37,7 @@ namespace impl {
  *      will be deleted at the next GC phase
  *    - A 4 byte padding if there are an even number of versions
  *
- *  - The data (if not delete)
+ *    - The data (if not delete)
  */
 
 template<class T>

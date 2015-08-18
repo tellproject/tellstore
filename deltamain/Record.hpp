@@ -46,38 +46,23 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  * This class handles Records which are either in the
  * log or in a table. The base pointer must be set in
  * a way, that it is able to find all relevant versions
- * of the record from there. The memory layout of a
- * LOG-DMRecord looks like follows:
+ * of the record from there. The general memory layout
+ * of a DMRecord looks like follows:
  *
- * -1 byte: Record::Type
- * - For Log Entries
- *   - 1 byte with a boolean, indicating whether the entry
- *     got reverted
- *   - 6 bytes padding
- * -8 bytes: key
+ * - 1 byte: Record::Type
+ * - meta data specific for the record type
+ * - The data (if not delete)
  *
- *    - 8 bytes: version
- *    - 8 bytes: pointer to a previous version. this will
- *      always be set to null, if the previous version was
- *      not an update log entry. If the previous version
- *      was an insert log entry, the only way to reach the
- *      update is via the insert entry, if it was a multi
- *      version record, we can only reach it via the
- *      record entry itself. This is an important design
- *      decision: this way me make clear that we do not
- *      introduce cycles.
- *      If the log operation is an insert, this position
- *      holds the pointer to the newest version
+ * For the memory layout of log records:
+ * PLEASE consult the specific comments in LogRecord.hpp
  *
- *  - The data (if not delete)
+ * For the memory layout of a MV-DMRecord:
+ * PLEASE consult the specific comments in RowStoreRecord.hpp,
+ * resp. ColumnMapRecord.hpp.
  *
- *  For the memory layout of a MV-DMRecord:
- *  PLEASE consult the specific comments in RowStoreRecord.cpp,
- *  resp. ColumnMapRecord.cpp.
- *
- *  This class comes in to flavors: const and non-const.
- *  The non-const version provides also functionality for
- *  writing to the memory.
+ * This class comes in to flavors: const and non-const.
+ * The non-const version provides also functionality for
+ * writing to the memory.
  */
 
 /**

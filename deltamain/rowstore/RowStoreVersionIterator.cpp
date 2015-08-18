@@ -8,8 +8,9 @@ namespace store {
 namespace deltamain {
 
 RowStoreVersionIterator::RowStoreVersionIterator(const Record* record, const char* current)
-    : record(record)
-    , current(current)
+    :
+//    record(record),
+    current(current)
 {
     currEntry.mRecord = record;
     // go to the first valid entry

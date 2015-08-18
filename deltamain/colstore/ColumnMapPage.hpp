@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 #include <config.h>
 #include <util/PageManager.hpp>
@@ -29,14 +30,27 @@ namespace deltamain {
  * should be called. This is important to keep state accross pages.
  */
 class ColumnMapPage {
+private:
+
+    struct RecordCleaningInfo {
+        char* newestPtr = nullptr;          // newest pointer of this MV-record
+        uint32_t totalVarSizedCount = 0;    // bytes of var-heap consumption of this record
+        uint16_t tupleCount = 0;            // count of tuples that belong to this MV-record
+    };
+
     PageManager& mPageManager;
-    Table *mTable;
+    const Table *mTable;
+    const size_t mNullBitmapSize;   //nullbitmap-size of mTable
+    const uint32_t mNumColumns;     //total number of columns of mTable
+    const uint32_t mFixedValuesSize;//total byte size needed by all fixed values (needed to compute varSizedValuesSize from total size)
     char* mData;                    //current page
     uint32_t mRecordCount;          //record count of current page
-    uint32_t mStartIndex;           //index of the first key that needs to be inspected in gc
     char* mFillPage;                //page to copy to
     char* mFillPageVarOffsetPtr;    //offset to var-heap of page to copy to
     uint32_t mFillPageRecordCount;  //record count of page to copy to
+    std::vector<std::pair<const char*, std::vector<std::pair<uint32_t, RecordCleaningInfo>>>> mPageCleaningSummaries;
+    // vector of meta-data about pages to be recycled, contains pairs of page-address and vectors
+    // where each vector stores pairs of record-index (within this page) and RecordCleaningInfo
 
 private:
 
@@ -60,23 +74,20 @@ private:
         crossbow::allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
     }
 
+    /**
+     * checks whether cleaning is necessary for this page and as a side-product
+     * adds an entry to mPageCleaningData if it does.
+     */
+    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap);
+
 public:
 
-    ColumnMapPage(PageManager& pageManager, char* data, Table *table)
-        : mPageManager(pageManager)
-        , mTable(table)
-        , mData(data)
-        , mRecordCount(*(reinterpret_cast<uint32_t*>(mData)))
-        , mStartIndex(0)
-        , mFillPage(nullptr)
-        , mFillPageVarOffsetPtr(nullptr)
-        , mFillPageRecordCount(0) {}
+    ColumnMapPage(PageManager& pageManager, char* data, Table *table);
 
     void reset(char *data)
     {
         mData = data;
         mRecordCount = *(reinterpret_cast<uint32_t*>(mData));
-        mStartIndex = 0;
     }
 
     /**

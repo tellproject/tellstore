@@ -12,7 +12,7 @@ class RowStoreVersionIterator {
         using IteratorEntry = tell::store::BaseIteratorEntry;
     private:
         IteratorEntry currEntry;
-        const Record* record;
+//        const Record* record; TODO: seems like it wouldn't be used...
         const char* current = nullptr;
         int idx = 0;
         void initRes();

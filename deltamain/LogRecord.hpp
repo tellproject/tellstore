@@ -12,8 +12,30 @@
 namespace tell {
 namespace store {
 namespace deltamain {
-
 namespace impl {
+
+/**
+ *  The memory layout of a LOG-DMRecord is:
+ *   - 1 byte: Record::Type
+ *   - 1 byte with a boolean, indicating whether the entry
+ *     got reverted
+ *   - 6 bytes padding
+ *   - 8 bytes: key
+ *   - 8 bytes: version
+ *   - 8 bytes: pointer to a previous version. this will
+ *      always be set to null, if the previous version was
+ *      not an update log entry. If the previous version
+ *      was an insert log entry, the only way to reach the
+ *      update is via the insert entry, if it was a multi
+ *      version record, we can only reach it via the
+ *      record entry itself. This is an important design
+ *      decision: this way me make clear that we do not
+ *      introduce cycles.
+ *    (- 8 bytes:)  If the log operation is an insert,
+ *      this position holds the pointer to the newest version
+ *
+ *   - The data (if not delete)
+ */
 
 template<class T>
 struct GeneralUpdates : public T {
