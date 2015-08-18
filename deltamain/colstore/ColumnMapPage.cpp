@@ -86,7 +86,7 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
         for (;; ++recordSize, keyPtr +=2)
         {
             varLengthOffsets.emplace_back(*varHeapOffsetPtr + totalVarLenghtSize);
-            totalVarLenghtSize =+ (*getVarsizedLenghtAt(*startIndex, srcBasePtr, capacity, nullBitMapSize));
+            totalVarLenghtSize += (*getVarsizedLenghtAt(*startIndex, srcBasePtr, capacity, nullBitMapSize));
             if (keyPtr[0] <= keyPtr[2]) break;
         }
         if (((*countPtr) + recordSize > capacity) || ((*varHeapOffsetPtr) + totalVarLenghtSize > TELL_PAGE_SIZE))
@@ -99,7 +99,7 @@ inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
             getNullBitMapAt(*startIndex, srcBasePtr, capacity, nullBitMapSize),
             recordSize * nullBitMapSize);
         memcpy(
-            const_cast<uint32_t *>(getVarsizedLenghtAt(*countPtr, destBasePtr, capacity, nullBitMapSize)),
+            const_cast<int32_t *>(getVarsizedLenghtAt(*countPtr, destBasePtr, capacity, nullBitMapSize)),
             getVarsizedLenghtAt(*startIndex, srcBasePtr, capacity, nullBitMapSize),
             recordSize * 4);
 
@@ -141,11 +141,12 @@ char* ColumnMapPage::gc(uint64_t lowestActiveVersion,
         bool& done,
         Modifier& hashTable)
 {
-    //TODO: continue here!!!
     // general base knowedge
 
-//    auto nullBitMapSize = getNullBitMapSize(mTable);
-//    auto numColumns = mTable->getNumberOfFixedSizedFields() + mTable->getNumberOfVarSizedFields();
+    auto nullBitMapSize = getNullBitMapSize(mTable);
+    auto numColumns = mTable->getNumberOfFixedSizedFields() + mTable->getNumberOfVarSizedFields();
+
+    return mData + nullBitMapSize + numColumns;     //dummy function for disabling this warning
 
 //    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap, mStartIndex, mData, capacity, srcCount, nullBitMapSize);
 //    if (cleaningMap.size() == 0) {
@@ -198,6 +199,7 @@ char* ColumnMapPage::gc(uint64_t lowestActiveVersion,
 char *ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable)
 {
     //TODO: implement
+    return nullptr;
 }
 
 } // namespace deltamain
