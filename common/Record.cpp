@@ -79,7 +79,7 @@ size_t Field::sizeOf(const boost::any& value) const {
 
 bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull) {
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
-        LOG_DEBUG("Field name with %d bytes are not supported", name.size());
+        LOG_ERROR("Field name with %d bytes are not supported", name.size());
         return false;
     }
     if (mFixedSizeFields.size() + mVarSizeFields.size() + 1 > std::numeric_limits<uint16_t>::max()) {
@@ -105,6 +105,32 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         mVarSizeFields.emplace_back(f);
     }
     return true;
+}
+
+void Schema::addIndexes(const std::vector<std::vector<crossbow::string>>& idxs)
+{
+    std::vector<std::vector<id_t>> indexes;
+    indexes.resize(idxs.size());
+    for (auto i = 0; i < idxs.size(); ++i) {
+        for (auto j = 0; j < idxs[i].size(); ++j) {
+            indexes[i].resize(idxs[i][j].size());
+        }
+    }
+    id_t numFields = id_t(mFixedSizeFields.size() + mVarSizeFields.size());
+    // this is a simple nested loop join
+    for (id_t id = 0; id < numFields; ++id) {
+        auto& str = id < mFixedSizeFields.size() ?
+            mFixedSizeFields[id].name()
+            : mVarSizeFields[id - mFixedSizeFields.size()].name();
+        for (auto i = 0; i < idxs.size(); ++i) {
+            for (auto j = 0; j < idxs[i].size(); ++i) {
+                if (idxs[i][j] == str) {
+                    indexes[i][j] = id;
+                }
+            }
+        }
+    }
+    mIndexes = std::move(indexes);
 }
 
 size_t Schema::schemaSize() const {
@@ -208,6 +234,92 @@ Record::Record(Schema schema)
         // make sure, that all others are set to min
         currOffset = std::numeric_limits<int32_t>::min();
     }
+}
+
+size_t Schema::serializedLength() const
+{
+    size_t res = 8;
+    for (auto& f : mFixedSizeFields) {
+        res += 4;
+        res += f.name().size();
+        res += res % 4 ? (4 - (res % 4)) : 0;
+    }
+    for (auto& f : mVarSizeFields) {
+        res += 4;
+        res += f.name().size();
+        res += res % 4 ? (4 - (res % 4)) : 0;
+    }
+    res += 2;
+    for (auto& idx : mIndexes) {
+        res += 2;
+        res += 2*idx.size();
+    }
+    return res;
+}
+
+void Schema::serialize(crossbow::buffer_writer& writer) const
+{
+    uint32_t sz = uint32_t(serializedLength());
+    writer.write(sz);
+    writer.write(uint16_t(mFixedSizeFields.size() + mVarSizeFields.size()));
+    writer.write_enum(mType);
+    writer.write(mAllNotNull);
+    auto writeField = [&writer](const Field& f) {
+        writer.write_enum(f.type());
+        writer.write(f.isNotNull());
+        writer.advance(1);
+        writer.write(f.name().size());
+        writer.write(f.name().c_str(), f.name().size());
+        writer.align(4);
+    };
+    for (auto& f : mFixedSizeFields) {
+        writeField(f);
+    }
+    for (auto& f : mVarSizeFields) {
+        writeField(f);
+    }
+    writer.write(uint16_t(mIndexes.size()));
+    for (auto& idx : mIndexes) {
+        writer.write(uint16_t(idx.size()));
+        for (auto id : idx) {
+            writer.write(id);
+        }
+    }
+}
+
+Schema Schema::deserialize(crossbow::buffer_reader& reader)
+{
+    Schema res;
+    reader.advance(4);
+    auto numColumns = reader.read<uint16_t>();
+    res.mType = crossbow::from_underlying<TableType>(reader.read<uint8_t>());
+    reader.advance(1);
+    for (uint16_t i = 0; i < numColumns; ++i) {
+        auto ftype = reader.read_enum<FieldType>();
+        bool isNotNull = reader.read<bool>();
+        reader.advance(1);
+        auto nameLen = reader.read<uint32_t>();
+        crossbow::string name(reader.data(), nameLen);
+        reader.advance(nameLen);
+        reader.align(4);
+        Field field(ftype, name, isNotNull);
+        if (field.isFixedSized()) {
+            res.mFixedSizeFields.emplace_back(std::move(field));
+        } else {
+            res.mVarSizeFields.emplace_back(std::move(field));
+        }
+    }
+    auto numIndexes = reader.read<uint16_t>();
+    for (uint16_t i = 0; i < numIndexes; ++i) {
+        auto numCols = reader.read<uint16_t>();
+        std::vector<id_t> ids;
+        for (uint16_t i = 0; i < numCols; ++i) {
+            ids.push_back(reader.read<id_t>());
+        }
+        res.mIndexes.emplace_back(std::move(ids));
+    }
+    reader.align(8);
+    return res;
 }
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
