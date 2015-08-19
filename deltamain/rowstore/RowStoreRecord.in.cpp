@@ -389,6 +389,7 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         }
         bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
         while (current) {
+        //TODO: shouldn't newest get the value of the newestptr of the newest insert?! --> This way, we might loose updates!
             CDMRecord rec(current);
             bool allVersionsInvalid;
             rec.collect(versions, newestIsDelete, allVersionsInvalid);
