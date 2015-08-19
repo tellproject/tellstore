@@ -3,7 +3,7 @@ namespace store {
 namespace deltamain {
 namespace impl {
 
-#include "ColumnMapUtils.in" // includes convenience functions for colum-layout
+#include "ColumnMapUtils.in.cpp" // includes convenience functions for colum-layout
 
 /**
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a

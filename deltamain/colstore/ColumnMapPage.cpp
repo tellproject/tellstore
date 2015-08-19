@@ -9,7 +9,7 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-#include "ColumnMapUtils.in" // includes convenience functions for colum-layout
+#include "ColumnMapUtils.in.cpp" // includes convenience functions for colum-layout
 
 ColumnMapPage::ColumnMapPage(PageManager& pageManager, char* data, Table *table)
     : mPageManager(pageManager)

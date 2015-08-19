@@ -10,7 +10,7 @@
 
 #include "InsertMap.hpp"
 
-#include "rowstore/RowStoreVersionIterator.in"
+#include "rowstore/RowStoreVersionIterator.in.cpp"
 
 namespace tell {
 namespace commitmanager {
