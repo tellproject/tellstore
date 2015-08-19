@@ -10,6 +10,7 @@
 
 #include "InsertMap.hpp"
 
+#include "rowstore/RowStoreVersionIterator.in"
 
 namespace tell {
 namespace commitmanager {
@@ -64,13 +65,6 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  * The non-const version provides also functionality for
  * writing to the memory.
  */
-
-/**
- * VersionIterator only makes sense for row stores!
- */
-class RowStoreVersionIterator;
-using VersionIterator = RowStoreVersionIterator;
-
 
 /**
  * if we use columnMap, MV records need a special treatment for data pointers
@@ -162,7 +156,7 @@ public:
      */
     bool isValidDataRecord() const;
 
-    const VersionIterator getVersionIterator(const Record *record) const;
+    const RowStoreVersionIterator getVersionIterator(const Record *record) const;
 };
 
 template<class T>

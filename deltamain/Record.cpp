@@ -1,8 +1,4 @@
 #include "Record.hpp"
-#include "LogRecord.hpp"
-#include "rowstore/RowStoreRecord.hpp"
-#include "rowstore/RowStoreVersionIterator.hpp"
-#include "colstore/ColumnMapRecord.hpp"
 
 #include <util/Log.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -12,6 +8,12 @@
 #include <map>
 
 #include "Table.hpp"
+
+// including non-header files
+#include "LogRecord.in"
+#include "rowstore/RowStoreRecord.in"
+#include "rowstore/RowStoreVersionIterator.imp"
+#include "colstore/ColumnMapRecord.in"
 
 namespace tell {
 namespace store {
@@ -149,8 +151,8 @@ bool DMRecordImplBase<T>::isValidDataRecord() const {
 }
 
 template<class T>
-const VersionIterator DMRecordImplBase<T>::getVersionIterator(const Record *record) const {
-    return VersionIterator(record, this->mData);
+const RowStoreVersionIterator DMRecordImplBase<T>::getVersionIterator(const Record *record) const {
+    return RowStoreVersionIterator(record, this->mData);
 }
 
 void DMRecordImpl<char*>::writeKey(uint64_t key) {

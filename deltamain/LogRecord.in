@@ -1,14 +1,3 @@
-#pragma once
-
-#include <memory.h>
-#include <map>
-
-#include <util/Log.hpp>
-#include <commitmanager/SnapshotDescriptor.hpp>
-#include <crossbow/logger.hpp>
-
-#include "Table.hpp"
-
 namespace tell {
 namespace store {
 namespace deltamain {

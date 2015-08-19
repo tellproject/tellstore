@@ -4,7 +4,6 @@
 set(DELTAMAIN_SRCS
     Record.cpp
     Table.cpp
-    rowstore/RowStoreVersionIterator.cpp
     rowstore/RowStorePage.cpp
     rowstore/RowStoreScanProcessor.cpp
     colstore/ColumnMapPage.cpp
@@ -14,13 +13,8 @@ set(DELTAMAIN_SRCS
 set(DELTAMAIN_PRIVATE_HDR
     InsertMap.hpp
     Record.hpp
-    LogRecord.hpp
-    rowstore/RowStoreRecord.hpp
-    rowstore/RowStoreVersionIterator.hpp
     rowstore/RowStorePage.hpp
     rowstore/RowStoreScanProcessor.hpp
-#    colstore/ColumnMapUtils.hpp
-    colstore/ColumnMapRecord.hpp
     colstore/ColumnMapPage.hpp
     colstore/ColumnMapScanProcessor.hpp
     Table.hpp

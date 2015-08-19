@@ -1,8 +1,3 @@
-#pragma once
-
-#include <util/IteratorEntry.hpp>
-#include <tellstore/Record.hpp>
-
 namespace tell {
 namespace store {
 namespace deltamain {

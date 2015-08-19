@@ -1,8 +1,6 @@
 #pragma once
 
 #include <util/Log.hpp>
-
-#include "RowStoreVersionIterator.hpp"
 #include "RowStorePage.hpp"
 
 namespace tell {
