@@ -195,8 +195,7 @@ public:
                 auto fixedSizeFields = table->getNumberOfFixedSizedFields();
                 uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
                         + *getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
-                std::unique_ptr<char[]> buf(new char[recordSize]);  //TODO: is this what it should look like? Am I using the right allocator?
-                char *res = buf.get();
+                char *res = reinterpret_cast<char*>(crossbow::allocator::malloc(recordSize));
                 char *src;
                 char *dest = res;
                 // copy nullbitmap
@@ -217,8 +216,8 @@ public:
                 src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
                 memcpy(dest, src, *varLength);
 
-                // release buffer (which should hopefully not be garbage-collected too early)
-                buf.release();
+                // release buffer (which is ensure by the epoch-mechanism of crossbow-alloctor to not be garbage-collected too early)
+                crossbow::allocator::free(res);
                 return res;
             }
             return nullptr;
