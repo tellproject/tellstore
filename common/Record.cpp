@@ -79,7 +79,7 @@ size_t Field::sizeOf(const boost::any& value) const {
 
 bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull) {
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
-        LOG_DEBUG("Field name with %d bytes are not supported", name.size());
+        LOG_ERROR("Field name with %d bytes are not supported", name.size());
         return false;
     }
     if (mFixedSizeFields.size() + mVarSizeFields.size() + 1 > std::numeric_limits<uint16_t>::max()) {
@@ -107,88 +107,30 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
     return true;
 }
 
-size_t Schema::schemaSize() const {
-    size_t res = 8;
-    // TODO Fix the alignment
-    for (auto& field: mFixedSizeFields) {
-        res += 5;
-        res += field.name().size();
-    }
-    for (auto& field: mVarSizeFields) {
-        res += 5;
-        res += field.name().size();
-    }
-    return res;
-}
-
-namespace {
-
-inline char* serialize_field(const Field& field, char* ptr) {
-    uint16_t fieldType = crossbow::to_underlying(field.type());
-    memcpy(ptr, &fieldType, sizeof(fieldType));
-    ptr += sizeof(fieldType);
-    bool isNotNull = field.isNotNull();
-    memcpy(ptr, &isNotNull, sizeof(isNotNull));
-    ptr += sizeof(isNotNull);
-    const crossbow::string& name = field.name();
-    uint16_t nameSize = uint16_t(name.size());
-    memcpy(ptr, &nameSize, sizeof(nameSize));
-    ptr += sizeof(nameSize);
-    memcpy(ptr, name.data(), name.size());
-    ptr += name.size();
-    return ptr;
-}
-
-} // namespace {}
-
-char* Schema::serialize(char* ptr) const {
-    uint32_t sz = uint32_t(schemaSize());
-    memcpy(ptr, &sz, sizeof(sz));
-    ptr += sizeof(sz);
-    uint16_t numColumns = uint16_t(mFixedSizeFields.size() + mVarSizeFields.size());
-    memcpy(ptr, &numColumns, sizeof(numColumns));
-    ptr += sizeof(numColumns);
-    uint8_t type = static_cast<uint8_t>(mType);
-    memcpy(ptr, &type, sizeof(type));
-    ptr += sizeof(type);
-    uint8_t allNotNull = uint8_t(mAllNotNull ? 1 : 0);
-    memcpy(ptr, &allNotNull, sizeof(allNotNull));
-    ptr += sizeof(allNotNull);
-    for (auto& field : mFixedSizeFields) {
-        ptr = serialize_field(field, ptr);
-    }
-    for (auto& field : mVarSizeFields) {
-        ptr = serialize_field(field, ptr);
-    }
-    return ptr;
-}
-
-Schema::Schema(const char* ptr) {
-    // we can ignore the size
-    ptr += sizeof(uint32_t);
-    uint16_t numColumns = *reinterpret_cast<const uint16_t*>(ptr);
-    ptr += sizeof(numColumns);
-    uint8_t type = *reinterpret_cast<const uint8_t*>(ptr);
-    mType = crossbow::from_underlying<TableType>(type);
-    ptr += sizeof(type);
-    uint8_t allNotNull = *reinterpret_cast<const uint8_t*>(ptr);
-    mAllNotNull = allNotNull > 0;
-    ptr += sizeof(allNotNull);
-    for (uint16_t i = 0; i < numColumns; ++i) {
-        FieldType type = *reinterpret_cast<const FieldType*>(ptr);
-        ptr += sizeof(type);
-        bool isNotNull = *reinterpret_cast<const bool*>(ptr);
-        ptr += sizeof(isNotNull);
-        uint16_t nameSize = *reinterpret_cast<const uint16_t*>(ptr);
-        ptr += sizeof(nameSize);
-        Field f(type, crossbow::string(ptr, nameSize), isNotNull);
-        ptr += nameSize;
-        if (f.isFixedSized()) {
-            mFixedSizeFields.emplace_back(std::move(f));
-        } else {
-            mVarSizeFields.emplace_back(std::move(f));
+void Schema::addIndexes(const std::vector<std::vector<crossbow::string>>& idxs)
+{
+    std::vector<std::vector<id_t>> indexes;
+    indexes.resize(idxs.size());
+    for (decltype(idxs.size()) i = 0; i < idxs.size(); ++i) {
+        for (decltype(idxs[i].size()) j = 0; j < idxs[i].size(); ++j) {
+            indexes[i].resize(idxs[i][j].size());
         }
     }
+    id_t numFields = id_t(mFixedSizeFields.size() + mVarSizeFields.size());
+    // this is a simple nested loop join
+    for (id_t id = 0; id < numFields; ++id) {
+        auto& str = id < mFixedSizeFields.size() ?
+            mFixedSizeFields[id].name()
+            : mVarSizeFields[id - mFixedSizeFields.size()].name();
+        for (decltype(idxs.size()) i = 0; i < idxs.size(); ++i) {
+            for (decltype(idxs[i].size()) j = 0; j < idxs[i].size(); ++i) {
+                if (idxs[i][j] == str) {
+                    indexes[i][j] = id;
+                }
+            }
+        }
+    }
+    mIndexes = std::move(indexes);
 }
 
 Record::Record(Schema schema)
@@ -208,6 +150,88 @@ Record::Record(Schema schema)
         // make sure, that all others are set to min
         currOffset = std::numeric_limits<int32_t>::min();
     }
+}
+
+size_t Schema::serializedLength() const
+{
+    size_t res = sizeof(uint32_t);
+    for (auto& f : mFixedSizeFields) {
+        res += 2 * sizeof(uint16_t) + sizeof(uint32_t);
+        res += f.name().size();
+        res = crossbow::align(res, sizeof(uint32_t));
+    }
+    for (auto& f : mVarSizeFields) {
+        res += 2 * sizeof(uint16_t) + sizeof(uint32_t);
+        res += f.name().size();
+        res = crossbow::align(res, sizeof(uint32_t));
+    }
+    res += sizeof(uint16_t);
+    for (auto& idx : mIndexes) {
+        res += sizeof(uint16_t);
+        res += idx.size() * sizeof(id_t);
+    }
+    return res;
+}
+
+void Schema::serialize(crossbow::buffer_writer& writer) const
+{
+    writer.write<uint16_t>(mFixedSizeFields.size() + mVarSizeFields.size());
+    writer.write<TableType>(mType);
+    writer.write<uint8_t>(0u);
+    auto writeField = [&writer](const Field& f) {
+        writer.write<FieldType>(f.type());
+        writer.write<uint8_t>(f.isNotNull() ? 1u : 0u);
+        writer.write<uint8_t>(0u);
+        writer.write<uint32_t>(f.name().size());
+        writer.write(f.name().c_str(), f.name().size());
+        writer.align(sizeof(uint32_t));
+    };
+    for (auto& f : mFixedSizeFields) {
+        writeField(f);
+    }
+    for (auto& f : mVarSizeFields) {
+        writeField(f);
+    }
+    writer.write<uint16_t>(mIndexes.size());
+    for (auto& idx : mIndexes) {
+        writer.write<uint16_t>(idx.size());
+        for (auto id : idx) {
+            writer.write<id_t>(id);
+        }
+    }
+}
+
+Schema Schema::deserialize(crossbow::buffer_reader& reader)
+{
+    Schema res;
+    auto numColumns = reader.read<uint16_t>();
+    res.mType = reader.read<TableType>();
+    reader.advance(sizeof(uint8_t));
+    for (uint16_t i = 0; i < numColumns; ++i) {
+        auto ftype = reader.read<FieldType>();
+        bool isNotNull = (reader.read<uint8_t>() != 0x0u);
+        reader.advance(sizeof(uint8_t));
+        auto nameLen = reader.read<uint32_t>();
+        crossbow::string name(reader.data(), nameLen);
+        reader.advance(nameLen);
+        reader.align(sizeof(uint32_t));
+        Field field(ftype, name, isNotNull);
+        if (field.isFixedSized()) {
+            res.mFixedSizeFields.emplace_back(std::move(field));
+        } else {
+            res.mVarSizeFields.emplace_back(std::move(field));
+        }
+    }
+    auto numIndexes = reader.read<uint16_t>();
+    for (uint16_t i = 0; i < numIndexes; ++i) {
+        auto numCols = reader.read<uint16_t>();
+        std::vector<id_t> ids;
+        for (uint16_t i = 0; i < numCols; ++i) {
+            ids.push_back(reader.read<id_t>());
+        }
+        res.mIndexes.emplace_back(std::move(ids));
+    }
+    return res;
 }
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const

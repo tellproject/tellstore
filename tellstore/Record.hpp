@@ -1,9 +1,11 @@
+// !b = ../common/Record.cpp
 #pragma once
 
 #include <tellstore/GenericTuple.hpp>
 
 #include <crossbow/logger.hpp>
 #include <crossbow/string.hpp>
+#include <crossbow/byte_buffer.hpp>
 
 #include <cstdint>
 #include <cstddef>
@@ -368,23 +370,33 @@ public:
 * column is needed.
 *
 * The format is like follows:
-* - 4 bytes: size of schema data structure (including size)
 * - 2 bytes: number of columns
 * - 1 byte: Type of the table
-* - 1 byte: 1 if there are only columns which are declared NOT NULL,
-*           0 otherwise
+* - 1 byte: Padding
 * - For each column:
 *   - 2 bytes: type of column
+*   - 1 byte: 1 if it is non-nullable, 0 otherwise
+*   - 1 byte: padding
 *   - The name of the column, which is a string formatted like this:
-*     - 2 bytes: size of the string in bytes (not in characters! this
+*     - 4 bytes: size of the string in bytes (not in characters! this
 *       string is not Unicode aware)
+*     - The string
+*     - alignment to 4 bytes
+* - 2 bytes: Number of indexes
+* - For each index:
+*   - 2 bytes: number of columns to index
+*   - For each column:
+*       - 2 byte: column id
 */
 class Schema {
+public:
+    using id_t = uint16_t;
 private:
     TableType mType = TableType::UNKNOWN;
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
+    std::vector<std::vector<id_t>> mIndexes;
 public:
     Schema() = default;
 
@@ -392,13 +404,14 @@ public:
             : mType(type) {
     }
 
-    Schema(const char* ptr);
+    Schema(const Schema&) = default;
+    Schema(Schema&& schema) = default;
+
+    Schema& operator=(Schema&&) = default;
+    Schema& operator=(const Schema&) = default;
 
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
-
-    char* serialize(char* ptr) const;
-
-    size_t schemaSize() const;
+    void addIndexes(const std::vector<std::vector<crossbow::string>>& idxs);
 
     TableType type() const {
         return mType;
@@ -415,6 +428,11 @@ public:
     const std::vector<Field>& varSizeFields() const {
         return mVarSizeFields;
     }
+
+public: // Serialization
+    static Schema deserialize(crossbow::buffer_reader& reader);
+    size_t serializedLength() const;
+    void serialize(crossbow::buffer_writer& writer) const;
 };
 
 
@@ -435,7 +453,7 @@ public:
 */
 class Record {
 public:
-    using id_t = uint16_t;
+    using id_t = Schema::id_t;
 private:
     Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;

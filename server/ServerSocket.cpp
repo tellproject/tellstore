@@ -66,16 +66,11 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
 }
 
 void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    auto tableNameLength = request.read<uint16_t>();
-    auto tableNameData = request.read(tableNameLength);
-    request.align(sizeof(uint64_t));
-    crossbow::string tableName(tableNameData, tableNameLength);
+    auto tableNameLength = request.read<uint32_t>();
+    crossbow::string tableName(request.read(tableNameLength), tableNameLength);
 
-    // TODO Refactor schema serialization
-    auto schemaData = request.data();
-    auto schemaLength = request.read<uint32_t>();
-    request.advance(schemaLength - sizeof(uint32_t));
-    Schema schema(schemaData);
+    request.align(sizeof(uint64_t));
+    auto schema = Schema::deserialize(request);
 
     uint64_t tableId = 0;
     auto succeeded = mStorage.createTable(tableName, schema, tableId);
@@ -94,9 +89,8 @@ void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, cro
 }
 
 void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
-    auto tableNameLength = request.read<uint16_t>();
-    auto tableNameData = request.read(tableNameLength);
-    crossbow::string tableName(tableNameData, tableNameLength);
+    auto tableNameLength = request.read<uint32_t>();
+    crossbow::string tableName(request.read(tableNameLength), tableNameLength);
 
     uint64_t tableId = 0x0u;
     auto table = mStorage.getTable(tableName, tableId);
@@ -107,14 +101,12 @@ void ServerSocket::handleGetTable(crossbow::infinio::MessageId messageId, crossb
     }
 
     auto& schema = table->schema();
-    auto schemaLength = schema.schemaSize();
 
-    uint32_t messageLength = sizeof(uint64_t) + schemaLength;
-    writeResponse(messageId, ResponseType::GET_TABLE, messageLength, [tableId, schemaLength, &schema]
+    uint32_t messageLength = sizeof(uint64_t) + schema.serializedLength();
+    writeResponse(messageId, ResponseType::GET_TABLE, messageLength, [tableId, &schema]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
-        schema.serialize(message.data());
-        message.advance(schemaLength);
+        schema.serialize(message);
     });
 }
 

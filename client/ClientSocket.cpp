@@ -32,12 +32,7 @@ void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
 
 void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
-
-    // TODO Refactor schema serialization
-    auto schemaData = message.data();
-    auto schemaLength = message.read<uint32_t>();
-    Schema schema(schemaData);
-    message.advance(schemaLength - sizeof(uint32_t));
+    auto schema = Schema::deserialize(message);
 
     setResult(tableId, std::move(schema));
 }
@@ -122,19 +117,18 @@ std::shared_ptr<CreateTableResponse> ClientSocket::createTable(crossbow::infinio
     auto response = std::make_shared<CreateTableResponse>(fiber);
 
     auto nameLength = name.size();
-    auto schemaLength = schema.schemaSize();
-    uint32_t messageLength = sizeof(uint16_t) + nameLength;
+    auto schemaLength = schema.serializedLength();
+    uint32_t messageLength = sizeof(uint32_t) + nameLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
     messageLength += schemaLength;
 
     sendRequest(response, RequestType::CREATE_TABLE, messageLength, [nameLength, schemaLength, &name, &schema]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-        message.write<uint16_t>(nameLength);
+        message.write<uint32_t>(nameLength);
         message.write(name.data(), nameLength);
 
         message.align(sizeof(uint64_t));
-        schema.serialize(message.data());
-        message.advance(schemaLength);
+        schema.serialize(message);
     });
 
     return response;
@@ -145,11 +139,11 @@ std::shared_ptr<GetTableResponse> ClientSocket::getTable(crossbow::infinio::Fibe
     auto response = std::make_shared<GetTableResponse>(fiber);
 
     auto nameLength = name.size();
-    uint32_t messageLength = sizeof(uint16_t) + nameLength;
+    uint32_t messageLength = sizeof(uint32_t) + nameLength;
 
     sendRequest(response, RequestType::GET_TABLE, messageLength, [nameLength, &name]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-        message.write<uint16_t>(nameLength);
+        message.write<uint32_t>(nameLength);
         message.write(name.data(), nameLength);
     });
 
