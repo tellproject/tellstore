@@ -12,7 +12,6 @@ set(UTIL_SRCS
 set(UTIL_PRIVATE_HDR
     chunk_allocator.hpp
     CuckooHash.hpp
-    FixedSizeStack.hpp
     functional.hpp
     IteratorEntry.hpp
     Log.hpp

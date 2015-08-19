@@ -2,6 +2,7 @@
 
 #include <tellstore/ClientSocket.hpp>
 #include <tellstore/GenericTuple.hpp>
+#include <tellstore/ScanMemory.hpp>
 #include <tellstore/Table.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
@@ -56,8 +57,9 @@ public:
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
 
-    std::shared_ptr<ScanResponse> scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
-            const char* selection, uint32_t queryLength, const char* query);
+    std::vector<std::shared_ptr<ScanResponse>> scan(const Table& table, ScanMemoryManager& memoryManager,
+            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+            const char* query);
 
     void commit();
 
@@ -74,8 +76,7 @@ private:
 
     void rollbackModified();
 
-    template <typename Response, typename Fun>
-    std::shared_ptr<Response> executeInTransaction(const Table& table, Fun fun);
+    void checkTransaction(const Table& table);
 
     ClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
@@ -100,7 +101,7 @@ public:
 
     ClientTransaction startTransaction();
 
-    std::shared_ptr<CreateTableResponse> createTable(const crossbow::string& name, const Schema& schema);
+    Table createTable(const crossbow::string& name, Schema schema);
 
     std::shared_ptr<GetTableResponse> getTable(const crossbow::string& name);
 
@@ -114,8 +115,9 @@ public:
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key, uint64_t version);
 
-    std::shared_ptr<ScanResponse> scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
-            const char* selection, uint32_t queryLength, const char* query);
+    std::vector<std::shared_ptr<ScanResponse>> scan(const Table& table, ScanMemoryManager& memoryManager,
+            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+            const char* query);
 
 private:
     ClientProcessor& mProcessor;
@@ -127,9 +129,9 @@ private:
  */
 class ClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientProcessor(crossbow::infinio::InfinibandService& service, crossbow::infinio::AllocatedMemoryRegion& scanRegion,
-            const crossbow::infinio::Endpoint& commitManager, const crossbow::infinio::Endpoint& tellStore,
-            size_t maxPendingResponses, uint64_t processorNum);
+    ClientProcessor(crossbow::infinio::InfinibandService& service, const crossbow::infinio::Endpoint& commitManager,
+            const std::vector<crossbow::infinio::Endpoint>& tellStore, size_t maxPendingResponses,
+            uint64_t processorNum);
 
     uint64_t transactionCount() const {
         return mTransactionCount.load();
@@ -141,58 +143,60 @@ private:
     friend class ClientHandle;
     friend class ClientTransaction;
 
-    ClientTransaction start(crossbow::infinio::Fiber& fiber);
-
-    std::shared_ptr<CreateTableResponse> createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name,
-            const Schema& schema) {
-        return mTellStoreSocket.createTable(fiber, name, schema);
+    /**
+     * @brief The socket associated with the shard for the given table and key
+     */
+    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
+        auto hash = std::hash<uint64_t>()(tableId);
+        boost::hash_combine(hash, std::hash<uint64_t>()(key));
+        return mTellStoreSocket.at(hash % mTellStoreSocket.size()).get();
     }
 
+    ClientTransaction start(crossbow::infinio::Fiber& fiber);
+
+    Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
+
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
-        return mTellStoreSocket.getTable(fiber, name);
+        return mTellStoreSocket.at(0)->getTable(fiber, name);
     }
 
     std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.get(fiber, tableId, key, snapshot);
+        return shard(tableId, key)->get(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
             bool hasSucceeded) {
-        return mTellStoreSocket.insert(fiber, tableId, key, record, tuple, snapshot, hasSucceeded);
+        return shard(tableId, key)->insert(fiber, tableId, key, record, tuple, snapshot, hasSucceeded);
     }
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.update(fiber, tableId, key, record, tuple, snapshot);
+        return shard(tableId, key)->update(fiber, tableId, key, record, tuple, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.remove(fiber, tableId, key, snapshot);
+        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.revert(fiber, tableId, key, snapshot);
+        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
 
-    std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-            const char* query, const commitmanager::SnapshotDescriptor& snapshot) {
-        return mTellStoreSocket.scan(fiber, tableId, record, queryType, selectionLength, selection, queryLength, query,
-                mScanRegion, snapshot);
-    }
+    std::vector<std::shared_ptr<ScanResponse>> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+            const Record& record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
+            const char* selection, uint32_t queryLength, const char* query,
+            const commitmanager::SnapshotDescriptor& snapshot);
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
-
-    crossbow::infinio::AllocatedMemoryRegion& mScanRegion;
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 
     commitmanager::ClientSocket mCommitManagerSocket;
-    ClientSocket mTellStoreSocket;
+    std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
     uint64_t mProcessorNum;
     std::atomic<uint64_t> mTransactionCount;
@@ -210,8 +214,6 @@ public:
     void execute(std::function<void(ClientHandle&)> fun);
 
 private:
-    crossbow::infinio::AllocatedMemoryRegion mScanRegion;
-
     std::vector<std::unique_ptr<ClientProcessor>> mProcessor;
 };
 

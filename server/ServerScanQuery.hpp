@@ -1,8 +1,8 @@
 #pragma once
 
-#include <util/FixedSizeStack.hpp>
 #include <util/ScanQuery.hpp>
 
+#include <crossbow/fixed_size_stack.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/InfinibandSocket.hpp>
@@ -63,7 +63,7 @@ private:
 
     crossbow::infinio::AllocatedMemoryRegion mRegion;
 
-    FixedSizeStack<uint16_t> mBufferStack;
+    crossbow::fixed_size_stack<uint16_t> mBufferStack;
 };
 
 /**

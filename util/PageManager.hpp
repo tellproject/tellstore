@@ -1,9 +1,9 @@
 #pragma once
 
 #include <config.h>
-#include "FixedSizeStack.hpp"
 
 #include <crossbow/allocator.hpp>
+#include <crossbow/fixed_size_stack.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstddef>
@@ -30,7 +30,7 @@ class PageManager: crossbow::non_copyable, crossbow::non_movable {
 private:
     void* mData;
     size_t mSize;
-    FixedSizeStack<void*> mPages;
+    crossbow::fixed_size_stack<void*> mPages;
 public:
     using Ptr = std::unique_ptr<PageManager, PageManagerDeleter>;
 

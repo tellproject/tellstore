@@ -4,8 +4,6 @@
 
 #include <crossbow/logger.hpp>
 
-#include <sys/mman.h>
-
 namespace tell {
 namespace store {
 namespace {
@@ -54,41 +52,41 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
 }
 
 std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t key) {
-    return executeInTransaction<GetResponse>(table, [this, &table, key] () {
-        return mProcessor.get(mFiber, table.tableId(), key, *mSnapshot);
-    });
+    checkTransaction(table);
+
+    return mProcessor.get(mFiber, table.tableId(), key, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
         const GenericTuple& tuple, bool hasSucceeded /* = true */) {
-    return executeInTransaction<ModificationResponse>(table, [this, &table, key, &tuple, hasSucceeded] () {
-        mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
-    });
+    checkTransaction(table);
+
+    mModified.insert(std::make_tuple(table.tableId(), key));
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
         const GenericTuple& tuple) {
-    return executeInTransaction<ModificationResponse>(table, [this, &table, key, &tuple] () {
-        mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
-    });
+    checkTransaction(table);
+
+    mModified.insert(std::make_tuple(table.tableId(), key));
+    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& table, uint64_t key) {
-    return executeInTransaction<ModificationResponse>(table, [this, &table, key] () {
-        mModified.insert(std::make_tuple(table.tableId(), key));
-        return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
-    });
+    checkTransaction(table);
+
+    mModified.insert(std::make_tuple(table.tableId(), key));
+    return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
 }
 
-std::shared_ptr<ScanResponse> ClientTransaction::scan(const Table& table, ScanQueryType queryType,
-        uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query) {
-    return executeInTransaction<ScanResponse>(table,
-            [this, &table, queryType, selectionLength, selection, queryLength, query] () {
-        return mProcessor.scan(mFiber, table.tableId(), table.record(), queryType, selectionLength, selection,
-                queryLength, query, *mSnapshot);
-    });
+std::vector<std::shared_ptr<ScanResponse>> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
+        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+        const char* query) {
+    checkTransaction(table);
+
+    return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
+            selection, queryLength, query, *mSnapshot);
 }
 
 void ClientTransaction::commit() {
@@ -125,15 +123,12 @@ void ClientTransaction::rollbackModified() {
     }
 }
 
-template <typename Response, typename Fun>
-std::shared_ptr<Response> ClientTransaction::executeInTransaction(const Table& table, Fun fun) {
+void ClientTransaction::checkTransaction(const Table& table) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
     if (mCommitted) {
         throw std::logic_error("Transaction has already committed");
     }
-
-    return fun();
 }
 
 ClientHandle::ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber& fiber)
@@ -145,8 +140,8 @@ ClientTransaction ClientHandle::startTransaction() {
     return mProcessor.start(mFiber);
 }
 
-std::shared_ptr<CreateTableResponse> ClientHandle::createTable(const crossbow::string& name, const Schema& schema) {
-    return mProcessor.createTable(mFiber, name, schema);
+Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
+    return mProcessor.createTable(mFiber, name, std::move(schema));
 }
 
 std::shared_ptr<GetTableResponse> ClientHandle::getTable(const crossbow::string& name) {
@@ -183,26 +178,30 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, u
     return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
 }
 
-std::shared_ptr<ScanResponse> ClientHandle::scan(const Table& table, ScanQueryType queryType, uint32_t selectionLength,
-        const char* selection, uint32_t queryLength, const char* query) {
+std::vector<std::shared_ptr<ScanResponse>> ClientHandle::scan(const Table& table, ScanMemoryManager& memoryManager,
+        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+        const char* query) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.scan(mFiber, table.tableId(), table.record(), queryType, selectionLength, selection, queryLength,
-            query, *snapshot);
+    return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
+            selection, queryLength, query, *snapshot);
 }
 
 ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
-        crossbow::infinio::AllocatedMemoryRegion& scanRegion, const crossbow::infinio::Endpoint& commitManager,
-        const crossbow::infinio::Endpoint& tellStore, size_t maxPendingResponses, uint64_t processorNum)
-        : mScanRegion(scanRegion),
-          mProcessor(service.createProcessor()),
+        const crossbow::infinio::Endpoint& commitManager, const std::vector<crossbow::infinio::Endpoint>& tellStore,
+        size_t maxPendingResponses, uint64_t processorNum)
+        : mProcessor(service.createProcessor()),
           mCommitManagerSocket(service.createSocket(*mProcessor), maxPendingResponses),
-          mTellStoreSocket(service.createSocket(*mProcessor), maxPendingResponses),
           mProcessorNum(processorNum),
           mTransactionCount(0x0u) {
     mCommitManagerSocket.connect(commitManager);
-    mTellStoreSocket.connect(tellStore, mProcessorNum);
+
+    mTellStoreSocket.reserve(tellStore.size());
+    for (auto& ep : tellStore) {
+        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), maxPendingResponses));
+        mTellStoreSocket.back()->connect(ep, mProcessorNum);
+    }
 }
 
 void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
@@ -226,6 +225,35 @@ ClientTransaction ClientProcessor::start(crossbow::infinio::Fiber& fiber) {
     return {*this, fiber, startResponse->get()};
 }
 
+Table ClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
+    // TODO Return a combined createTable future?
+    std::vector<std::shared_ptr<CreateTableResponse>> requests;
+    requests.reserve(mTellStoreSocket.size());
+    for (auto& socket : mTellStoreSocket) {
+        requests.emplace_back(socket->createTable(fiber, name, schema));
+    }
+    uint64_t tableId = 0u;
+    for (auto& i : requests) {
+        auto id = i->get();
+        LOG_ASSERT(tableId == 0u || tableId == id, "Table IDs returned from shards do not match");
+        tableId = id;
+    }
+    return Table(tableId, std::move(schema));
+}
+
+std::vector<std::shared_ptr<ScanResponse>> ClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+        const Record& record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
+        const char* selection, uint32_t queryLength, const char* query,
+        const commitmanager::SnapshotDescriptor& snapshot) {
+    std::vector<std::shared_ptr<ScanResponse>> result;
+    result.reserve(mTellStoreSocket.size());
+    for (auto& socket : mTellStoreSocket) {
+        result.emplace_back(socket->scan(fiber, tableId, record, memoryManager.acquire(), queryType, selectionLength,
+                selection, queryLength, query, snapshot));
+    }
+    return result;
+}
+
 void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Return a commit future?
 
@@ -238,12 +266,10 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
     }
 }
 
-ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config)
-        : mScanRegion(service.allocateMemoryRegion(config.scanMemory,
-                IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE)) {
+ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(service, mScanRegion, config.commitManager, config.tellStore,
+        mProcessor.emplace_back(new ClientProcessor(service, config.commitManager, config.tellStore,
                 config.maxPendingResponses, i));
     }
 }
