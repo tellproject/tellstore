@@ -13,20 +13,17 @@ namespace deltamain {
 
 ColumnMapPage::ColumnMapPage(PageManager& pageManager, char* data, Table *table)
     : mPageManager(pageManager)
-    , mTable(table)
+//    , mTable(table)
     , mNullBitmapSize(getNullBitMapSize(table))
     , mNumColumns(table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields())
     , mFixedValuesSize(table->getFieldOffset(table->getNumberOfFixedSizedFields()) - table->getFieldOffset(0))
     , mData(data)
-    , mRecordCount(*(reinterpret_cast<uint32_t*>(data)))
+    , mRecordCount(0)
     , mFillPage(nullptr)
     , mFillPageVarOffsetPtr(nullptr)
     , mFillPageRecordCount(0)
     , mPageCleaningSummaries() {}
 
-/**
- * efficient cleaning check on an entire page, returns a map of records that do need cleaning
- */
 bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) {
 
     // if there is already an entry in cleaning data, we have done the work already
@@ -40,9 +37,10 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
     auto varLengthPtr = getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
     auto keyVersionPtrEnd = keyVersionPtr + 2*mRecordCount;
     for (; !needsCleaning && keyVersionPtr < keyVersionPtrEnd; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
-        if (keyVersionPtr[1] < lowestActiveVersion     // version below base version
-                || *newestPtr                   // updates on this record
-                || *varLengthPtr <= 0)          // deletions or reverts
+        if (keyVersionPtr[1] < lowestActiveVersion                              // version below base version
+                || *newestPtr                                                   // updates on this record
+                || *varLengthPtr < 0                                            // reverts
+                || (*varLengthPtr == 0 && insertMap.count(keyVersionPtr[0])))   // deletes need cleaning if they have consequent inserts (or if they have versions below base version which will be checked in the next loop iteration)
             needsCleaning = true;
     }
 
@@ -52,6 +50,7 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
     // page needs cleaning, now let us gather the cleaning summary
     std::vector<std::pair<uint32_t, RecordCleaningInfo>> pageCleaningSummary;
 
+
     uint32_t startIndex = 0;
     keyVersionPtr = getKeyAt(startIndex, mData);
     newestPtr = reinterpret_cast<char**>(const_cast<char*>(getNewestPtrAt(startIndex, mData, mRecordCount)));
@@ -60,45 +59,88 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
         pageCleaningSummary.emplace_back();
         pageCleaningSummary.back().first = startIndex;
         RecordCleaningInfo &recInfo = pageCleaningSummary.back().second;
-        recInfo.newestPtr = *newestPtr;
+        auto &newest = recInfo.newestPtr;
+        auto &versionMap = recInfo.versionMap;
+        newest = *newestPtr;
+        bool safelyDiscard = (newest != nullptr);    // if safe is true, I can discard all versions below base version (if not, I have to keep the youngest)
         // iterate over all versions of this record and gather info
         for (; ; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr, ++startIndex) {
-            if (keyVersionPtr[1] >= lowestActiveVersion) {  //if version no longer valid, skip it
+            if (!safelyDiscard || keyVersionPtr[1] >= lowestActiveVersion) {  //if version no longer valid, skip it
                 if (*varLengthPtr == 0) {
                     // we have a delete record which means that we can delete the whole record
                     // iff everything else is below base version, otherwise we have to keep it
-                    // and have to check insertMap
                     if (keyVersionPtr[0] == keyVersionPtr[2] && keyVersionPtr[3] >= lowestActiveVersion) {
                         // there are tuples above base version --> need to keep delete record and probe insertmap
-                        recInfo.tupleCount++;
-                        if (insertMap.count(*keyVersionPtr)) {
-                            auto &queue = insertMap.find(*keyVersionPtr)->second;
-                            for (auto iter = queue.begin(); iter != queue.end(); ++iter) {
-                                CDMRecord rec (*iter);
-                                //todo: use rec.collect(.) to iterate over all all records this insert involves
-                            }
-                        }
+                        versionMap.insert(std::make_pair(keyVersionPtr[1], impl::VersionHolder
+                                {reinterpret_cast<char*>(const_cast<uint64_t*>(keyVersionPtr))+2,
+                                RecordType::MULTI_VERSION_RECORD,
+                                0,
+                                nullptr}));
                     }
+                    safelyDiscard = true;
                 }
                 else if (*varLengthPtr > 0) {
-                    recInfo.tupleCount++;
-                    recInfo.totalVarSizedCount += (*varLengthPtr);
+                    versionMap.insert(std::make_pair(keyVersionPtr[1], impl::VersionHolder
+                            {reinterpret_cast<char*>(const_cast<uint64_t*>(keyVersionPtr))+2,
+                            RecordType::MULTI_VERSION_RECORD,
+                            (*varLengthPtr) + mFixedValuesSize,
+                            nullptr}));
+                    safelyDiscard = true;
                 }
-                // else: we have a revert enty which we can simply ignore
+                // else: we have a revert entry which we can simply ignore
             }
             if (keyVersionPtr[0] != keyVersionPtr[2]) break;  //loop exit condition
         }
 
-        // iterate over updates of this record and add them as needed
-        auto update = recInfo.newestPtr;
-        while (update != nullptr) {
-            CDMRecord rec (update);
-            //todo: do the following without using logrecord directly
-//            if (rec.isValidDataRecord() && rec.version() >= lowestActiveVersion) {
-//                recInfo.tupleCount++;
-//                recInfo.totalVarSizedCount += (rec.recordSize() - mFixedValuesSize);
-//            }
-//            update = const_cast<char *>(rec.getPrevious());
+        // if this record has updates or inserts add them as needed
+        bool newestIsDelete = true, allVersionsInvalid;
+        if (newest)
+        {
+            CDMRecord rec (newest);
+            rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+        }
+        if (insertMap.count(keyVersionPtr[0])) {
+            auto insertMapIter = insertMap.find(keyVersionPtr[0]);
+            auto &queue = insertMapIter->second;
+            for (auto queueIter = queue.begin(); queueIter != queue.end(); ++queueIter) {
+                if (!newestIsDelete)
+                {
+                    LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
+                    std::terminate();
+                }
+                CDMRecord rec (*queueIter);
+                rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+                if (newestIsDelete || allVersionsInvalid) {
+                    if (queue.empty()) {
+                        insertMap.erase(insertMapIter);
+                        break;
+                    }
+                } else {
+                    // in this case we do not need to check further for inserts
+                    break;
+                }
+            }
+        }
+
+        // prune no longer used versions of versionMap and save newest pointer to the value that youngest insert pointed to
+        // (which is equal to the address of the highest valid version or NULL if that's an insert)
+        auto firstValidVersion = versionMap.lower_bound(lowestActiveVersion);
+        if (firstValidVersion == versionMap.end()) {
+            --firstValidVersion;
+        }
+        versionMap.erase(versionMap.begin(), firstValidVersion);
+        auto hightsVersionRecord = versionMap.rbegin();
+        if (hightsVersionRecord != versionMap.rend())
+            newest = (hightsVersionRecord->second.type == RecordType::LOG_INSERT ?
+                    nullptr :
+                    const_cast<char *>(hightsVersionRecord->second.record));
+
+        // add information from versionMap to recordInfo
+        for (auto iter = versionMap.begin(); iter!=versionMap.end(); ++iter)
+        {
+            recInfo.tupleCount++;
+            if (iter->second.type != RecordType::LOG_DELETE && iter->second.size != 0)  // size is 0 for deletes in MVRecord
+                recInfo.totalVarSizedCount += iter->second.size - mFixedValuesSize;
         }
     }
 
@@ -107,23 +149,12 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
     return false;
 }
 
-///**
-// * efficient copy and compact algorithm for an MV record
-// * returns true on success and false if there wasn't enough space in page
-// */
-//inline bool copyAndCompact(std::unordered_set<uint64_t> &cleaningMap,
-//                           uint32_t *startIndex,
-//                           const uint64_t *keyPtr,
-//                           uint32_t *varHeapOffsetPtr,
-//                           uint32_t *countPtr,
-//                           const char *srcBasePtr,
-//                           const char *destBasePtr,
-//                           Table *table,
-//                           const uint32_t numColumns,   //total number of columns (fixed and var)
-//                           const uint32_t capacity,
-//                           const size_t nullBitMapSize
-//        )
-//{
+bool ColumnMapPage::copyAndCompact(uint64_t lowestActiveVersion,
+                    InsertMap& insertMap,
+                    Modifier& hashTable
+        )
+{
+    //TODO: implement
 //    uint recordSize = 1;
 //    uint totalVarLenghtSize = 0;
 //    std::vector<uint32_t> varLengthOffsets;
@@ -186,63 +217,46 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
 //    (*startIndex) += recordSize;
 //    (*countPtr) += recordSize;
 //    (*varHeapOffsetPtr) += totalVarLenghtSize;
-//    return true;
-//}
+    return true;
+}
 
 char* ColumnMapPage::gc(uint64_t lowestActiveVersion,
         InsertMap& insertMap,
         bool& done,
         Modifier& hashTable)
 {
-    (mTable->getPageCapacity());
+    // check whether we see this page for the first time in gc
+    bool firstTime = (!mRecordCount);
+    if(!mRecordCount)
+        mRecordCount = *reinterpret_cast<uint32_t*>(mData);
 
-    //todo: go to this whole code and make it work in new table-gc method
+    if (!needsCleaning(lowestActiveVersion, insertMap)) {
+        // we are done - no cleaning needed for this page
+        done = true;
+        return mData;
+    }
 
-//    auto cleaningMap = needCleaning(lowestActiveVersion, insertMap);
-//    if (cleaningMap.size() == 0) {
-//        // we are done - no cleaning needed for this page
-//        done = true;
-//        return mData;
-//    }
+    // At this point we know that we will need to clean the page
+    if(firstTime)
+        markCurrentForDeletion();
 
-//    // At this point we know that we will need to clean the page
-//    uint32_t *varHeapOffsetPtr = (reinterpret_cast<uint32_t*>(fillPage));
-//    if ((*varHeapOffsetPtr) == 0)
-//        (*varHeapOffsetPtr) = reinterpret_cast<uint64_t>(getColumnNAt(mTable, numColumns, 0, fillPage, capacity, nullBitMapSize))
-//            - reinterpret_cast<uint64_t>(fillPage);
-//    uint32_t *countPtr = (reinterpret_cast<uint32_t*>(fillPage+4));
-//    char* res = (*countPtr) == 0 ? fillPage : nullptr;   //nullptr means that the fillpage was already added to the page list at another iteration of gc
-//    // now we also know that we will have to recycle the current
-//    // read only page
-//    markCurrentForDeletion();   //TODO: are we sure that his actually only happens to a page once? What if there are MANY updates?!
+    // construct fillpage if needed
+    constructFillPage();
 
-//    // now we need to iterate over the page and simply copy or clean records as necessary
-//    auto keyPtr = getKeyAt(mStartIndex, mData);
-//    for (auto keyPtrEnd = keyPtr + 2*capacity; keyPtr < keyPtrEnd; keyPtr +=2) {
-//        if(!copyAndCompact(cleaningMap, &mStartIndex, keyPtr, varHeapOffsetPtr, countPtr, mData, fillPage, mTable, numColumns, capacity, nullBitMapSize)) {
-//            // The current fillPage is full
-//            // In this case we will either allocate a new fillPage (if
-//            // the old one got inserted before), or we will return to
-//            // indicate that we need a new fillPage
-//            // in either case, we have to seal the fillpage (by setting capacity correclty)
-//            *(reinterpret_cast<uint32_t *>(fillPage)) = capacity;
-//            if (res) {
-//                done = false;
-//                return res;
-//            } else {
-//                // In this case the fillPage is already in the pageList.
-//                // We can safely allocate a new page and allocate this one.
-//                fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-//                res = fillPage;
-//                // now we can try again
-//                continue;
-//            }
-//        }
-//    }
-//    // we are done. It might now be, that this page has some free space left
-//    fillWithInserts(lowestActiveVersion, insertMap, fillPage, hashTable);
-//    done = true;
-//    return res;
+    // do a copyAndCompactPass over the data
+    done = copyAndCompact(lowestActiveVersion, insertMap, hashTable);
+
+    if (!done)
+    {
+        // if not done, this means we need to store the current fillpage and call gc again
+        auto res = mFillPage;
+        mFillPage = nullptr;
+        return res;
+    }
+
+    // we are done. It might now be, that this page has some free space left
+    if (insertMap.size())
+        return fillWithInserts(lowestActiveVersion, insertMap, hashTable);  // this will return a non-nullptr
     return nullptr;
 }
 

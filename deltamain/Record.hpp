@@ -133,6 +133,9 @@ public:
     RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+
+    // traverses previous pointers of log record repeatedly and adds record versions
+    // to the version map in ascending version order
     void collect(
             impl::VersionMap& versions,
             bool& newestIsDelete,
