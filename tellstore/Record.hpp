@@ -370,11 +370,9 @@ public:
 * column is needed.
 *
 * The format is like follows:
-* - 4 bytes: size of schema data structure (including size)
 * - 2 bytes: number of columns
 * - 1 byte: Type of the table
-* - 1 byte: 1 if there are only columns which are declared NOT NULL,
-*           0 otherwise
+* - 1 byte: Padding
 * - For each column:
 *   - 2 bytes: type of column
 *   - 1 byte: 1 if it is non-nullable, 0 otherwise
@@ -389,7 +387,6 @@ public:
 *   - 2 bytes: number of columns to index
 *   - For each column:
 *       - 2 byte: column id
-* - Alignment to 8 bytes
 */
 class Schema {
 public:
@@ -407,7 +404,6 @@ public:
             : mType(type) {
     }
 
-    Schema(const char* ptr);
     Schema(const Schema&) = default;
     Schema(Schema&& schema) = default;
 
@@ -416,10 +412,6 @@ public:
 
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
     void addIndexes(const std::vector<std::vector<crossbow::string>>& idxs);
-
-    char* serialize(char* ptr) const;
-
-    size_t schemaSize() const;
 
     TableType type() const {
         return mType;
@@ -436,6 +428,7 @@ public:
     const std::vector<Field>& varSizeFields() const {
         return mVarSizeFields;
     }
+
 public: // Serialization
     static Schema deserialize(crossbow::buffer_reader& reader);
     size_t serializedLength() const;
