@@ -99,6 +99,8 @@ public:
     template <typename T>
     T field(const crossbow::string& name, const char* data) const;
 
+    GenericTuple toGenericTuple(const char* data) const;
+
 private:
     uint64_t mTableId;
     Record mRecord;
