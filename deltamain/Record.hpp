@@ -35,7 +35,7 @@ struct VersionHolder {
     const char* record;
     RecordType type;
     size_t size;
-    std::atomic<const char*>* nextPtr;
+    std::atomic<const char*>* newestPtrLocation;
 };
 using VersionMap = std::map<uint64_t, VersionHolder>;
 
