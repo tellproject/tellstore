@@ -95,10 +95,9 @@ char* RowStorePage::gc(uint64_t lowestActiveVersion,
             hashTable.insert(rec.key(), mFillPage + mFillOffset, true);
             offset += rec.size();
         }
-        // we are done. It might now be, that this page has some free space left
+
+        // we are done, but the fillpage is (most probably) not full yet
         done = true;
-        if (insertMap.size())
-            return fillWithInserts(lowestActiveVersion, insertMap, hashTable);  // this will return a non-nullptr
         return nullptr;
 }
 

@@ -82,6 +82,14 @@ inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t i
     return res;
 }
 
+inline uint32_t getSpaceConsumptionExeptHeap(uint32_t recordCount, size_t nullBitmapSize, uint32_t fixedValuesSize) {
+    auto countHat = getCountHat(recordCount);
+    auto fixSpace = 8 + (recordCount*(24 + nullBitmapSize));     // page header + special columns
+    fixSpace += countHat * (4+fixedValuesSize);                  // fixed-size columns + var-sized meta data column
+    fixSpace += recordCount * 8;                                 // var-sized columns
+    return fixSpace;
+}
+
 /**
  * End of convenience functions
  *******************************/
