@@ -35,7 +35,7 @@ struct VersionHolder {
     const char* record;
     RecordType type;
     size_t size;
-    std::atomic<const char*>* nextPtr;
+    std::atomic<const char*>* newestPtrLocation;
 };
 using VersionMap = std::map<uint64_t, VersionHolder>;
 
@@ -133,6 +133,9 @@ public:
     RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+
+    // traverses previous pointers of log record repeatedly and adds record versions
+    // to the version map in ascending version order
     void collect(
             impl::VersionMap& versions,
             bool& newestIsDelete,

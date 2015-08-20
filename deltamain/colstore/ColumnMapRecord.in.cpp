@@ -10,9 +10,10 @@ namespace impl {
  * column map page which is layed out the following way:
  *
  * - count: uint32 to store the number of records that are actually stored in
- *   this page.
- * - count^: count rounded up to the next multiple of 2. This helps with proper
- *   8-byte alignment of values
+ *   this page. We also define:
+ *   count^: count rounded up to the next multiple of 2. This helps with proper
+ *   8-byte alignment of values.
+ * - 4-byte padding
  * - key-version column: an array of size count of 16-byte values in format:
  *   |key (8 byte)|version (8 byte)|
  * - newest-pointers: an array of size count of 8-byte pointers to newest

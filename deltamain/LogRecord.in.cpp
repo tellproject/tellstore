@@ -20,7 +20,7 @@ namespace impl {
  *      record entry itself. This is an important design
  *      decision: this way me make clear that we do not
  *      introduce cycles.
- *    (- 8 bytes:)  If the log operation is an insert,
+ *      If the log operation is an insert,
  *      this position holds the pointer to the newest version
  *
  *   - The data (if not delete)

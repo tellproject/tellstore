@@ -36,10 +36,11 @@ private:
         char* newestPtr = nullptr;          // newest pointer of this MV-record
         uint32_t totalVarSizedCount = 0;    // bytes of var-heap consumption of this record
         uint16_t tupleCount = 0;            // count of tuples that belong to this MV-record
+        impl::VersionMap versionMap;        // map of updates / inserts to this MV-record
     };
 
     PageManager& mPageManager;
-    const Table *mTable;
+//    const Table *mTable;
     const size_t mNullBitmapSize;   //nullbitmap-size of mTable
     const uint32_t mNumColumns;     //total number of columns of mTable
     const uint32_t mFixedValuesSize;//total byte size needed by all fixed values (needed to compute varSizedValuesSize from total size)
@@ -80,6 +81,15 @@ private:
      */
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap);
 
+    /**
+     * performs a copy and compact pass over consuming information from mPageCleaningSummary
+     * returns true if all outstanding data fit into mFillPage and false otherwise
+     */
+    bool copyAndCompact(uint64_t lowestActiveVersion,
+                        InsertMap& insertMap,
+                        Modifier& hashTable
+            );
+
 public:
 
     ColumnMapPage(PageManager& pageManager, char* data, Table *table);
@@ -87,7 +97,7 @@ public:
     void reset(char *data)
     {
         mData = data;
-        mRecordCount = *(reinterpret_cast<uint32_t*>(mData));
+        mRecordCount = 0;   // set it to 0 in order to know that we see this page the first time (which is important for recycling it)
     }
 
     /**

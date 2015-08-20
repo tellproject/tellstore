@@ -88,7 +88,6 @@ template<class T>
 size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
     switch(t) {
     case Type::LOG_INSERT:
-        return 40;
     case Type::LOG_UPDATE:
     case Type::LOG_DELETE:
         return 32;
