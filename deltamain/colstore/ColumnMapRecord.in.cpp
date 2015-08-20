@@ -22,8 +22,9 @@ namespace impl {
  *   record is valid)
  * - null-bitmatrix: a bitmatrix of size capacity x (|Columns|+7)/8 bytes
  * - var-size-meta-data column: an array of size count^ of signed 4-byte values
- *   indicating the total size of all var-sized values of each record. This is
- *   used to allocate enough space for a record on a get request.
+ *   indicating the total size of all var-sized values of each record (rounded up
+ *   to the next multiple of 4. This is used to allocate enough space for a
+ *   record on a get request.
  *   MOREOVER: We set this size to zero to denote a version of a deleted tuple
  *   and to a negative number if the tuple is marked as reverted and will be
  *   deleted at the next GC phase. In that case, the absolute denotes the size.

@@ -95,7 +95,7 @@ public:
      * Performs a gc step on this page and copies data to a new page.
      * This call either ends when there are
      * (a) no changes to be done (done is set to true and result is set to current page) --> store page in page list, call reset() with address of next page, followed by gc ()
-     * (b) no records to copy anymore (done is set to true and result is set to newpage if this is one is full as well or nullptr otherwise) --> call reset() with the address of the next page, followed by gc()
+     * (b) no records to copy anymore (done is set to true and result is set to nullptr otherwise) --> call reset() with the address of the next page, followed by gc()
      * (c) new page is full (done is set to false and result is set to new page) --> store new page in page list and call gc() again
      */
     char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, bool& done, Modifier& hashTable);

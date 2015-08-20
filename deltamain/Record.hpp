@@ -55,11 +55,11 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  * - The data (if not delete)
  *
  * For the memory layout of log records:
- * PLEASE consult the specific comments in LogRecord.hpp
+ * PLEASE consult the specific comments in LogRecord.in.cpp
  *
  * For the memory layout of a MV-DMRecord:
- * PLEASE consult the specific comments in RowStoreRecord.hpp,
- * resp. ColumnMapRecord.hpp.
+ * PLEASE consult the specific comments in RowStoreRecord.in.cpp,
+ * resp. ColumnMapRecord.in.cpp.
  *
  * This class comes in to flavors: const and non-const.
  * The non-const version provides also functionality for
