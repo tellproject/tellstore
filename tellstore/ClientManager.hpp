@@ -209,11 +209,19 @@ private:
  */
 class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config);
+    ClientManager(const ClientConfig& config);
 
     void execute(std::function<void(ClientHandle&)> fun);
 
+    std::unique_ptr<ScanMemoryManager> allocateScanMemory(size_t chunkCount, size_t chunkLength) {
+        return std::unique_ptr<ScanMemoryManager>(new ScanMemoryManager(mService, chunkCount, chunkLength));
+    }
+
 private:
+    crossbow::infinio::InfinibandService mService;
+
+    std::thread mServiceThread;
+
     std::vector<std::unique_ptr<ClientProcessor>> mProcessor;
 };
 

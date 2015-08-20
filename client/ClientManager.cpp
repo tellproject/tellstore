@@ -266,10 +266,16 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
     }
 }
 
-ClientManager::ClientManager(crossbow::infinio::InfinibandService& service, const ClientConfig& config) {
+ClientManager::ClientManager(const ClientConfig& config)
+        : mService(config.infinibandConfig) {
+    // TODO Move the service thread into the Infiniband Service itself
+    mServiceThread = std::thread([this] () {
+        mService.run();
+    });
+
     mProcessor.reserve(config.numNetworkThreads);
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(service, config.commitManager, config.tellStore,
+        mProcessor.emplace_back(new ClientProcessor(mService, config.commitManager, config.tellStore,
                 config.maxPendingResponses, i));
     }
 }
