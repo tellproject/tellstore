@@ -133,6 +133,8 @@ public:
             const std::vector<crossbow::infinio::Endpoint>& tellStore, size_t maxPendingResponses,
             uint64_t processorNum);
 
+    void shutdown();
+
     uint64_t transactionCount() const {
         return mTransactionCount.load();
     }
@@ -210,6 +212,8 @@ private:
 class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
     ClientManager(const ClientConfig& config);
+
+    void shutdown();
 
     void execute(std::function<void(ClientHandle&)> fun);
 

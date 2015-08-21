@@ -12,11 +12,13 @@
 #include <crossbow/string.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <system_error>
 
 using namespace tell;
@@ -61,6 +63,8 @@ class TestClient {
 public:
     TestClient(const ClientConfig& config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions);
 
+    void wait();
+
     void shutdown();
 
 private:
@@ -89,6 +93,10 @@ private:
     std::array<GenericTuple, 4> mTuple;
 
     Table mTable;
+
+    std::atomic<bool> mDone;
+    std::mutex mWaitMutex;
+    std::condition_variable mWaitCondition;
 };
 
 TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions)
@@ -96,7 +104,8 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
           mScanMemory(mManager.allocateScanMemory(config.tellStore.size(), scanMemoryLength / config.tellStore.size())),
           mNumTuple(numTuple),
           mNumTransactions(numTransactions),
-          mActiveTransactions(0) {
+          mActiveTransactions(0),
+          mDone(false) {
     LOG_INFO("Initialized TellStore client");
     for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
@@ -111,10 +120,17 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
     mManager.execute(std::bind(&TestClient::addTable, this, std::placeholders::_1));
 }
 
+void TestClient::wait() {
+    std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
+    mWaitCondition.wait(waitLock, [this] () {
+        return mDone.load();
+    });
+}
+
 void TestClient::shutdown() {
     LOG_INFO("Shutting down the TellStore client");
 
-    // TODO
+    mManager.shutdown();
 }
 
 void TestClient::addTable(ClientHandle& client) {
@@ -238,6 +254,9 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     doAggregation(client.fiber(), scanTransaction, 1.0);
     doAggregation(client.fiber(), scanTransaction, 0.5);
     doAggregation(client.fiber(), scanTransaction, 0.25);
+
+    mDone.store(true);
+    mWaitCondition.notify_one();
 }
 
 void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
@@ -554,6 +573,8 @@ int main(int argc, const char** argv) {
 
     // Initialize network stack
     TestClient client(clientConfig, scanMemoryLength, numTuple, numTransactions);
+    client.wait();
+    client.shutdown();
 
     LOG_INFO("Exiting TellStore client");
     return 0;

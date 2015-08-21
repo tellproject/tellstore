@@ -204,6 +204,17 @@ ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
     }
 }
 
+void ClientProcessor::shutdown() {
+    if (mProcessor->threadId() == std::this_thread::get_id()) {
+        throw std::runtime_error("Unable to shutdown from within the processing thread");
+    }
+
+    mCommitManagerSocket.shutdown();
+    for (auto& socket : mTellStoreSocket) {
+        socket->shutdown();
+    }
+}
+
 void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
     ++mTransactionCount;
 
@@ -273,6 +284,8 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
 
 ClientManager::ClientManager(const ClientConfig& config)
         : mService(config.infinibandConfig) {
+    LOG_INFO("Starting client manager");
+
     // TODO Move the service thread into the Infiniband Service itself
     mServiceThread = std::thread([this] () {
         mService.run();
@@ -282,6 +295,20 @@ ClientManager::ClientManager(const ClientConfig& config)
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor(mService, config.commitManager, config.tellStore,
                 config.maxPendingResponses, i));
+    }
+}
+
+void ClientManager::shutdown() {
+    LOG_INFO("Shutting down client manager");
+    for (auto& proc : mProcessor) {
+        proc->shutdown();
+    }
+
+    LOG_INFO("Waiting for transactions to terminate");
+    for (auto& proc : mProcessor) {
+        while (proc->transactionCount() != 0) {
+            std::this_thread::yield();
+        }
     }
 }
 
