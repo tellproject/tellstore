@@ -32,12 +32,12 @@ class Table;
 
 namespace impl {
 struct VersionHolder {
-    const char* record;
+    const char* record; //points to the data directly (no key or version information)
     RecordType type;
     size_t size;
-    std::atomic<const char*>* nextPtr;
+    std::atomic<const char*>* newestPtrLocation;
 };
-using VersionMap = std::map<uint64_t, VersionHolder>;
+using VersionMap = std::map<uint64_t, VersionHolder>;   // maps versions to version holders
 
 }
 
@@ -55,11 +55,11 @@ using VersionMap = std::map<uint64_t, VersionHolder>;
  * - The data (if not delete)
  *
  * For the memory layout of log records:
- * PLEASE consult the specific comments in LogRecord.hpp
+ * PLEASE consult the specific comments in LogRecord.in.cpp
  *
  * For the memory layout of a MV-DMRecord:
- * PLEASE consult the specific comments in RowStoreRecord.hpp,
- * resp. ColumnMapRecord.hpp.
+ * PLEASE consult the specific comments in RowStoreRecord.in.cpp,
+ * resp. ColumnMapRecord.in.cpp.
  *
  * This class comes in to flavors: const and non-const.
  * The non-const version provides also functionality for
@@ -133,6 +133,9 @@ public:
     RecordType typeOfNewestVersion(bool& isValid) const;
     uint64_t size() const;
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
+
+    // traverses previous pointers of log record repeatedly and adds record versions
+    // to the version map in ascending version order
     void collect(
             impl::VersionMap& versions,
             bool& newestIsDelete,

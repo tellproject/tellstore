@@ -4,6 +4,11 @@
  * to items of interest within the colum-oriented page.
  */
 
+inline const uint32_t getIndex(const char *basePtr, const char *recordPtr)
+{
+    return (reinterpret_cast<uint64_t>(recordPtr-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+}
+
 /**
  * Given a reference to table, computes the beginning of the page (basePtr),
  * the total number of records in this page (recordCount) and the index of the
@@ -13,7 +18,7 @@ inline uint32_t getBaseKnowledge(const char* data, const Table *table, const cha
     LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
     basePtr = table->pageManager()->getPageStart(data);
     recordCount = *(reinterpret_cast<const uint32_t*>(basePtr));
-    return (reinterpret_cast<uint64_t>(data-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+    return getIndex(basePtr, data);
 }
 
 /**
@@ -80,6 +85,14 @@ inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t i
         res += recordCount * (N - fixedSizedFields) * 8;
     res += index * table->getFieldSize(N);
     return res;
+}
+
+inline uint32_t getSpaceConsumptionExeptHeap(uint32_t recordCount, size_t nullBitmapSize, uint32_t fixedValuesSize) {
+    auto countHat = getCountHat(recordCount);
+    auto fixSpace = 8 + (recordCount*(24 + nullBitmapSize));     // page header + special columns
+    fixSpace += countHat * (4+fixedValuesSize);                  // fixed-size columns + var-sized meta data column
+    fixSpace += recordCount * 8;                                 // var-sized columns
+    return fixSpace;
 }
 
 /**
