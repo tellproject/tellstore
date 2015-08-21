@@ -6,6 +6,7 @@ set(CLIENT_SRCS
     ClientSocket.cpp
     ScanMemory.cpp
     Table.cpp
+    TransactionRunner.cpp
 )
 
 set(CLIENT_PUBLIC_HDR
@@ -14,6 +15,7 @@ set(CLIENT_PUBLIC_HDR
     ClientSocket.hpp
     ScanMemory.hpp
     Table.hpp
+    TransactionRunner.hpp
 )
 
 # Transform public header list to use absolute paths

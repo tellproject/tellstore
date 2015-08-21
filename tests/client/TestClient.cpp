@@ -3,6 +3,7 @@
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/Record.hpp>
 #include <tellstore/ScanMemory.hpp>
+#include <tellstore/TransactionRunner.hpp>
 
 #include <crossbow/byte_buffer.hpp>
 #include <crossbow/enum_underlying.hpp>
@@ -12,13 +13,11 @@
 #include <crossbow/string.hpp>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <system_error>
 
 using namespace tell;
@@ -63,7 +62,7 @@ class TestClient {
 public:
     TestClient(const ClientConfig& config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions);
 
-    void wait();
+    void run();
 
     void shutdown();
 
@@ -72,11 +71,11 @@ private:
 
     void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey);
 
-    void doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
+    void executeScan(ClientHandle& handle, float selectivity);
 
-    void doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
+    void executeProjection(ClientHandle& client, float selectivity);
 
-    void doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity);
+    void executeAggregation(ClientHandle& client, float selectivity);
 
     ClientManager mManager;
 
@@ -88,24 +87,16 @@ private:
     /// Number of concurrent transactions to start
     size_t mNumTransactions;
 
-    std::atomic<size_t> mActiveTransactions;
-
     std::array<GenericTuple, 4> mTuple;
 
     Table mTable;
-
-    std::atomic<bool> mDone;
-    std::mutex mWaitMutex;
-    std::condition_variable mWaitCondition;
 };
 
 TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions)
         : mManager(config),
           mScanMemory(mManager.allocateScanMemory(config.tellStore.size(), scanMemoryLength / config.tellStore.size())),
           mNumTuple(numTuple),
-          mNumTransactions(numTransactions),
-          mActiveTransactions(0),
-          mDone(false) {
+          mNumTransactions(numTransactions) {
     LOG_INFO("Initialized TellStore client");
     for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
@@ -115,16 +106,49 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
                 std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
         });
     }
-
-    LOG_DEBUG("Start transaction");
-    mManager.execute(std::bind(&TestClient::addTable, this, std::placeholders::_1));
 }
 
-void TestClient::wait() {
-    std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
-    mWaitCondition.wait(waitLock, [this] () {
-        return mDone.load();
-    });
+void TestClient::run() {
+    auto startTime = std::chrono::steady_clock::now();
+    LOG_INFO("Starting test workload");
+    TransactionRunner runner;
+
+    LOG_INFO("Start create table transaction");
+    mManager.execute(runner.wrap(std::bind(&TestClient::addTable, this, std::placeholders::_1)));
+    runner.wait();
+
+    LOG_INFO("Starting %1% test load transaction(s)", mNumTransactions);
+    for (decltype(mNumTransactions) i = 0; i < mNumTransactions; ++i) {
+        auto startRange = i * mNumTuple;
+        auto endRange = startRange + mNumTuple;
+        mManager.execute(runner.wrap(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1,
+                startRange, endRange)));
+    }
+    runner.wait();
+
+    LOG_INFO("Starting test scan transaction(s)");
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5)));
+    runner.wait();
+    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25)));
+    runner.wait();
+
+    auto endTime = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
+    LOG_INFO("Running test workload took %1%s", duration.count());
 }
 
 void TestClient::shutdown() {
@@ -146,13 +170,6 @@ void TestClient::addTable(ClientHandle& client) {
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("Adding table took %1%ns", duration.count());
-
-    for (size_t i = 0; i < mNumTransactions; ++i) {
-        auto startRange = i * mNumTuple;
-        auto endRange = startRange + mNumTuple;
-        ++mActiveTransactions;
-        mManager.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange));
-    }
 }
 
 void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey) {
@@ -239,27 +256,12 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
              std::chrono::duration_cast<std::chrono::milliseconds>(getTimer.total()).count(),
              std::chrono::duration_cast<std::chrono::microseconds>(insertTimer.total()).count() / (endKey - startKey),
              std::chrono::duration_cast<std::chrono::microseconds>(getTimer.total()).count() / (endKey - startKey));
-
-    if (--mActiveTransactions != 0) {
-        return;
-    }
-
-    auto scanTransaction = client.startTransaction();
-    doScan(client.fiber(), scanTransaction, 1.0);
-    doScan(client.fiber(), scanTransaction, 0.5);
-    doScan(client.fiber(),scanTransaction, 0.25);
-    doProjection(client.fiber(), scanTransaction, 1.0);
-    doProjection(client.fiber(), scanTransaction, 0.5);
-    doProjection(client.fiber(), scanTransaction, 0.25);
-    doAggregation(client.fiber(), scanTransaction, 1.0);
-    doAggregation(client.fiber(), scanTransaction, 0.5);
-    doAggregation(client.fiber(), scanTransaction, 0.25);
-
-    mDone.store(true);
-    mWaitCondition.notify_one();
 }
 
-void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
+void TestClient::executeScan(ClientHandle& client, float selectivity) {
+    LOG_TRACE("Starting transaction");
+    auto& fiber = client.fiber();
+    auto transaction = client.startTransaction();
     LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -340,7 +342,10 @@ void TestClient::doScan(crossbow::infinio::Fiber& fiber, ClientTransaction& tran
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
-void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
+void TestClient::executeProjection(ClientHandle& client, float selectivity) {
+    LOG_TRACE("Starting transaction");
+    auto& fiber = client.fiber();
+    auto transaction = client.startTransaction();
     LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -431,7 +436,10 @@ void TestClient::doProjection(crossbow::infinio::Fiber& fiber, ClientTransaction
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
-void TestClient::doAggregation(crossbow::infinio::Fiber& fiber, ClientTransaction& transaction, float selectivity) {
+void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
+    LOG_TRACE("Starting transaction");
+    auto& fiber = client.fiber();
+    auto transaction = client.startTransaction();
     LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -573,7 +581,7 @@ int main(int argc, const char** argv) {
 
     // Initialize network stack
     TestClient client(clientConfig, scanMemoryLength, numTuple, numTransactions);
-    client.wait();
+    client.run();
     client.shutdown();
 
     LOG_INFO("Exiting TellStore client");
