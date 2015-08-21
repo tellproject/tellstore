@@ -213,6 +213,9 @@ void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
 
         ClientHandle client(*this, fiber);
         fun(client);
+
+        LOG_TRACE("Proc %1%] Exiting client function", mProcessorNum);
+        --mTransactionCount;
     });
 }
 
