@@ -206,6 +206,8 @@ ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
 
 void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
     ++mTransactionCount;
+
+    // TODO Starting a fiber without the fiber cache takes ~500us - Investigate why
     mProcessor->executeFiber([this, fun] (crossbow::infinio::Fiber& fiber) {
         LOG_TRACE("Proc %1%] Execute client function", mProcessorNum);
 
