@@ -4,6 +4,11 @@
  * to items of interest within the colum-oriented page.
  */
 
+inline const uint32_t getIndex(const char *basePtr, const char *recordPtr)
+{
+    return (reinterpret_cast<uint64_t>(recordPtr-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+}
+
 /**
  * Given a reference to table, computes the beginning of the page (basePtr),
  * the total number of records in this page (recordCount) and the index of the
@@ -13,7 +18,7 @@ inline uint32_t getBaseKnowledge(const char* data, const Table *table, const cha
     LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
     basePtr = table->pageManager()->getPageStart(data);
     recordCount = *(reinterpret_cast<const uint32_t*>(basePtr));
-    return (reinterpret_cast<uint64_t>(data-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
+    return getIndex(basePtr, data);
 }
 
 /**
