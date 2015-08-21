@@ -33,8 +33,10 @@ class ColumnMapPage {
 private:
 
     struct RecordCleaningInfo {
-        char* newestPtr = nullptr;                      // newest pointer of this MV-record
-        std::atomic<const char*>* newestPtrLocation;    // location of newest pointer to be CASed
+        char* oldNewestPtr = nullptr;                   // newest pointer value of old MV record
+        std::atomic<const char*>* oldNewestPtrLocation = nullptr; // location of newest pointer to be CASed
+        char** newNewestPtrLocation = nullptr;          // new location of newest pointer
+        uint64_t key = 0;                               // record key
         uint32_t totalVarSizedCount = 0;                // bytes of var-heap consumption of this record
         uint16_t tupleCount = 0;                        // count of tuples that belong to this MV-record
         bool hasValidUpdatesOrInserts = false;          // flag to indicate that there are upates or inserts
@@ -50,8 +52,8 @@ private:
     const uint32_t mFixedValuesSize;//total byte size needed by all fixed values (needed to compute varSizedValuesSize from total size)
     char* mData;                    //current page
     uint32_t mRecordCount;          //record count of current page
-    uint32_t mFillPageVarOffset;    //(hypothetical) offset to var-heap of page to copy to
     uint32_t mFillPageRecordCount;  //(hypothetical) record count of page to copy to
+    uint32_t mFillPageVarOffset;    //(hypothetical) offset to var-heap of page to copy to
     std::deque<std::pair<const char*, std::deque<RecordCleaningInfo>>> mPageCleaningSummaries;
     // queue of meta-data about pages to be recycled, contains pairs of page-address and queues
     // where each queue stores one RecordCleaningInfo per record
@@ -70,19 +72,41 @@ private:
     }
 
     /**
+     * collects all inserts from a specific insert queue and stores them into versionMap
+     */
+    void collectInserts(impl::VersionMap &versionMap,
+                        std::deque<const char *> &insertQueue,
+                        bool &newestIsDelete,
+                        bool &allVersionsInvalid);
+
+    /**
+     * prunes versions below baseVersion and does the tuple and size counting on recInfo
+     */
+    void pruneAndCount(uint64_t lowestActiveVersion,
+                       std::deque<RecordCleaningInfo> &pageCleaningSummary,
+                       RecordCleaningInfo &recInfo,
+                       impl::VersionMap &versionMap);
+
+    /**
      * checks whether cleaning is necessary for this page and as a side-product
      * adds an entry to mPageCleaningData if it does.
      */
     bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap);
 
     /**
-     * copies a log record into column format
+     * copies a log record into column format.
+     * As a side effect, increases mFillPageVarOffset.
      */
-    void copyLogRecord(impl::VersionHolder &logRecordVersionHolder, char *destBasePtr, uint32_t destIndex);
+    void copyLogRecord(uint64_t key,
+                       uint64_t version,
+                       impl::VersionHolder &logRecordVersionHolder,
+                       char *destBasePtr,
+                       uint32_t destIndex);
 
     /**
      * copies numElements subsequent column records from a source page to a
      * destination page. Assumes that destination page has enough space.
+     * As a side effect, increases mFillPageVarOffset.
      */
     void copyColumnRecords(char *srcBasePtr,
                            uint32_t srcIndex,
@@ -97,7 +121,7 @@ private:
      * using the fillpage stats. Stops the traversal just before "end".
      */
     using RecordQueueIterator = std::_Deque_iterator<RecordCleaningInfo, RecordCleaningInfo&, RecordCleaningInfo*>;
-    char *copyAndCompact(uint64_t lowestActiveVersion, Modifier& hashTable, RecordQueueIterator &end);
+    char *fillPage(Modifier& hashTable, RecordQueueIterator &end);
 
     /**
      * checks whether a new record would fit into the new fillpage and if so,
@@ -110,7 +134,7 @@ private:
      * Returns nullptr if all data of this page was (hypothetically) consumed or the pointer
      * to the newly allocated page (that needs to be stored) if we are not done yet.
      */
-    char *gcPass(uint64_t lowestActiveVersion, Modifier& hashTable);
+    char *gcPass(Modifier& hashTable);
 
 public:
 

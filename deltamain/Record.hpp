@@ -32,12 +32,12 @@ class Table;
 
 namespace impl {
 struct VersionHolder {
-    const char* record;
+    const char* record; //points to the data directly (no key or version information)
     RecordType type;
     size_t size;
     std::atomic<const char*>* newestPtrLocation;
 };
-using VersionMap = std::map<uint64_t, VersionHolder>;
+using VersionMap = std::map<uint64_t, VersionHolder>;   // maps versions to version holders
 
 }
 
