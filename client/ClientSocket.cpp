@@ -269,6 +269,7 @@ std::shared_ptr<ScanResponse> ClientSocket::scan(crossbow::infinio::Fiber& fiber
     if (response->done()) {
         return response;
     }
+    mScans.insert(std::make_pair(scanId, response.get()));
 
     uint32_t messageLength = 6 * sizeof(uint64_t) + selectionLength + queryLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
@@ -299,7 +300,6 @@ std::shared_ptr<ScanResponse> ClientSocket::scan(crossbow::infinio::Fiber& fiber
         writeSnapshot(message, snapshot);
     });
 
-    mScans.insert(std::make_pair(mScanId, response.get()));
     return response;
 }
 
