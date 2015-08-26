@@ -150,13 +150,6 @@ private:
     uint64_t minVersion() const;
 
     /**
-     * @brief Finds the key in the table
-     *
-     * @param key Key of the record to lookup
-     */
-    VersionRecordIterator find(uint64_t key);
-
-    /**
      * @brief Helper function to write a update or a deletion entry
      *
      * @param key Key of the entry to write

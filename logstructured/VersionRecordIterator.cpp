@@ -8,18 +8,16 @@ namespace tell {
 namespace store {
 namespace logstructured {
 
-VersionRecordIterator::VersionRecordIterator(Table& table, uint64_t minVersion, uint64_t key)
+VersionRecordIterator::VersionRecordIterator(Table& table, uint64_t key)
         : mTable(table),
-          mMinVersion(minVersion),
           mPrev(nullptr),
           mCurrent(retrieveHead(key)) {
     setCurrentEntry();
     LOG_ASSERT(isNewest(), "Start iterator not newest");
 }
 
-VersionRecordIterator::VersionRecordIterator(Table& table, uint64_t minVersion, ChainedVersionRecord* head)
+VersionRecordIterator::VersionRecordIterator(Table& table, ChainedVersionRecord* head)
         : mTable(table),
-          mMinVersion(minVersion),
           mPrev(nullptr),
           mCurrent(head) {
     setCurrentEntry();

@@ -63,8 +63,8 @@ void HashScanProcessor::process() {
         }
 
         auto lastVersion = ChainedVersionRecord::ACTIVE_VERSION;
-        for (VersionRecordIterator recIter(mTable, mMinVersion, reinterpret_cast<ChainedVersionRecord*>(ptr));
-                !recIter.done(); recIter.next()) {
+        for (VersionRecordIterator recIter(mTable, reinterpret_cast<ChainedVersionRecord*>(ptr)); !recIter.done();
+                recIter.next()) {
             auto record = recIter.value();
 
             // Skip element if it is not yet sealed

@@ -109,7 +109,7 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, V
 
 bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
         uint64_t& version, bool& isNewest) {
-    auto recIter = find(key);
+    VersionRecordIterator recIter(*this, key);
     for (; !recIter.done(); recIter.next()) {
         if (!snapshot.inReadSet(recIter->validFrom())) {
             continue;
@@ -139,8 +139,8 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanag
 void Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
         bool* succeeded /* = nullptr */) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
-    auto recIter = find(key);
-    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+    VersionRecordIterator recIter(*this, key);
+    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= minVersion(),
             "Version of the snapshot already committed");
 
     while (true) {
@@ -203,7 +203,7 @@ bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
 }
 
 bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
-    auto recIter = find(key);
+    VersionRecordIterator recIter(*this, key);
     while (!recIter.done()) {
         // Cancel if the element in the hash map is of a different version
         if (recIter->validFrom() != snapshot.version()) {
@@ -245,16 +245,12 @@ uint64_t Table::minVersion() const {
     }
 }
 
-VersionRecordIterator Table::find(uint64_t key) {
-    return VersionRecordIterator(*this, minVersion(), key);
-}
-
 bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
         const commitmanager::SnapshotDescriptor& snapshot, bool deletion) {
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
-    auto recIter = find(key);
-    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= recIter.minVersion(),
+    VersionRecordIterator recIter(*this, key);
+    LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= minVersion(),
             "Version of the snapshot already committed");
 
     while (!recIter.done()) {

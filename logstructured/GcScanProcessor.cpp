@@ -143,7 +143,7 @@ void GcScanProcessor::process() {
             mGarbage += mEntryIt->entrySize();
 
             // Iterate over the whole version list for this key, this ensures the removal of the invalid deletion entry
-            for (VersionRecordIterator recIter(mTable, mMinVersion, record->key()); !recIter.done(); recIter.next()) {
+            for (VersionRecordIterator recIter(mTable, record->key()); !recIter.done(); recIter.next()) {
             }
             continue;
         }
@@ -252,7 +252,7 @@ bool GcScanProcessor::replaceElement(ChainedVersionRecord* oldElement, ChainedVe
     LOG_ASSERT(oldElement->key() == newElement->key(), "Keys do not match");
 
     // Search for the old element in the version list - if it was not found it has to be invalidated by somebody else
-    VersionRecordIterator recIter(mTable, mMinVersion, oldElement->key());
+    VersionRecordIterator recIter(mTable, oldElement->key());
     if (!recIter.find(oldElement)) {
         LOG_ASSERT(oldElement->mutableData().isInvalid(), "Old element not in version list but not invalid");
         return false;

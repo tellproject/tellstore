@@ -17,9 +17,9 @@ class Table;
  */
 class VersionRecordIterator {
 public:
-    VersionRecordIterator(Table& table, uint64_t minVersion, uint64_t key);
+    VersionRecordIterator(Table& table, uint64_t key);
 
-    VersionRecordIterator(Table& table, uint64_t minVersion, ChainedVersionRecord* head);
+    VersionRecordIterator(Table& table, ChainedVersionRecord* head);
 
     ChainedVersionRecord& operator*() const {
         return *operator->();
@@ -27,10 +27,6 @@ public:
 
     ChainedVersionRecord* operator->() const {
         return mCurrent;
-    }
-
-    uint64_t minVersion() const {
-        return mMinVersion;
     }
 
     /**
@@ -215,10 +211,9 @@ private:
     void setCurrentEntry();
 
     Table& mTable;
-    const uint64_t mMinVersion;
     ChainedVersionRecord* mPrev;
-    ChainedVersionRecord* mCurrent;
     MutableRecordData mPrevData;
+    ChainedVersionRecord* mCurrent;
     MutableRecordData mCurrentData;
 };
 
