@@ -3,6 +3,7 @@
 ###################
 set(LOGSTRUCTURED_SRCS
     GcScanProcessor.cpp
+    HashScanProcessor.cpp
     Table.cpp
     VersionRecordIterator.cpp
 )
@@ -10,6 +11,7 @@ set(LOGSTRUCTURED_SRCS
 set(LOGSTRUCTURED_PRIVATE_HDR
     ChainedVersionRecord.hpp
     GcScanProcessor.hpp
+    HashScanProcessor.hpp
     LogstructuredMemoryStore.hpp
     Table.hpp
     VersionRecordIterator.hpp

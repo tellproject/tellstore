@@ -26,6 +26,10 @@ public:
 
     ~OpenAddressingTable();
 
+    size_t capacity() const {
+        return mCapacity;
+    }
+
     /**
      * @brief Looks up the element in the hash table
      *
@@ -45,6 +49,28 @@ public:
      * @return The associated data pointer or nullptr if the element did not exist
      */
     const void* get(uint64_t table, uint64_t key) const;
+
+    /**
+     * @brief Invokes the provided function for every valid tuple in the range between start and end bucket
+     *
+     * @param start Offset to the start bucket
+     * @param end Offset to the end bucket (end bucket will not be included)
+     */
+    template <typename F>
+    void forEach(size_t start, size_t end, F fun) {
+        forEachImpl<F, void*>(start, end, std::move(fun));
+    }
+
+    /**
+     * @brief Invokes the provided function for every valid tuple in the range between start and end bucket
+     *
+     * @param start Offset to the start bucket
+     * @param end Offset to the end bucket (end bucket will not be included)
+     */
+    template <typename F>
+    void forEach(size_t start, size_t end, F fun) const {
+        forEachImpl<F, const void*>(start, end, std::move(fun));
+    }
 
     /**
      * @brief Tries to insert the element into the hash table
@@ -181,6 +207,15 @@ private:
     template <typename T, typename F>
     T execOnElement(uint64_t table, uint64_t key, T notFound, F fun);
 
+    /**
+     * @brief Invokes the provided function for every valid tuple in the range between start and end bucket
+     *
+     * @param start Offset to the start bucket
+     * @param end Offset to the end bucket (end bucket will not be included)
+     */
+    template <typename F, typename T>
+    void forEachImpl(size_t start, size_t end, F fun) const;
+
     size_t mCapacity;
 
     Entry* mBuckets;
@@ -189,6 +224,38 @@ private:
     cuckoo_hash_function mKeyHash;
 };
 
+template <typename F, typename T>
+void OpenAddressingTable::forEachImpl(size_t start, size_t end, F fun) const {
+    if (start > end || end > mCapacity) {
+        throw std::out_of_range("Invalid for-each bounds");
+    }
+
+    auto entryIt = mBuckets + start;
+    auto entryEnd = mBuckets + end;
+    while (entryIt != entryEnd) {
+        auto ptr = entryIt->ptr.load();
+
+        // Check if pointer is marked as free, deleted, inserting or invalid - Skip bucket if it is
+        if (ptr == 0x0u || (ptr & MARKER_MASK) != 0x0u) {
+            ++entryIt;
+            continue;
+        }
+
+        auto t = entryIt->tableId.load();
+        auto k = entryIt->keyId.load();
+
+        // Check if the pointer changed - Reload variables if it has
+        // Needed to ensure the loaded ptr, table and key are consistent and were not changed by other threads in the
+        // meantime. This does not suffer from the ABA problem as the table requires unique pointers and access through
+        // an epoch.
+        if (entryIt->ptr.load() != ptr) {
+            continue;
+        }
+
+        fun(t, k, reinterpret_cast<T>(ptr & POINTER_MASK));
+        ++entryIt;
+    }
+}
 
 } // namespace store
 } // namespace tell

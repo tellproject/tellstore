@@ -237,34 +237,6 @@ bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
     return false;
 }
 
-std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queries) {
-    std::vector<ScanProcessor> result;
-    result.reserve(numThreads);
-
-    auto version = minVersion();
-    auto numPages = mLog.pages();
-    auto begin = mLog.pageBegin();
-    auto end = mLog.pageEnd();
-
-    auto mod = numPages % numThreads;
-    auto iter = begin;
-    for (decltype(numThreads) i = 1; i < numThreads; ++i) {
-        auto step = numPages / numThreads + (i < mod ? 1 : 0);
-        // Increment the page iterator by step pages (but not beyond the end page)
-        for (decltype(step) j = 0; j < step && iter != end; ++j, ++iter) {
-        }
-
-        result.emplace_back(*this, begin, iter, queryBuffer, queries, version);
-        begin = iter;
-    }
-
-    // The last scan takes the remaining pages
-    result.emplace_back(*this, begin, end, queryBuffer, queries, version);
-
-    return result;
-}
-
 uint64_t Table::minVersion() const {
     if (mRecord.schema().type() == TableType::NON_TRANSACTIONAL) {
         return ChainedVersionRecord::ACTIVE_VERSION - 0x1u;

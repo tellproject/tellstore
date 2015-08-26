@@ -9,6 +9,9 @@
 #cmakedefine USE_ROW_STORE
 #cmakedefine USE_COLUMN_MAP
 
+#cmakedefine USE_LOG_SCAN
+#cmakedefine USE_HASH_SCAN
+
 namespace tell {
 namespace store {
 

@@ -19,6 +19,8 @@ class VersionRecordIterator {
 public:
     VersionRecordIterator(Table& table, uint64_t minVersion, uint64_t key);
 
+    VersionRecordIterator(Table& table, uint64_t minVersion, ChainedVersionRecord* head);
+
     ChainedVersionRecord& operator*() const {
         return *operator->();
     }

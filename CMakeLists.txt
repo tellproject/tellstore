@@ -3,6 +3,7 @@ project(TellStore)
 
 set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
 set(STORAGE_LAYOUT "ROW_STORE" CACHE STRING "The storage layout to use in the implementation")
+set(SCAN_PROCESSOR "LOG" CACHE STRING "The scan processor to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
@@ -49,6 +50,14 @@ elseif(STORAGE_LAYOUT STREQUAL "COLUMN_MAP")
     set(USE_COLUMN_MAP 1)
 else()
     message(FATAL_ERROR "Unknown storage layout")
+endif()
+
+if(SCAN_PROCESSOR STREQUAL "LOG")
+    set(USE_LOG_SCAN 1)
+elseif(SCAN_PROCESSOR STREQUAL "HASH")
+    set(USE_HASH_SCAN 1)
+else()
+    message(FATAL_ERROR "Unknown scan processor")
 endif()
 
 # Create configuration file

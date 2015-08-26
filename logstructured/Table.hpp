@@ -1,6 +1,14 @@
 #pragma once
 
+#include <config.h>
+
+#if defined USE_LOG_SCAN
 #include "GcScanProcessor.hpp"
+#elif defined USE_HASH_SCAN
+#include "HashScanProcessor.hpp"
+#else
+#error "Unknown scan processor"
+#endif
 
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
@@ -35,7 +43,13 @@ public:
 
     using LogImpl = Log<UnorderedLogImpl>;
 
+#if defined USE_LOG_SCAN
     using ScanProcessor = GcScanProcessor;
+#elif defined USE_HASH_SCAN
+    using ScanProcessor = HashScanProcessor;
+#else
+#error "Unknown scan processor"
+#endif
 
     using GarbageCollector = ScanProcessor::GarbageCollector;
 
@@ -120,10 +134,13 @@ public:
      * @return A scan processor for each thread
      */
     std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queries);
+            const std::vector<ScanQuery*>& queries) {
+        return ScanProcessor::startScan(*this, numThreads, queryBuffer, queries);
+    }
 
 private:
     friend class GcScanProcessor;
+    friend class HashScanProcessor;
     friend class LazyRecordWriter;
     friend class VersionRecordIterator;
 

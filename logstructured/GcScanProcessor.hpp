@@ -26,6 +26,9 @@ public:
 
     using GarbageCollector = GcScanGarbageCollector;
 
+    static std::vector<GcScanProcessor> startScan(Table& table, size_t numThreads, const char* queryBuffer,
+            const std::vector<ScanQuery*>& queries);
+
     GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
             const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
 

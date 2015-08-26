@@ -21,6 +21,40 @@ constexpr size_t gGcThreshold = 50;
 
 } // anonymous namespace
 
+std::vector<GcScanProcessor> GcScanProcessor::startScan(Table& table, size_t numThreads, const char* queryBuffer,
+        const std::vector<ScanQuery*>& queries) {
+    if (numThreads == 0) {
+        return {};
+    }
+
+    std::vector<GcScanProcessor> result;
+    result.reserve(numThreads);
+
+    auto version = table.minVersion();
+    auto& log = table.mLog;
+
+    auto numPages = log.pages();
+    auto begin = log.pageBegin();
+    auto end = log.pageEnd();
+
+    auto mod = numPages % numThreads;
+    auto iter = begin;
+    for (decltype(numThreads) i = 1; i < numThreads; ++i) {
+        auto step = numPages / numThreads + (i < mod ? 1 : 0);
+        // Increment the page iterator by step pages (but not beyond the end page)
+        for (decltype(step) j = 0; j < step && iter != end; ++j, ++iter) {
+        }
+
+        result.emplace_back(table, begin, iter, queryBuffer, queries, version);
+        begin = iter;
+    }
+
+    // The last scan takes the remaining pages
+    result.emplace_back(table, begin, end, queryBuffer, queries, version);
+
+    return result;
+}
+
 GcScanProcessor::GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
         const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion)
         : mTable(table),

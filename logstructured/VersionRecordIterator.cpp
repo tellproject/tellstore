@@ -17,6 +17,15 @@ VersionRecordIterator::VersionRecordIterator(Table& table, uint64_t minVersion, 
     LOG_ASSERT(isNewest(), "Start iterator not newest");
 }
 
+VersionRecordIterator::VersionRecordIterator(Table& table, uint64_t minVersion, ChainedVersionRecord* head)
+        : mTable(table),
+          mMinVersion(minVersion),
+          mPrev(nullptr),
+          mCurrent(head) {
+    setCurrentEntry();
+    LOG_ASSERT(isNewest(), "Start iterator not newest");
+}
+
 void VersionRecordIterator::next() {
     LOG_ASSERT(!done(), "Trying to iterate over the end");
 
