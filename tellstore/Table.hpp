@@ -48,6 +48,10 @@ public:
         return mIsNewest;
     }
 
+    size_t size() const {
+        return mSize;
+    }
+
 private:
     Tuple(uint64_t version, bool isNewest, uint32_t size)
             : mVersion(version),
