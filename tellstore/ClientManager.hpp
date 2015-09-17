@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tellstore/ClientConfig.hpp>
 #include <tellstore/ClientSocket.hpp>
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/ScanMemory.hpp>
@@ -10,6 +11,7 @@
 
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/infinio/Fiber.hpp>
+#include <crossbow/logger.hpp>
 #include <crossbow/non_copyable.hpp>
 #include <crossbow/string.hpp>
 
@@ -22,14 +24,16 @@
 #include <functional>
 #include <memory>
 #include <system_error>
+#include <thread>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 namespace tell {
 namespace store {
 
 struct ClientConfig;
-class ClientProcessor;
+class BaseClientProcessor;
 class Record;
 
 /**
@@ -37,7 +41,7 @@ class Record;
  */
 class ClientTransaction : crossbow::non_copyable {
 public:
-    ClientTransaction(ClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
             std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     ~ClientTransaction();
@@ -78,7 +82,7 @@ private:
 
     void checkTransaction(const Table& table);
 
-    ClientProcessor& mProcessor;
+    BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
 
     std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;
@@ -93,7 +97,7 @@ private:
  */
 class ClientHandle : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber& fiber);
+    ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber);
 
     crossbow::infinio::Fiber& fiber() {
         return mFiber;
@@ -120,26 +124,28 @@ public:
             const char* query);
 
 private:
-    ClientProcessor& mProcessor;
+    BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
 };
 
 /**
  * @brief Class managing all running TellStore fibers
  */
-class ClientProcessor : crossbow::non_copyable, crossbow::non_movable {
+class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientProcessor(crossbow::infinio::InfinibandService& service, const crossbow::infinio::Endpoint& commitManager,
-            const std::vector<crossbow::infinio::Endpoint>& tellStore, size_t maxPendingResponses,
-            uint64_t processorNum);
-
     void shutdown();
 
-    uint64_t transactionCount() const {
-        return mTransactionCount.load();
-    }
+protected:
+    BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+            uint64_t processorNum);
 
-    void execute(const std::function<void(ClientHandle&)>& fun);
+    ~BaseClientProcessor() = default;
+
+    template <typename Fun>
+    void executeFiber(Fun fun) {
+        // TODO Starting a fiber without the fiber cache takes ~500us - Investigate why
+        mProcessor->executeFiber(std::move(fun));
+    }
 
 private:
     friend class ClientHandle;
@@ -201,21 +207,80 @@ private:
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
     uint64_t mProcessorNum;
-    std::atomic<uint64_t> mTransactionCount;
 };
+
+/**
+ * @brief Class managing all running TellStore fibers and its associated context
+ */
+template <typename Context>
+class ClientProcessor : public BaseClientProcessor {
+public:
+    template <typename... Args>
+    ClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config, uint64_t processorNum,
+            Args&&... contextArgs)
+            : BaseClientProcessor(service, config, processorNum),
+              mTransactionCount(0),
+              mContext(std::forward<Args>(contextArgs)...) {
+    }
+
+    uint64_t transactionCount() const {
+        return mTransactionCount.load();
+    }
+
+    template <typename Fun>
+    void execute(Fun fun);
+
+private:
+    template <typename Fun, typename C = Context>
+    typename std::enable_if<std::is_void<C>::value, void>::type executeHandler(Fun& fun, ClientHandle& handle) {
+        fun(handle);
+    }
+
+    template <typename Fun, typename C = Context>
+    typename std::enable_if<!std::is_void<C>::value, void>::type executeHandler(Fun& fun, ClientHandle& handle) {
+        fun(handle, mContext);
+    }
+
+    std::atomic<uint64_t> mTransactionCount;
+
+    /// The user defined context associated with this processor
+    /// In case the context is void we simply allocate a 0-sized array
+    typename std::conditional<std::is_void<Context>::value, char[0], Context>::type mContext;
+};
+
+template <typename Context>
+template <typename Fun>
+void ClientProcessor<Context>::execute(Fun fun) {
+    ++mTransactionCount;
+
+    executeFiber([this, fun] (crossbow::infinio::Fiber& fiber) mutable {
+        ClientHandle handle(*this, fiber);
+        executeHandler(fun, handle);
+
+        --mTransactionCount;
+    });
+}
 
 /**
  * @brief Class managing all TellStore client processors
  *
  * Dispatches new client functions to the processor with the least amout of load.
  */
+template <typename Context>
 class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientManager(const ClientConfig& config);
+    template <typename... Args>
+    ClientManager(const ClientConfig& config, Args... contextArgs);
 
     void shutdown();
 
-    void execute(std::function<void(ClientHandle&)> fun);
+    template <typename Fun>
+    void execute(Fun fun);
+
+    template <typename Fun>
+    void execute(size_t num, Fun fun) {
+        mProcessor.at(num)->execute(std::move(fun));
+    }
 
     std::unique_ptr<ScanMemoryManager> allocateScanMemory(size_t chunkCount, size_t chunkLength) {
         return std::unique_ptr<ScanMemoryManager>(new ScanMemoryManager(mService, chunkCount, chunkLength));
@@ -226,8 +291,58 @@ private:
 
     std::thread mServiceThread;
 
-    std::vector<std::unique_ptr<ClientProcessor>> mProcessor;
+    std::vector<std::unique_ptr<ClientProcessor<Context>>> mProcessor;
 };
+
+template <typename Context>
+template <typename... Args>
+ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contextArgs)
+        : mService(config.infinibandConfig) {
+    LOG_INFO("Starting client manager");
+
+    // TODO Move the service thread into the Infiniband Service itself
+    mServiceThread = std::thread([this] () {
+        mService.run();
+    });
+
+    mProcessor.reserve(config.numNetworkThreads);
+    for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
+        mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
+    }
+}
+
+template <typename Context>
+void ClientManager<Context>::shutdown() {
+    LOG_INFO("Shutting down client manager");
+    for (auto& proc : mProcessor) {
+        proc->shutdown();
+    }
+
+    LOG_INFO("Waiting for transactions to terminate");
+    for (auto& proc : mProcessor) {
+        while (proc->transactionCount() != 0) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+template <typename Context>
+template <typename Fun>
+void ClientManager<Context>::execute(Fun fun) {
+    ClientProcessor<Context>* processor = nullptr;
+    uint64_t minCount = std::numeric_limits<uint64_t>::max();
+    for (auto& proc : mProcessor) {
+        auto count = proc->transactionCount();
+        if (minCount < count) {
+            continue;
+        }
+        processor = proc.get();
+        minCount = count;
+    }
+    LOG_ASSERT(processor != nullptr, "Found no processor");
+
+    processor->execute(std::move(fun));
+}
 
 } // namespace store
 } // namespace tell

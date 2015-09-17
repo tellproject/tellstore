@@ -1,9 +1,5 @@
 #include <tellstore/ClientManager.hpp>
 
-#include <tellstore/ClientConfig.hpp>
-
-#include <crossbow/logger.hpp>
-
 namespace tell {
 namespace store {
 namespace {
@@ -23,7 +19,7 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint
 
 } // anonymous namespace
 
-ClientTransaction::ClientTransaction(ClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
         std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mProcessor(processor),
           mFiber(fiber),
@@ -131,7 +127,7 @@ void ClientTransaction::checkTransaction(const Table& table) {
     }
 }
 
-ClientHandle::ClientHandle(ClientProcessor& processor, crossbow::infinio::Fiber& fiber)
+ClientHandle::ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber)
         : mProcessor(processor),
           mFiber(fiber) {
 }
@@ -188,23 +184,21 @@ std::vector<std::shared_ptr<ScanResponse>> ClientHandle::scan(const Table& table
             selection, queryLength, query, *snapshot);
 }
 
-ClientProcessor::ClientProcessor(crossbow::infinio::InfinibandService& service,
-        const crossbow::infinio::Endpoint& commitManager, const std::vector<crossbow::infinio::Endpoint>& tellStore,
-        size_t maxPendingResponses, uint64_t processorNum)
+BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
+        uint64_t processorNum)
         : mProcessor(service.createProcessor()),
-          mCommitManagerSocket(service.createSocket(*mProcessor), maxPendingResponses),
-          mProcessorNum(processorNum),
-          mTransactionCount(0x0u) {
-    mCommitManagerSocket.connect(commitManager);
+          mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses),
+          mProcessorNum(processorNum) {
+    mCommitManagerSocket.connect(config.commitManager);
 
-    mTellStoreSocket.reserve(tellStore.size());
-    for (auto& ep : tellStore) {
-        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), maxPendingResponses));
+    mTellStoreSocket.reserve(config.tellStore.size());
+    for (auto& ep : config.tellStore) {
+        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses));
         mTellStoreSocket.back()->connect(ep, mProcessorNum);
     }
 }
 
-void ClientProcessor::shutdown() {
+void BaseClientProcessor::shutdown() {
     if (mProcessor->threadId() == std::this_thread::get_id()) {
         throw std::runtime_error("Unable to shutdown from within the processing thread");
     }
@@ -215,22 +209,7 @@ void ClientProcessor::shutdown() {
     }
 }
 
-void ClientProcessor::execute(const std::function<void(ClientHandle&)>& fun) {
-    ++mTransactionCount;
-
-    // TODO Starting a fiber without the fiber cache takes ~500us - Investigate why
-    mProcessor->executeFiber([this, fun] (crossbow::infinio::Fiber& fiber) {
-        LOG_TRACE("Proc %1%] Execute client function", mProcessorNum);
-
-        ClientHandle client(*this, fiber);
-        fun(client);
-
-        LOG_TRACE("Proc %1%] Exiting client function", mProcessorNum);
-        --mTransactionCount;
-    });
-}
-
-ClientTransaction ClientProcessor::start(crossbow::infinio::Fiber& fiber) {
+ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber) {
     // TODO Return a transaction future?
 
     auto startResponse = mCommitManagerSocket.startTransaction(fiber);
@@ -241,7 +220,7 @@ ClientTransaction ClientProcessor::start(crossbow::infinio::Fiber& fiber) {
     return {*this, fiber, startResponse->get()};
 }
 
-Table ClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
+Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
     // TODO Return a combined createTable future?
     std::vector<std::shared_ptr<CreateTableResponse>> requests;
     requests.reserve(mTellStoreSocket.size());
@@ -257,7 +236,7 @@ Table ClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossb
     return Table(tableId, std::move(schema));
 }
 
-std::vector<std::shared_ptr<ScanResponse>> ClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+std::vector<std::shared_ptr<ScanResponse>> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
         const Record& record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
         const char* selection, uint32_t queryLength, const char* query,
         const commitmanager::SnapshotDescriptor& snapshot) {
@@ -270,7 +249,7 @@ std::vector<std::shared_ptr<ScanResponse>> ClientProcessor::scan(crossbow::infin
     return result;
 }
 
-void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
+void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Return a commit future?
 
     auto commitResponse = mCommitManagerSocket.commitTransaction(fiber, snapshot.version());
@@ -280,52 +259,6 @@ void ClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanage
     if (!commitResponse->get()) {
         throw std::runtime_error("Commit transaction did not succeed");
     }
-}
-
-ClientManager::ClientManager(const ClientConfig& config)
-        : mService(config.infinibandConfig) {
-    LOG_INFO("Starting client manager");
-
-    // TODO Move the service thread into the Infiniband Service itself
-    mServiceThread = std::thread([this] () {
-        mService.run();
-    });
-
-    mProcessor.reserve(config.numNetworkThreads);
-    for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessor.emplace_back(new ClientProcessor(mService, config.commitManager, config.tellStore,
-                config.maxPendingResponses, i));
-    }
-}
-
-void ClientManager::shutdown() {
-    LOG_INFO("Shutting down client manager");
-    for (auto& proc : mProcessor) {
-        proc->shutdown();
-    }
-
-    LOG_INFO("Waiting for transactions to terminate");
-    for (auto& proc : mProcessor) {
-        while (proc->transactionCount() != 0) {
-            std::this_thread::yield();
-        }
-    }
-}
-
-void ClientManager::execute(std::function<void(ClientHandle&)> fun) {
-    ClientProcessor* processor = nullptr;
-    uint64_t minCount = std::numeric_limits<uint64_t>::max();
-    for (auto& proc : mProcessor) {
-        auto count = proc->transactionCount();
-        if (minCount < count) {
-            continue;
-        }
-        processor = proc.get();
-        minCount = count;
-    }
-    LOG_ASSERT(processor != nullptr, "Found no processor");
-
-    processor->execute(fun);
 }
 
 } // namespace store

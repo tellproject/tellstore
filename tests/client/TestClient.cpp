@@ -77,7 +77,7 @@ private:
 
     void executeAggregation(ClientHandle& client, float selectivity);
 
-    ClientManager mManager;
+    ClientManager<void> mManager;
 
     std::unique_ptr<ScanMemoryManager> mScanMemory;
 
@@ -111,40 +111,29 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
 void TestClient::run() {
     auto startTime = std::chrono::steady_clock::now();
     LOG_INFO("Starting test workload");
-    TransactionRunner runner;
+    TransactionRunner<void> runner(mManager);
 
     LOG_INFO("Start create table transaction");
-    mManager.execute(runner.wrap(std::bind(&TestClient::addTable, this, std::placeholders::_1)));
-    runner.wait();
+    runner.executeBlocking(std::bind(&TestClient::addTable, this, std::placeholders::_1));
 
     LOG_INFO("Starting %1% test load transaction(s)", mNumTransactions);
     for (decltype(mNumTransactions) i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
         auto endRange = startRange + mNumTuple;
-        mManager.execute(runner.wrap(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1,
-                startRange, endRange)));
+        runner.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange));
     }
     runner.wait();
 
     LOG_INFO("Starting test scan transaction(s)");
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5)));
-    runner.wait();
-    mManager.execute(runner.wrap(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25)));
-    runner.wait();
+    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0));
+    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5));
+    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25));
+    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0));
+    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5));
+    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25));
+    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0));
+    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5));
+    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25));
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
