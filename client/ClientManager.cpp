@@ -29,12 +29,14 @@ ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::i
 }
 
 ClientTransaction::~ClientTransaction() {
-    if (!mCommitted) {
-        try {
-            abort();
-        } catch (std::exception& e) {
-            LOG_ERROR("Exception caught while aborting transaction [error = %1%]", e.what());
-        }
+    if (mCommitted) {
+        return;
+    }
+
+    try {
+        abort();
+    } catch (std::exception& e) {
+        LOG_ERROR("T%1%] Exception caught while aborting transaction [error = %2%]", mSnapshot->version(), e.what());
     }
 }
 
