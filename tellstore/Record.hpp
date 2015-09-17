@@ -128,14 +128,26 @@ public:
         }
     }
 
-    off_t offsetInQuery() const {
-        if (isFixedSized()) {
-            auto sz = staticSize();
-            if (sz <= 2) return 2;
-            if (sz <= 4) return 4;
-            else return 8;
+    size_t sizeOfPredicate(const char* data) const {
+        switch (mType) {
+        case FieldType::NULLTYPE:
+        case FieldType::SMALLINT:
+        case FieldType::INT:
+        case FieldType::FLOAT:
+            return 8;
+        case FieldType::BIGINT:
+        case FieldType::DOUBLE:
+            return 16;
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return crossbow::align(8 + *reinterpret_cast<const uint32_t*>(data + 4), 8);
+        case FieldType::NOTYPE:
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            LOG_ASSERT(false, "Unknown type");
+            return std::numeric_limits<size_t>::max();
         }
-        return 8;
     }
 
     size_t staticSize() const
@@ -242,9 +254,9 @@ public:
             query += 4;
             bool isPositiveLike = true;
             auto szLeft = *reinterpret_cast<const uint32_t*>(left);
-            auto rightValue = query + 4;
-            auto szRight = *reinterpret_cast<const uint32_t*>(query);
             auto leftValue = left + 4;
+            auto szRight = *reinterpret_cast<const uint32_t*>(query);
+            auto rightValue = query + 4;
             query = crossbow::align(rightValue + szRight, 8);
             switch (type) {
             case PredicateType::EQUAL:

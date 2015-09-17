@@ -395,11 +395,8 @@ off_t ScanQueryBatchProcessor::offsetToNextPredicate(const char* current, const 
     case PredicateType::IS_NOT_NULL:
     case PredicateType::IS_NULL:
         return 8;
-    default: {
-        auto res = f.offsetInQuery();
-        res += f.sizeOf(current + res);
-        return crossbow::align(res, 8);
-    }
+    default:
+        return f.sizeOfPredicate(current);
     }
 }
 

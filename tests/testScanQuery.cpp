@@ -155,7 +155,7 @@ TEST_F(ScanQueryTest, orPredicate) {
     Record::id_t textField;
     ASSERT_TRUE(record.idOf("text", textField)) << "Field not found";
 
-    size_t qsize = 44 + gTuple2Text.length();
+    size_t qsize = 40 + gTuple2Text.length();
     qsize += ((qsize % 8 != 0) ? (8 - (qsize % 8)) : 0);
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
@@ -169,8 +169,8 @@ TEST_F(ScanQueryTest, orPredicate) {
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 26) = 0x1u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x0u;
-    *reinterpret_cast<uint32_t*>(qbuffer.get() + 40) = gTuple2Text.length();
-    memcpy(qbuffer.get() + 44, gTuple2Text.data(), gTuple2Text.length());
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 36) = gTuple2Text.length();
+    memcpy(qbuffer.get() + 40, gTuple2Text.data(), gTuple2Text.length());
 
     EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
     EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
