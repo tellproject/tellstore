@@ -95,7 +95,7 @@ bool OpenAddressingTable::insert(uint64_t table, uint64_t key, void* data, void*
         return true;
     }
 
-    LOG_ASSERT(false, "Hash table is full");
+    LOG_ERROR("Hash table is full");
     return false;
 }
 
@@ -319,6 +319,7 @@ T OpenAddressingTable::execOnElement(uint64_t table, uint64_t key, T notFound, F
         return fun(entry, reinterpret_cast<const void*>(ptr));
     }
 
+    LOG_ERROR("Hash table is full");
     return notFound;
 }
 
