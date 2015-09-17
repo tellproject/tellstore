@@ -443,6 +443,10 @@ public:
         return mVarSizeFields;
     }
 
+    const std::vector<std::vector<id_t>>& indexes() const {
+        return mIndexes;
+    }
+
 public: // Serialization
     static Schema deserialize(crossbow::buffer_reader& reader);
     size_t serializedLength() const;
