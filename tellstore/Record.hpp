@@ -201,54 +201,67 @@ public:
         return false;
     }
 
-    bool cmp(PredicateType type, const char* left, const char* right) const
+    bool queryCmp(PredicateType type, const char* left, const char*& query) const
     {
         int cmpRes;
-        uint32_t szLeft, szRight;
         bool isText = false;
-        bool isPositiveLike = true;
         switch (mType) {
         case FieldType::SMALLINT:
+            query += 2;
             cmpRes = tell::store::cmp(*reinterpret_cast<const int16_t*>(left),
-                    *reinterpret_cast<const int16_t*>(right));
+                    *reinterpret_cast<const int16_t*>(query));
+            query += 6;
             goto NUMBER_COMPARE;
         case FieldType::INT:
+            query += 4;
             cmpRes = tell::store::cmp(*reinterpret_cast<const int32_t*>(left),
-                    *reinterpret_cast<const int32_t*>(right));
+                    *reinterpret_cast<const int32_t*>(query));
+            query += 4;
             goto NUMBER_COMPARE;
         case FieldType::BIGINT:
+            query += 8;
             cmpRes = tell::store::cmp(*reinterpret_cast<const int64_t*>(left),
-                    *reinterpret_cast<const int64_t*>(right));
+                    *reinterpret_cast<const int64_t*>(query));
+            query += 8;
             goto NUMBER_COMPARE;
         case FieldType::FLOAT:
+            query += 4;
             cmpRes = tell::store::cmp(*reinterpret_cast<const float*>(left),
-                    *reinterpret_cast<const float*>(right));
+                    *reinterpret_cast<const float*>(query));
+            query += 4;
             goto NUMBER_COMPARE;
         case FieldType::DOUBLE:
+            query += 8;
             cmpRes = tell::store::cmp(*reinterpret_cast<const double*>(left),
-                    *reinterpret_cast<const double*>(right));
+                    *reinterpret_cast<const double*>(query));
+            query += 8;
             goto NUMBER_COMPARE;
         case FieldType::TEXT:
             isText = true;
-        case FieldType::BLOB:
-            szLeft = *reinterpret_cast<const uint32_t*>(left);
-            szRight = *reinterpret_cast<const uint32_t*>(right);
+        case FieldType::BLOB: {
+            query += 4;
+            bool isPositiveLike = true;
+            auto szLeft = *reinterpret_cast<const uint32_t*>(left);
+            auto rightValue = query + 4;
+            auto szRight = *reinterpret_cast<const uint32_t*>(query);
+            auto leftValue = left + 4;
+            query = crossbow::align(rightValue + szRight, 8);
             switch (type) {
             case PredicateType::EQUAL:
-                return szLeft == szRight && memcmp(left + 4, right + 4, std::min(szLeft, szRight)) == 0;
+                return szLeft == szRight && memcmp(leftValue, rightValue, szLeft) == 0;
             case PredicateType::NOT_EQUAL:
-                return szLeft != szRight || memcmp(left + 4, right + 4, std::min(szLeft, szRight)) != 0;
+                return szLeft != szRight || memcmp(leftValue, rightValue, std::min(szLeft, szRight)) != 0;
             case PredicateType::LESS:
-                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                cmpRes = memcmp(leftValue, rightValue, std::min(szLeft, szRight));
                 return cmpRes < 0 || (cmpRes == 0 && szLeft < szRight);
             case PredicateType::LESS_EQUAL:
-                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                cmpRes = memcmp(leftValue, rightValue, std::min(szLeft, szRight));
                 return cmpRes < 0 || (cmpRes == 0 && szLeft <= szRight);
             case PredicateType::GREATER:
-                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                cmpRes = memcmp(leftValue, rightValue, std::min(szLeft, szRight));
                 return cmpRes > 0 || (cmpRes == 0 && szLeft > szRight);
             case PredicateType::GREATER_EQUAL:
-                cmpRes = memcmp(left + 4, right + 4, std::min(szLeft, szRight));
+                cmpRes = memcmp(leftValue, rightValue, std::min(szLeft, szRight));
                 return cmpRes > 0 || (cmpRes == 0 && szLeft >= szRight);
             case PredicateType::NOT_LIKE:
                 isPositiveLike = false;
@@ -257,11 +270,12 @@ public:
                     LOG_ERROR("Can not do LIKE on Blob");
                     std::terminate();
                 }
-                return strLike(szLeft, left + 4, szRight, right + 4) == isPositiveLike;
+                return strLike(szLeft, leftValue, szRight, rightValue) == isPositiveLike;
             default:
                 LOG_ERROR("Can not do this kind of comparison on numeric types");
                 std::terminate();
             }
+        }
         default:
             LOG_ERROR("Unknown type");
             std::terminate();

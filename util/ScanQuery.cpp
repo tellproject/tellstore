@@ -360,12 +360,9 @@ bool ScanQueryBatchProcessor::check(const char*& query, const char* data, const 
                 current += offsetToNextPredicate(current, f);
                 break;
             default:
-                current += f.offsetInQuery();
-                if (f.cmp(type, field, current)) {
+                if (f.queryCmp(type, field, current)) {
                     bitmap.set(bitmapPos);
                 }
-                current += f.sizeOf(current);
-                current = crossbow::align(current, 8);
             }
         }
     }
