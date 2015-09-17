@@ -182,7 +182,13 @@ bool VersionRecordIterator::insertHead(ChainedVersionRecord* element) {
     void* actualData = nullptr;
     auto res = (mCurrent ? mTable.mHashMap.update(mTable.mTableId, element->key(), mCurrent, element, &actualData)
                          : mTable.mHashMap.insert(mTable.mTableId, element->key(), element, &actualData));
-    mCurrent = (res ? element : reinterpret_cast<ChainedVersionRecord*>(actualData));
+    if (res) {
+        mCurrent = element;
+    } else if (actualData) {
+        mCurrent = reinterpret_cast<ChainedVersionRecord*>(actualData);
+    } else {
+        mCurrent = retrieveHead(element->key());
+    }
     return res;
 }
 
