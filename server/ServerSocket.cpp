@@ -14,8 +14,11 @@ namespace store {
 
 void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
         crossbow::buffer_reader& request) {
+#ifdef NDEBUG
+#else
     LOG_TRACE("MID %1%] Handling request of type %2%", messageId.userId(), messageType);
     auto startTime = std::chrono::steady_clock::now();
+#endif
 
     switch (messageType) {
 
@@ -60,9 +63,12 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
     } break;
     }
 
+#ifdef NDEBUG
+#else
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_TRACE("MID %1%] Handling request took %2%ns", messageId.userId(), duration.count());
+#endif
 }
 
 void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
