@@ -41,7 +41,7 @@ class Record;
  */
 class ClientTransaction : crossbow::non_copyable {
 public:
-    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, bool readOnly,
             std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     ~ClientTransaction();
@@ -80,7 +80,7 @@ private:
 
     void rollbackModified();
 
-    void checkTransaction(const Table& table);
+    void checkTransaction(const Table& table, bool readOnly);
 
     BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
@@ -89,6 +89,7 @@ private:
 
     google::dense_hash_set<std::tuple<uint64_t, uint64_t>, ModifiedHasher> mModified;
 
+    bool mReadOnly;
     bool mCommitted;
 };
 
@@ -103,7 +104,7 @@ public:
         return mFiber;
     }
 
-    ClientTransaction startTransaction();
+    ClientTransaction startTransaction(bool readOnly = false);
 
     Table createTable(const crossbow::string& name, Schema schema);
 
@@ -160,7 +161,7 @@ private:
         return mTellStoreSocket.at(hash % mTellStoreSocket.size()).get();
     }
 
-    ClientTransaction start(crossbow::infinio::Fiber& fiber);
+    ClientTransaction start(crossbow::infinio::Fiber& fiber, bool readOnly);
 
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 

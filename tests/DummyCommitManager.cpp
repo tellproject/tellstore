@@ -5,9 +5,9 @@
 namespace tell {
 namespace store {
 
-Transaction DummyCommitManager::startTx() {
+Transaction DummyCommitManager::startTx(bool readonly /* = false */) {
     Lock _(mMutex);
-    if (!mManager.startTransaction()) {
+    if (!mManager.startTransaction(readonly)) {
         throw std::logic_error("Error starting transaction");
     }
     return {*this, mManager.createSnapshot()};

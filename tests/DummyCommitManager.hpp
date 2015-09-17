@@ -14,7 +14,7 @@ class Transaction;
 
 class DummyCommitManager {
 public:
-    Transaction startTx();
+    Transaction startTx(bool readonly = false);
 
 private:
     friend class Transaction;

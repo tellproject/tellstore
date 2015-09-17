@@ -19,11 +19,12 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint
 
 } // anonymous namespace
 
-ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, bool readOnly,
         std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mProcessor(processor),
           mFiber(fiber),
           mSnapshot(std::move(snapshot)),
+          mReadOnly(readOnly),
           mCommitted(false) {
     mModified.set_empty_key(std::make_tuple(0x0u, 0x0u));
 }
@@ -45,19 +46,20 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
           mFiber(other.mFiber),
           mSnapshot(std::move(other.mSnapshot)),
           mModified(std::move(other.mModified)),
+          mReadOnly(other.mReadOnly),
           mCommitted(other.mCommitted) {
     other.mCommitted = true;
 }
 
 std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t key) {
-    checkTransaction(table);
+    checkTransaction(table, true);
 
     return mProcessor.get(mFiber, table.tableId(), key, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
         const GenericTuple& tuple, bool hasSucceeded /* = true */) {
-    checkTransaction(table);
+    checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
@@ -65,14 +67,14 @@ std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& tab
 
 std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
         const GenericTuple& tuple) {
-    checkTransaction(table);
+    checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& table, uint64_t key) {
-    checkTransaction(table);
+    checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
@@ -81,7 +83,7 @@ std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& tab
 std::vector<std::shared_ptr<ScanResponse>> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
         ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
         const char* query) {
-    checkTransaction(table);
+    checkTransaction(table, true);
 
     return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
             selection, queryLength, query, *mSnapshot);
@@ -95,6 +97,7 @@ void ClientTransaction::commit() {
 
 void ClientTransaction::abort() {
     if (!mModified.empty()) {
+        LOG_ASSERT(!mReadOnly, "Modified elements even though transaction is read-only");
         rollbackModified();
     }
     commit();
@@ -121,11 +124,14 @@ void ClientTransaction::rollbackModified() {
     }
 }
 
-void ClientTransaction::checkTransaction(const Table& table) {
+void ClientTransaction::checkTransaction(const Table& table, bool readOnly) {
     checkTableType(table, TableType::TRANSACTIONAL);
 
     if (mCommitted) {
         throw std::logic_error("Transaction has already committed");
+    }
+    if (mReadOnly && !readOnly) {
+        throw std::logic_error("Transaction is read only");
     }
 }
 
@@ -134,8 +140,8 @@ ClientHandle::ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fi
           mFiber(fiber) {
 }
 
-ClientTransaction ClientHandle::startTransaction() {
-    return mProcessor.start(mFiber);
+ClientTransaction ClientHandle::startTransaction(bool readOnly) {
+    return mProcessor.start(mFiber, readOnly);
 }
 
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
@@ -211,15 +217,15 @@ void BaseClientProcessor::shutdown() {
     }
 }
 
-ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber) {
+ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, bool readOnly) {
     // TODO Return a transaction future?
 
-    auto startResponse = mCommitManagerSocket.startTransaction(fiber);
+    auto startResponse = mCommitManagerSocket.startTransaction(fiber, readOnly);
     if (!startResponse->waitForResult()) {
         throw std::system_error(startResponse->error());
     }
 
-    return {*this, fiber, startResponse->get()};
+    return {*this, fiber, readOnly, startResponse->get()};
 }
 
 Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {

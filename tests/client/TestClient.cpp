@@ -250,7 +250,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 void TestClient::executeScan(ClientHandle& client, float selectivity) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto transaction = client.startTransaction();
+    auto transaction = client.startTransaction(true);
     LOG_INFO("TID %1%] Starting full scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -334,7 +334,7 @@ void TestClient::executeScan(ClientHandle& client, float selectivity) {
 void TestClient::executeProjection(ClientHandle& client, float selectivity) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto transaction = client.startTransaction();
+    auto transaction = client.startTransaction(true);
     LOG_INFO("TID %1%] Starting projection scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
@@ -428,7 +428,7 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity) {
 void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
-    auto transaction = client.startTransaction();
+    auto transaction = client.startTransaction(true);
     LOG_INFO("TID %1%] Starting aggregation scan with selectivity %2%%%", transaction.version(),
             static_cast<int>(selectivity * 100));
 
