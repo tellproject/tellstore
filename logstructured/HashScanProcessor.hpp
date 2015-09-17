@@ -51,14 +51,10 @@ private:
  */
 class HashScanGarbageCollector {
 public:
-    HashScanGarbageCollector(StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& storage)
-            : mStorage(storage) {
-    }
+    HashScanGarbageCollector(StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>&)
+    {}
 
     void run(const std::vector<Table*>& tables, uint64_t minVersion);
-
-private:
-    StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& mStorage;
 };
 
 } // namespace logstructured
