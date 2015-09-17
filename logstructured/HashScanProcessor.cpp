@@ -91,7 +91,7 @@ void HashScanProcessor::process() {
 
             // Check if the iterator reached the element with minimum version. The remaining older elements have to be
             // superseeded by newer elements in any currently valid Snapshot Descriptor.
-            if (lastVersion < mMinVersion) {
+            if (lastVersion <= mMinVersion) {
                 break;
             }
         }
