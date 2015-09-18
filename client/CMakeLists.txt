@@ -6,7 +6,6 @@ set(CLIENT_SRCS
     ClientSocket.cpp
     ScanMemory.cpp
     Table.cpp
-    TransactionRunner.cpp
 )
 
 set(CLIENT_PUBLIC_HDR

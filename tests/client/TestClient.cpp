@@ -109,14 +109,14 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
 }
 
 void TestClient::run() {
-    auto startTime = std::chrono::steady_clock::now();
     LOG_INFO("Starting test workload");
-    TransactionRunner<void> runner(mManager);
+    auto startTime = std::chrono::steady_clock::now();
 
     LOG_INFO("Start create table transaction");
-    runner.executeBlocking(std::bind(&TestClient::addTable, this, std::placeholders::_1));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::addTable, this, std::placeholders::_1));
 
     LOG_INFO("Starting %1% test load transaction(s)", mNumTransactions);
+    MultiTransactionRunner<void> runner(mManager);
     for (decltype(mNumTransactions) i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
         auto endRange = startRange + mNumTuple;
@@ -125,15 +125,15 @@ void TestClient::run() {
     runner.wait();
 
     LOG_INFO("Starting test scan transaction(s)");
-    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0));
-    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5));
-    runner.executeBlocking(std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25));
-    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0));
-    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5));
-    runner.executeBlocking(std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25));
-    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0));
-    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5));
-    runner.executeBlocking(std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25));
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);

@@ -2,6 +2,7 @@
 
 #include <tellstore/ClientManager.hpp>
 
+#include <crossbow/infinio/Fiber.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <atomic>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <stdexcept>
 
 namespace tell {
 namespace store {
@@ -25,9 +27,10 @@ public:
     }
 
     template <typename... Args>
-    void operator()(Args&&... args) {
+    void operator()(ClientHandle& handle, Args&&... args) {
+        mRunner.startTransaction(handle);
         try {
-            mFun(std::forward<Args>(args)...);
+            mFun(handle, std::forward<Args>(args)...);
         } catch (...) {
             mRunner.handleException(std::current_exception());
         }
@@ -39,41 +42,151 @@ private:
     Fun mFun;
 };
 
-class SingleTransactionRunner {
+/**
+ * @brief Helper class to run and wait for one single transaction from outside the processing thread
+ */
+template<typename Context>
+class SingleTransactionRunner : crossbow::non_copyable, crossbow::non_movable {
 public:
-    SingleTransactionRunner()
-            : mDone(false) {
+    SingleTransactionRunner(ClientManager<Context>& client)
+            : mClient(client),
+              mState(TransactionState::DONE),
+              mFiber(nullptr) {
     }
 
-    void wait();
+    /**
+     * @brief Execute the transaction in the runner
+     *
+     * No other transaction must be active at the same time.
+     */
+    template <typename Fun>
+    void execute(Fun fun);
+
+    /**
+     * @brief Execute the transaction in the runner on the specific processing thread
+     *
+     * No other transaction must be active at the same time.
+     */
+    template <typename Fun>
+    void execute(size_t num, Fun fun);
+
+    /**
+     * @brief Wait until the transaction completes or blocks
+     *
+     * Must only be called from outside the transaction thread.
+     *
+     * @return True if the transaction completed, false if it blocked
+     */
+    bool wait();
+
+    /**
+     * @brief Blocks the transaction (and notifies the issuing thread)
+     *
+     * Must only be called from inside the transaction.
+     */
+    void block() {
+        mState.store(TransactionState::BLOCKED);
+        mFiber->wait();
+    }
+
+    /**
+     * @brief Unblocks the blocked transaction
+     *
+     * Must only be called from outside the transaction.
+     *
+     * @return Whether the transaction was unblocked
+     */
+    bool unblock();
 
 private:
+    enum class TransactionState {
+        RUNNING,
+        BLOCKED,
+        DONE
+    };
+
     template<typename Runner, typename Fun>
     friend class TransactionWrapper;
+
+    void startTransaction(ClientHandle& handle) {
+        mFiber = &handle.fiber();
+    }
 
     void handleException(std::exception_ptr exception) {
         mException = std::move(exception);
     }
 
     void completeTransaction() {
-        mDone.store(true);
+        mFiber = nullptr;
+        mState.store(TransactionState::DONE);
         mWaitCondition.notify_all();
     }
 
-    std::atomic<bool> mDone;
+    ClientManager<Context>& mClient;
+
+    std::atomic<TransactionState> mState;
+
+    crossbow::infinio::Fiber* mFiber;
 
     std::exception_ptr mException;
 
     std::condition_variable mWaitCondition;
 };
 
+template <typename Context>
+template <typename Fun>
+void SingleTransactionRunner<Context>::execute(Fun fun) {
+    auto expected = TransactionState::DONE;
+    if (!mState.compare_exchange_strong(expected, TransactionState::RUNNING)) {
+        throw std::runtime_error("Another transaction is already running");
+    }
+
+    mClient.execute(TransactionWrapper<SingleTransactionRunner<Context>, Fun>(*this, std::move(fun)));
+}
+
+template <typename Context>
+template <typename Fun>
+void SingleTransactionRunner<Context>::execute(size_t num, Fun fun) {
+    auto expected = TransactionState::DONE;
+    if (!mState.compare_exchange_strong(expected, TransactionState::RUNNING)) {
+        throw std::runtime_error("Another transaction is already running");
+    }
+
+    mClient.execute(num, TransactionWrapper<SingleTransactionRunner<Context>, Fun>(*this, std::move(fun)));
+}
+
+template <typename Context>
+bool SingleTransactionRunner<Context>::wait() {
+    std::mutex waitMutex;
+    std::unique_lock<decltype(waitMutex)> waitLock(waitMutex);
+    mWaitCondition.wait(waitLock, [this] () {
+        return (mState != TransactionState::RUNNING);
+    });
+    waitLock.unlock();
+
+    if (mException) {
+        std::rethrow_exception(mException);
+    }
+    return (mState == TransactionState::DONE);
+}
+
+template <typename Context>
+bool SingleTransactionRunner<Context>::unblock() {
+    auto expected = TransactionState::BLOCKED;
+    if (!mState.compare_exchange_strong(expected, TransactionState::RUNNING)) {
+        return false;
+    }
+    mFiber->unblock();
+    return true;
+}
+
 /**
  * @brief Helper class to run and wait for transactions from outside processing threads
  */
 template<typename Context>
-class TransactionRunner : crossbow::non_copyable, crossbow::non_movable {
+class MultiTransactionRunner : crossbow::non_copyable, crossbow::non_movable {
 public:
-    TransactionRunner(ClientManager<Context>& client)
+    MultiTransactionRunner(ClientManager<Context>& client)
             : mClient(client),
               mActive(0u) {
     }
@@ -92,17 +205,14 @@ public:
     template<typename Fun>
     void execute(size_t num, Fun fun);
 
-    template<typename Fun>
-    void executeBlocking(Fun fun);
-
-    template<typename Fun>
-    void executeBlocking(size_t num, Fun fun);
-
     void wait();
 
 private:
     template<typename Runner, typename Fun>
     friend class TransactionWrapper;
+
+    void startTransaction(ClientHandle& /* handle */) {
+    }
 
     void handleException(std::exception_ptr exception) {
         std::unique_lock<decltype(mExceptionMutex)> exceptionLock(mExceptionMutex);
@@ -127,36 +237,20 @@ private:
 
 template <typename Context>
 template <typename Fun>
-void TransactionRunner<Context>::execute(Fun fun) {
+void MultiTransactionRunner<Context>::execute(Fun fun) {
     ++mActive;
-    mClient.execute(TransactionWrapper<TransactionRunner<Context>, Fun>(*this, std::move(fun)));
+    mClient.execute(TransactionWrapper<MultiTransactionRunner<Context>, Fun>(*this, std::move(fun)));
 }
 
 template <typename Context>
 template <typename Fun>
-void TransactionRunner<Context>::execute(size_t num, Fun fun) {
+void MultiTransactionRunner<Context>::execute(size_t num, Fun fun) {
     ++mActive;
-    mClient.execute(num, TransactionWrapper<TransactionRunner<Context>, Fun>(*this, std::move(fun)));
+    mClient.execute(num, TransactionWrapper<MultiTransactionRunner<Context>, Fun>(*this, std::move(fun)));
 }
 
 template <typename Context>
-template <typename Fun>
-void TransactionRunner<Context>::executeBlocking(Fun fun) {
-    SingleTransactionRunner runner;
-    mClient.execute(TransactionWrapper<SingleTransactionRunner, Fun>(runner, std::move(fun)));
-    runner.wait();
-}
-
-template <typename Context>
-template <typename Fun>
-void TransactionRunner<Context>::executeBlocking(size_t num, Fun fun) {
-    SingleTransactionRunner runner;
-    mClient.execute(num, TransactionWrapper<SingleTransactionRunner, Fun>(runner, std::move(fun)));
-    runner.wait();
-}
-
-template <typename Context>
-void TransactionRunner<Context>::wait() {
+void MultiTransactionRunner<Context>::wait() {
     std::mutex waitMutex;
     std::unique_lock<decltype(waitMutex)> waitLock(waitMutex);
     mWaitCondition.wait(waitLock, [this] () {
@@ -172,5 +266,32 @@ void TransactionRunner<Context>::wait() {
     }
 }
 
+namespace TransactionRunner {
+
+/**
+ * @brief Execute the transaction and block until it completes
+ */
+template <typename Context, typename Fun>
+void executeBlocking(ClientManager<Context>& client, Fun fun) {
+    SingleTransactionRunner<Context> runner(client);
+    runner.execute(std::move(fun));
+    while (!runner.wait()) {
+        runner.unblock();
+    }
+}
+
+/**
+ * @brief Execute the transaction and block until it completes on the specific processing thread
+ */
+template <typename Context, typename Fun>
+void executeBlocking(ClientManager<Context>& client, size_t num, Fun fun) {
+    SingleTransactionRunner<Context> runner(client);
+    runner.execute(num, std::move(fun));
+    while (!runner.wait()) {
+        runner.unblock();
+    }
+}
+
+} // namespace TransactionRunner
 } // namespace store
 } // namespace tell
