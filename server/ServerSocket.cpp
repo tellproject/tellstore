@@ -235,7 +235,7 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
     auto selectionLength = request.read<uint32_t>();
     auto selectionData = request.read(selectionLength);
-    std::unique_ptr<char[]> selection(new char[selectionLength]);
+    std::unique_ptr<char[]> selection(new char[selectionLength + sizeof(uint64_t)]);
     memcpy(selection.get(), selectionData, selectionLength);
 
     auto queryType = crossbow::from_underlying<ScanQueryType>(request.read<uint8_t>());
@@ -250,8 +250,16 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
     handleSnapshot(messageId, request,
             [this, messageId, tableId, scanId, &remoteRegion, selectionLength, &selection, queryType, queryLength,
              &query] (const commitmanager::SnapshotDescriptor& snapshot) {
-        auto scanSnapshot = commitmanager::SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
-                snapshot.baseVersion(), snapshot.version(), snapshot.data());
+        // Set maximum version field in selection query
+        *reinterpret_cast<uint64_t*>(selection.get() + selectionLength) = snapshot.version();
+
+        // Copy snapshot descriptor if the snapshot is not completely described by the maximum version (i.e. version
+        // bitmap is not empty)
+        std::unique_ptr<commitmanager::SnapshotDescriptor> scanSnapshot;
+        if (snapshot.baseVersion() != snapshot.version()) {
+            scanSnapshot = commitmanager::SnapshotDescriptor::create(snapshot.lowestActiveVersion(),
+                    snapshot.baseVersion(), snapshot.version(), snapshot.data());
+        }
 
         auto table = mStorage.getTable(tableId);
 

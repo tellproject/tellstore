@@ -108,7 +108,8 @@ ScanQueryProcessor& ScanQueryProcessor::operator=(ScanQueryProcessor&& other) {
 
 void ScanQueryProcessor::processRecord(const Record& record, uint64_t key, const char* data, uint32_t length,
         uint64_t validFrom, uint64_t validTo) {
-    if (!mData->inReadSet(validFrom, validTo)) {
+    auto snapshot = mData->snapshot();
+    if (snapshot && !snapshot->inReadSet(validFrom, validTo)) {
         return;
     }
 
@@ -382,9 +383,18 @@ void ScanQueryBatchProcessor::processRecord(const Record& record, uint64_t key, 
         uint64_t validFrom, uint64_t validTo) {
     auto query = mQueryBuffer;
     for (auto& impl : mQueries) {
+        // Check if the selection string matches the record
         if (!check(query, data, record)) {
             continue;
         }
+
+        // Check if the max version in the query buffer matches
+        auto maxVersion = *reinterpret_cast<const uint64_t*>(query);
+        query += sizeof(uint64_t);
+        if (validFrom > maxVersion || validTo <= maxVersion) {
+            continue;
+        }
+
         impl.processRecord(record, key, data, length, validFrom, validTo);
     }
 }

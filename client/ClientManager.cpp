@@ -17,14 +17,19 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint
             reinterpret_cast<const char*>(&descriptor));
 }
 
+std::unique_ptr<commitmanager::SnapshotDescriptor> analyticalSnapshot(uint64_t lowestActiveVersion,
+        uint64_t baseVersion) {
+    return commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
+}
+
 } // anonymous namespace
 
-ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, bool readOnly,
-        std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
+ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
+        TransactionType type, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mProcessor(processor),
           mFiber(fiber),
           mSnapshot(std::move(snapshot)),
-          mReadOnly(readOnly),
+          mType(type),
           mCommitted(false) {
     mModified.set_empty_key(std::make_tuple(0x0u, 0x0u));
 }
@@ -46,7 +51,7 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
           mFiber(other.mFiber),
           mSnapshot(std::move(other.mSnapshot)),
           mModified(std::move(other.mModified)),
-          mReadOnly(other.mReadOnly),
+          mType(other.mType),
           mCommitted(other.mCommitted) {
     other.mCommitted = true;
 }
@@ -85,8 +90,13 @@ std::vector<std::shared_ptr<ScanResponse>> ClientTransaction::scan(const Table& 
         const char* query) {
     checkTransaction(table, true);
 
+    std::unique_ptr<commitmanager::SnapshotDescriptor> snapshotHolder;
+    if (mType == TransactionType::ANALYTICAL) {
+        snapshotHolder = analyticalSnapshot(mSnapshot->lowestActiveVersion(), mSnapshot->baseVersion());
+    }
+
     return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
-            selection, queryLength, query, *mSnapshot);
+            selection, queryLength, query, snapshotHolder ? *snapshotHolder : *mSnapshot);
 }
 
 void ClientTransaction::commit() {
@@ -97,7 +107,7 @@ void ClientTransaction::commit() {
 
 void ClientTransaction::abort() {
     if (!mModified.empty()) {
-        LOG_ASSERT(!mReadOnly, "Modified elements even though transaction is read-only");
+        LOG_ASSERT(mType == TransactionType::READ_WRITE, "Modified elements even though transaction is read-only");
         rollbackModified();
     }
     commit();
@@ -130,7 +140,7 @@ void ClientTransaction::checkTransaction(const Table& table, bool readOnly) {
     if (mCommitted) {
         throw std::logic_error("Transaction has already committed");
     }
-    if (mReadOnly && !readOnly) {
+    if (mType != TransactionType::READ_WRITE && !readOnly) {
         throw std::logic_error("Transaction is read only");
     }
 }
@@ -140,8 +150,8 @@ ClientHandle::ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fi
           mFiber(fiber) {
 }
 
-ClientTransaction ClientHandle::startTransaction(bool readOnly) {
-    return mProcessor.start(mFiber, readOnly);
+ClientTransaction ClientHandle::startTransaction(TransactionType type /* = TransactionType::READ_WRITE */) {
+    return mProcessor.start(mFiber, type);
 }
 
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
@@ -217,15 +227,15 @@ void BaseClientProcessor::shutdown() {
     }
 }
 
-ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, bool readOnly) {
+ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, TransactionType type) {
     // TODO Return a transaction future?
 
-    auto startResponse = mCommitManagerSocket.startTransaction(fiber, readOnly);
+    auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
     if (!startResponse->waitForResult()) {
         throw std::system_error(startResponse->error());
     }
 
-    return {*this, fiber, readOnly, startResponse->get()};
+    return {*this, fiber, type, startResponse->get()};
 }
 
 Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {

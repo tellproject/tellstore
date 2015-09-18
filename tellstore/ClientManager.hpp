@@ -36,12 +36,18 @@ struct ClientConfig;
 class BaseClientProcessor;
 class Record;
 
+enum class TransactionType : uint8_t {
+    READ_WRITE,
+    READ_ONLY,
+    ANALYTICAL,
+};
+
 /**
  * @brief Class representing a TellStore transaction
  */
 class ClientTransaction : crossbow::non_copyable {
 public:
-    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, bool readOnly,
+    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, TransactionType type,
             std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     ~ClientTransaction();
@@ -50,6 +56,10 @@ public:
 
     uint64_t version() const {
         return mSnapshot->version();
+    }
+
+    TransactionType type() const {
+        return mType;
     }
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
@@ -89,7 +99,7 @@ private:
 
     google::dense_hash_set<std::tuple<uint64_t, uint64_t>, ModifiedHasher> mModified;
 
-    bool mReadOnly;
+    TransactionType mType;
     bool mCommitted;
 };
 
@@ -104,7 +114,7 @@ public:
         return mFiber;
     }
 
-    ClientTransaction startTransaction(bool readOnly = false);
+    ClientTransaction startTransaction(TransactionType type = TransactionType::READ_WRITE);
 
     Table createTable(const crossbow::string& name, Schema schema);
 
@@ -161,7 +171,7 @@ private:
         return mTellStoreSocket.at(hash % mTellStoreSocket.size()).get();
     }
 
-    ClientTransaction start(crossbow::infinio::Fiber& fiber, bool readOnly);
+    ClientTransaction start(crossbow::infinio::Fiber& fiber, TransactionType type);
 
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
 

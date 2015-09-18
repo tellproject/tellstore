@@ -153,18 +153,8 @@ public:
         return AggregationIterator(mQueryDataEnd);
     }
 
-    const commitmanager::SnapshotDescriptor& snapshot() const {
-        return *mSnapshot;
-    }
-
-    /**
-     * @brief Checks if the tuple's version matches the client's snapshot descriptor
-     *
-     * @param validFrom The version the tuple is valid from
-     * @param validTo The version the tuple is valid to
-     */
-    bool inReadSet(uint64_t validFrom, uint64_t validTo) const {
-        return (mSnapshot->inReadSet(validFrom) && !mSnapshot->inReadSet(validTo));
+    const commitmanager::SnapshotDescriptor* snapshot() const {
+        return mSnapshot.get();
     }
 
     const Record& record() const {
@@ -383,6 +373,7 @@ private:
  *     - 2 bytes: The data if its size is between 1 and 2 bytes long padding otherwise
  *     - 4 bytes: The data if its size is between 2 and 4 bytes long padding otherwise
  *     - The data if it is larger than 4 bytes or if it is variable size length (padded to 8 bytes)
+ * - 8 bytes: The maximum version of the snapshot
  */
 class ScanQueryBatchProcessor {
 public:
