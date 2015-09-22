@@ -235,8 +235,8 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
     auto selectionLength = request.read<uint32_t>();
     auto selectionData = request.read(selectionLength);
-    std::unique_ptr<char[]> selection(new char[selectionLength + sizeof(uint64_t)]);
-    memcpy(selection.get(), selectionData, selectionLength);
+    std::unique_ptr<char[]> qbuffer(new char[selectionLength + sizeof(uint64_t)]);
+    memcpy(qbuffer.get(), selectionData, selectionLength);
 
     auto queryType = crossbow::from_underlying<ScanQueryType>(request.read<uint8_t>());
 
@@ -248,10 +248,11 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request,
-            [this, messageId, tableId, scanId, &remoteRegion, selectionLength, &selection, queryType, queryLength,
-             &query] (const commitmanager::SnapshotDescriptor& snapshot) {
+            [this, messageId, tableId, scanId, &remoteRegion, selectionLength, &qbuffer, queryType, queryLength, &query]
+            (const commitmanager::SnapshotDescriptor& snapshot) {
         // Set maximum version field in selection query
-        *reinterpret_cast<uint64_t*>(selection.get() + selectionLength) = snapshot.version();
+        *reinterpret_cast<uint64_t*>(qbuffer.get() + selectionLength) = snapshot.version();
+        auto qbufferLength = selectionLength + sizeof(uint64_t);
 
         // Copy snapshot descriptor if the snapshot is not completely described by the maximum version (i.e. version
         // bitmap is not empty)
@@ -263,9 +264,9 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
         auto table = mStorage.getTable(tableId);
 
-        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, messageId, queryType,
-                std::move(selection), selectionLength, std::move(query), queryLength, std::move(scanSnapshot),
-                table->record(), manager().scanBufferManager(), std::move(remoteRegion), mSocket));
+        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, messageId, queryType, std::move(qbuffer),
+                qbufferLength, std::move(query), queryLength, std::move(scanSnapshot), table->record(),
+                manager().scanBufferManager(), std::move(remoteRegion), mSocket));
         auto scanDataPtr = scanData.get();
         auto res = mScans.emplace(scanId, std::move(scanData));
         if (!res.second) {
