@@ -327,6 +327,8 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         scanBufferManager.releaseBuffer(bufferId);
     }
 
+    mInflightScanBuffer -= 1u;
+
     auto status = static_cast<uint16_t>(userId & 0xFFFFu);
     switch (status) {
     case crossbow::to_underlying(ScanStatusIndicator::ONGOING): {
@@ -398,7 +400,8 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
         const ServerConfig& config)
         : Base(service, config.port),
           mStorage(storage),
-          mScanBufferManager(service, config) {
+          mScanBufferManager(service, config),
+          mMaxInflightScanBuffer(config.maxInflightScanBuffer) {
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessors.emplace_back(service.createProcessor());
     }
@@ -412,7 +415,7 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
     auto thread = *reinterpret_cast<const uint64_t*>(&data.front());
     auto& processor = *mProcessors.at(thread % mProcessors.size());
 
-    return new ServerSocket(*this, mStorage, processor, std::move(socket));
+    return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxInflightScanBuffer);
 }
 
 } // namespace store

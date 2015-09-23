@@ -10,6 +10,7 @@
 #include <crossbow/infinio/RpcServer.hpp>
 #include <crossbow/string.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -30,9 +31,11 @@ class ServerSocket : public crossbow::infinio::RpcServerSocket<ServerManager, Se
 
 public:
     ServerSocket(ServerManager& manager, Storage& storage, crossbow::infinio::InfinibandProcessor& processor,
-            crossbow::infinio::InfinibandSocket socket)
+            crossbow::infinio::InfinibandSocket socket, uint64_t maxInflightScanBuffer)
             : Base(manager, processor, std::move(socket), crossbow::string()),
-              mStorage(storage) {
+              mStorage(storage),
+              mMaxInflightScanBuffer(maxInflightScanBuffer),
+              mInflightScanBuffer(0u) {
     }
 
     /**
@@ -48,16 +51,15 @@ public:
      */
     template <typename Buffer>
     void writeScanBuffer(Buffer& buffer, crossbow::infinio::RemoteMemoryRegion& destRegion, size_t offset, uint32_t userId, std::error_code& ec) {
-        while (true) {
-            mSocket->write(buffer, destRegion, offset, userId, ec);
-            // When we get a no memory error we overran the work queue because we are sending too fast
-            if (ec == std::errc::not_enough_memory) {
-                std::this_thread::yield();
-                ec = std::error_code();
-                continue;
-            }
-            break;
+        // Wait in case the network is overloaded
+        // For performance reasons this is not really thread safe but as the number of threads accessing this variable
+        // is bounded and small (2-4) the actual limit will not be exceeded by much.
+        while (mInflightScanBuffer >= mMaxInflightScanBuffer) {
+            std::this_thread::yield();
         }
+        mInflightScanBuffer += 1u;
+
+        mSocket->write(buffer, destRegion, offset, userId, ec);
     }
 
     /**
@@ -229,6 +231,12 @@ private:
 
     Storage& mStorage;
 
+    /// Maximum number of scan buffers that are in flight on the socket at the same time
+    uint64_t mMaxInflightScanBuffer;
+
+    /// Current number of scan buffers that are in flight
+    std::atomic<uint64_t> mInflightScanBuffer;
+
     // TODO Replace with google dense map (SnapshotDescriptor has no copy / default constructor)
     /// Snapshot cache mapping the version number to the snapshot descriptor
     std::unordered_map<uint64_t, std::unique_ptr<commitmanager::SnapshotDescriptor>> mSnapshots;
@@ -257,6 +265,8 @@ private:
     Storage& mStorage;
 
     ScanBufferManager mScanBufferManager;
+    uint64_t mMaxInflightScanBuffer;
+
     std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
 };
 

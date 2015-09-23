@@ -20,6 +20,10 @@ struct ServerConfig {
 
     /// Maximum number of buffers used in scans
     uint32_t scanBufferCount = 256;
+
+    /// Maximum number of scan buffers that are in flight on a socket at the same time
+    /// This limit might be exceeded by a small factor
+    uint64_t maxInflightScanBuffer = 16;
 };
 
 } // namespace store
