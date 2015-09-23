@@ -13,7 +13,6 @@ namespace tell {
 namespace store {
 
 void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) {
-    LOG_INFO("Sending scan progress [offset = %1%, done = %2%]", offset, done);
     uint32_t messageLength = 2 * sizeof(size_t);
     writeResponse(crossbow::infinio::MessageId(scanId, true), ResponseType::SCAN, messageLength, [done, offset]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
