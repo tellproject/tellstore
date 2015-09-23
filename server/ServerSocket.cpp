@@ -12,6 +12,17 @@
 namespace tell {
 namespace store {
 
+void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) {
+    LOG_INFO("Sending scan progress [offset = %1%, done = %2%]", offset, done);
+    uint32_t messageLength = 2 * sizeof(size_t);
+    writeResponse(crossbow::infinio::MessageId(scanId, true), ResponseType::SCAN, messageLength, [done, offset]
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+        message.write<uint8_t>(done ? 0x1u : 0x0u);
+        message.set(0, sizeof(size_t) - sizeof(uint8_t));
+        message.write<size_t>(offset);
+    });
+}
+
 void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
         crossbow::buffer_reader& request) {
 #ifdef NDEBUG
@@ -52,6 +63,10 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
 
     case crossbow::to_underlying(RequestType::SCAN): {
         handleScan(messageId, request);
+    } break;
+
+    case crossbow::to_underlying(RequestType::SCAN_PROGRESS): {
+        handleScanProgress(messageId, request);
     } break;
 
     case crossbow::to_underlying(RequestType::COMMIT): {
@@ -225,22 +240,24 @@ void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow
 
 void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
-    auto scanId = request.read<uint16_t>();
+    auto queryType = crossbow::from_underlying<ScanQueryType>(request.read<uint8_t>());
 
-    request.align(sizeof(uint64_t));
+    request.advance(sizeof(uint64_t) - sizeof(uint8_t));
     auto remoteAddress = request.read<uint64_t>();
     auto remoteLength = request.read<uint64_t>();
     auto remoteKey = request.read<uint32_t>();
     crossbow::infinio::RemoteMemoryRegion remoteRegion(remoteAddress, remoteLength, remoteKey);
 
     auto selectionLength = request.read<uint32_t>();
+    if (selectionLength % 8u != 0u || selectionLength < 8u) {
+        writeErrorResponse(messageId, error::invalid_scan);
+        return;
+    }
     auto selectionData = request.read(selectionLength);
     std::unique_ptr<char[]> qbuffer(new char[selectionLength + sizeof(uint64_t)]);
     memcpy(qbuffer.get(), selectionData, selectionLength);
 
-    auto queryType = crossbow::from_underlying<ScanQueryType>(request.read<uint8_t>());
-
-    request.align(sizeof(uint32_t));
+    request.advance(sizeof(uint32_t));
     auto queryLength = request.read<uint32_t>();
     auto queryData = request.read(queryLength);
     std::unique_ptr<char[]> query(new char[queryLength]);
@@ -248,8 +265,10 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
     request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request,
-            [this, messageId, tableId, scanId, &remoteRegion, selectionLength, &qbuffer, queryType, queryLength, &query]
+            [this, messageId, tableId, &remoteRegion, selectionLength, &qbuffer, queryType, queryLength, &query]
             (const commitmanager::SnapshotDescriptor& snapshot) {
+        auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
+
         // Set maximum version field in selection query
         *reinterpret_cast<uint64_t*>(qbuffer.get() + selectionLength) = snapshot.version();
         auto qbufferLength = selectionLength + sizeof(uint64_t);
@@ -264,9 +283,9 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
 
         auto table = mStorage.getTable(tableId);
 
-        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, messageId, queryType, std::move(qbuffer),
+        std::unique_ptr<ServerScanQuery> scanData(new ServerScanQuery(scanId, queryType, std::move(qbuffer),
                 qbufferLength, std::move(query), queryLength, std::move(scanSnapshot), table->record(),
-                manager().scanBufferManager(), std::move(remoteRegion), mSocket));
+                manager().scanBufferManager(), std::move(remoteRegion), *this));
         auto scanDataPtr = scanData.get();
         auto res = mScans.emplace(scanId, std::move(scanData));
         if (!res.second) {
@@ -280,6 +299,21 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
             mScans.erase(res.first);
         }
     });
+}
+
+void ServerSocket::handleScanProgress(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    auto scanId = static_cast<uint16_t>(messageId.userId() & 0xFFFFu);
+
+    auto offsetRead = request.read<size_t>();
+
+    auto i = mScans.find(scanId);
+    if (i == mScans.end()) {
+        LOG_DEBUG("Scan progress with invalid scan ID");
+        writeErrorResponse(messageId, error::invalid_scan);
+        return;
+    }
+
+    i->second->requestProgress(offsetRead);
 }
 
 void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) {
@@ -309,11 +343,7 @@ void ServerSocket::onWrite(uint32_t userId, uint16_t bufferId, const std::error_
         }
 
         LOG_DEBUG("Scan with ID %1% finished", scanId);
-        size_t messageLength = sizeof(uint16_t);
-        writeResponse(i->second->messageId(), ResponseType::SCAN, messageLength, [scanId]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint16_t>(scanId);
-        });
+        i->second->completeScan();
         mScans.erase(i);
     } break;
 

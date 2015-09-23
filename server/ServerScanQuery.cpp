@@ -1,6 +1,7 @@
 #include "ServerScanQuery.hpp"
 
 #include "ServerConfig.hpp"
+#include "ServerSocket.hpp"
 
 #include <crossbow/logger.hpp>
 
@@ -43,93 +44,103 @@ crossbow::infinio::InfinibandBuffer ScanBufferManager::getBuffer(const char* dat
     return mRegion.acquireBuffer(id, offset, length);
 }
 
-ServerScanQuery::ServerScanQuery(uint16_t scanId, crossbow::infinio::MessageId messageId, ScanQueryType queryType,
-        std::unique_ptr<char[]> selectionData, size_t selectionLength, std::unique_ptr<char[]> queryData,
-        size_t queryLength, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot, const Record& record,
-        ScanBufferManager& scanBufferManager, crossbow::infinio::RemoteMemoryRegion destRegion,
-        crossbow::infinio::InfinibandSocket socket)
+ServerScanQuery::ServerScanQuery(uint16_t scanId, ScanQueryType queryType, std::unique_ptr<char[]> selectionData,
+        size_t selectionLength, std::unique_ptr<char[]> queryData, size_t queryLength,
+        std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot, const Record& record,
+        ScanBufferManager& scanBufferManager, crossbow::infinio::RemoteMemoryRegion destRegion, ServerSocket& socket)
         : ScanQuery(queryType, std::move(selectionData), selectionLength, std::move(queryData), queryLength,
                 std::move(snapshot), record),
           mActive(0u),
           mScanId(scanId),
-          mMessageId(messageId),
+          mProgressRequest(true),
           mScanBufferManager(scanBufferManager),
           mDestRegion(std::move(destRegion)),
-          mSocket(std::move(socket)),
+          mSocket(socket),
           mOffset(0u) {
+}
+
+void ServerScanQuery::requestProgress(size_t offsetRead) {
+    // Check if data was written since the last request otherwise queue the progress update
+    // We can not block on the lock as the scan thread might loop until there is space left in the send queue but the
+    // network thread is blocked on the lock and unable to process the completion queue to make space on it
+    typename decltype(mSendMutex)::scoped_lock lock;
+    if (lock.try_acquire(mSendMutex) && mOffset > offsetRead) {
+        mSocket.writeScanProgress(mScanId, false, mOffset);
+    } else {
+        mProgressRequest = true;
+    }
+}
+
+void ServerScanQuery::completeScan() {
+    typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
+
+    mSocket.writeScanProgress(mScanId, true, mOffset);
 }
 
 std::tuple<char*, uint32_t> ServerScanQuery::acquireBuffer() {
     return mScanBufferManager.acquireBuffer();
 }
 
-void ServerScanQuery::writeOngoing(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) {
+void ServerScanQuery::writeOngoing(const char* start, const char* end, std::error_code& ec) {
     typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
-    doWrite(start, end, tupleCount, ScanStatusIndicator::ONGOING, ec);
+    doWrite(start, end, ScanStatusIndicator::ONGOING, ec);
 }
 
-void ServerScanQuery::writeLast(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) {
+void ServerScanQuery::writeLast(const char* start, const char* end, std::error_code& ec) {
     typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
-    --mActive;
 
+    --mActive;
     auto status = (mActive == 0 ? ScanStatusIndicator::DONE : ScanStatusIndicator::ONGOING);
-    doWrite(start, end, tupleCount, status, ec);
+    doWrite(start, end, status, ec);
 }
 
 void ServerScanQuery::writeLast(std::error_code& ec) {
     typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
-    --mActive;
 
+    --mActive;
     if (mActive == 0) {
         auto userId = (static_cast<uint32_t>(mScanId) << 16) | static_cast<uint32_t>(ScanStatusIndicator::DONE);
         crossbow::infinio::ScatterGatherBuffer buffer(crossbow::infinio::InfinibandBuffer::INVALID_ID);
 
-        while (true) {
-            mSocket->write(buffer, mDestRegion, mOffset, userId, ec);
-            if (ec) {
-                // When we get a no memory error we overran the work queue because we are sending too fast
-                if (ec == std::errc::not_enough_memory) {
-                    std::this_thread::yield();
-                    ec = std::error_code();
-                    continue;
-                }
-                return;
-            }
-            break;
+        mSocket.writeScanBuffer(buffer, mDestRegion, mOffset, userId, ec);
+        if (ec) {
+            LOG_ERROR("Error while sending scan buffer [error = %1% %2%]", ec, ec.message());
+            // TODO Error handling
+            return;
         }
     }
 }
 
 ScanQueryProcessor ServerScanQuery::createProcessor() {
+    typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
     ++mActive;
     return ScanQueryProcessor(this);
 }
 
-void ServerScanQuery::doWrite(const char* start, const char* end, uint16_t tupleCount, ScanStatusIndicator status,
-        std::error_code& ec) {
-    LOG_ASSERT(tupleCount > 0, "Buffer containing no tuples");
+void ServerScanQuery::doWrite(const char* start, const char* end, ScanStatusIndicator status, std::error_code& ec) {
     LOG_ASSERT(end > start, "Invalid buffer");
 
-    auto immediate = (static_cast<uint32_t>(mScanId) << 16) | static_cast<uint32_t>(tupleCount);
     auto userId = (static_cast<uint32_t>(mScanId) << 16) | static_cast<uint32_t>(status);
 
     auto length = static_cast<uint32_t>(end - start);
     auto buffer = mScanBufferManager.getBuffer(start, length);
 
-    while (true) {
-        mSocket->write(buffer, mDestRegion, mOffset, userId, immediate, ec);
-        if (ec) {
-            // When we get a no memory error we overran the work queue because we are sending too fast
-            if (ec == std::errc::not_enough_memory) {
-                std::this_thread::yield();
-                ec = std::error_code();
-                continue;
-            }
-            return;
-        }
-        break;
+    mSocket.writeScanBuffer(buffer, mDestRegion, mOffset, userId, ec);
+    if (ec) {
+        LOG_ERROR("Error while sending scan buffer [error = %1% %2%]", ec, ec.message());
+        // TODO Error handling
+        return;
     }
-    mOffset += buffer.length();
+    mOffset += length;
+
+    // TODO Offset might not be accurate (requests in flight may fail)
+    if (mProgressRequest) {
+        mProgressRequest = false;
+        auto offset = mOffset;
+        mSocket.execute([this, offset] () {
+            mSocket.writeScanProgress(mScanId, false, offset);
+        });
+    }
 }
 
 } // namespace store

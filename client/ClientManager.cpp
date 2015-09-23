@@ -85,7 +85,7 @@ std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& tab
     return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
 }
 
-std::vector<std::shared_ptr<ScanResponse>> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
+std::shared_ptr<ScanIterator> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
         ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
         const char* query) {
     checkTransaction(table, true);
@@ -192,21 +192,12 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, u
     return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
 }
 
-std::vector<std::shared_ptr<ScanResponse>> ClientHandle::scan(const Table& table, ScanMemoryManager& memoryManager,
-        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-        const char* query) {
-    checkTableType(table, TableType::NON_TRANSACTIONAL);
-
-    auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
-    return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
-            selection, queryLength, query, *snapshot);
-}
-
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
         uint64_t processorNum)
         : mProcessor(service.createProcessor()),
           mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses),
-          mProcessorNum(processorNum) {
+          mProcessorNum(processorNum),
+          mScanId(0u) {
     mCommitManagerSocket.connect(config.commitManager);
 
     mTellStoreSocket.reserve(config.tellStore.size());
@@ -254,17 +245,27 @@ Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const cr
     return Table(tableId, std::move(schema));
 }
 
-std::vector<std::shared_ptr<ScanResponse>> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        const Record& record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
+std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+        Record record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
         const char* selection, uint32_t queryLength, const char* query,
         const commitmanager::SnapshotDescriptor& snapshot) {
-    std::vector<std::shared_ptr<ScanResponse>> result;
-    result.reserve(mTellStoreSocket.size());
+    auto scanId = ++mScanId;
+
+    auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
     for (auto& socket : mTellStoreSocket) {
-        result.emplace_back(socket->scan(fiber, tableId, record, memoryManager.acquire(), queryType, selectionLength,
-                selection, queryLength, query, snapshot));
+        auto memory = memoryManager.acquire();
+        if (!memory.valid()) {
+            iterator->abort(std::make_error_code(std::errc::not_enough_memory));
+            break;
+        }
+
+        auto response = std::make_shared<ScanResponse>(fiber, iterator, *socket, std::move(memory), scanId);
+        iterator->addScanResponse(response);
+
+        socket->scanStart(scanId, std::move(response), tableId, queryType, selectionLength, selection, queryLength,
+                query, snapshot);
     }
-    return result;
+    return iterator;
 }
 
 void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {

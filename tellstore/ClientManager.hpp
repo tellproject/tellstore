@@ -71,9 +71,8 @@ public:
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
 
-    std::vector<std::shared_ptr<ScanResponse>> scan(const Table& table, ScanMemoryManager& memoryManager,
-            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-            const char* query);
+    std::shared_ptr<ScanIterator> scan(const Table& table, ScanMemoryManager& memoryManager, ScanQueryType queryType,
+            uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query);
 
     void commit();
 
@@ -129,10 +128,6 @@ public:
             const GenericTuple& tuple);
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key, uint64_t version);
-
-    std::vector<std::shared_ptr<ScanResponse>> scan(const Table& table, ScanMemoryManager& memoryManager,
-            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-            const char* query);
 
 private:
     BaseClientProcessor& mProcessor;
@@ -205,10 +200,9 @@ private:
         return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
     }
 
-    std::vector<std::shared_ptr<ScanResponse>> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-            const Record& record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
-            const char* selection, uint32_t queryLength, const char* query,
-            const commitmanager::SnapshotDescriptor& snapshot);
+    std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, Record record,
+            ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
+            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot);
 
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -218,6 +212,8 @@ private:
     std::vector<std::unique_ptr<store::ClientSocket>> mTellStoreSocket;
 
     uint64_t mProcessorNum;
+
+    uint16_t mScanId;
 };
 
 /**

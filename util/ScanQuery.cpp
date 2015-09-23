@@ -68,7 +68,7 @@ ScanQueryProcessor::~ScanQueryProcessor() {
 
     std::error_code ec;
     if (mBuffer) {
-        mData->writeLast(mBuffer, mBufferWriter.data(), mTupleCount, ec);
+        mData->writeLast(mBuffer, mBufferWriter.data(), ec);
     } else {
         LOG_ASSERT(mTupleCount == 0, "Invalid buffer containing tuples");
         mData->writeLast(ec);
@@ -191,7 +191,7 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
 
             // Send the old buffer up to the incomplete tuple
             std::error_code ec;
-            mData->writeOngoing(mBuffer, dataStart, mTupleCount, ec);
+            mData->writeOngoing(mBuffer, dataStart, ec);
             if (ec) {
                 // TODO Handle error (Release buffer)
                 throw std::system_error(ec);
@@ -297,7 +297,7 @@ void ScanQueryProcessor::ensureBufferSpace(uint32_t length) {
 
     if (mBuffer) {
         std::error_code ec;
-        mData->writeOngoing(mBuffer, mBufferWriter.data(), mTupleCount, ec);
+        mData->writeOngoing(mBuffer, mBufferWriter.data(), ec);
         if (ec) {
             // TODO Handle error (Release buffer)
             throw std::system_error(ec);

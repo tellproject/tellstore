@@ -17,6 +17,7 @@ enum class RequestType : uint32_t {
     REMOVE,
     REVERT,
     SCAN,
+    SCAN_PROGRESS,
     COMMIT,
 };
 

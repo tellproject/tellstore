@@ -27,6 +27,7 @@ class SnapshotDescriptor;
 namespace store {
 
 class ClientSocket;
+class ScanIterator;
 
 /**
  * @brief Response for a Create-Table request
@@ -118,58 +119,122 @@ private:
 /**
  * @brief Response for a Scan request
  */
-class ScanResponse final : public crossbow::infinio::RpcResponseResult<ScanResponse, bool> {
-    using Base = crossbow::infinio::RpcResponseResult<ScanResponse, bool>;
-
+class ScanResponse final : public crossbow::infinio::RpcResponse, public std::enable_shared_from_this<ScanResponse> {
 public:
-    ScanResponse(crossbow::infinio::Fiber& fiber, ClientSocket& socket, ScanMemory memory, Record record,
-            uint16_t scanId);
-
-    /**
-     * @brief Whether the scan has pending tuples to read
-     *
-     * Blocks until the scan is done or the next tuple is available.
-     */
-    bool hasNext();
-
-    /**
-     * @brief Advances the iterator to the next position and returns the tuple data
-     */
-    std::tuple<uint64_t, const char*, size_t> next();
-
-private:
-    friend Base;
-    friend class ClientSocket;
-
-    static constexpr ResponseType MessageType = ResponseType::SCAN;
-
-    static const std::error_category& errorCategory() {
-        return error::get_error_category();
-    }
-
-    uint16_t scanId() const {
-        return mScanId;
-    }
+    ScanResponse(crossbow::infinio::Fiber& fiber, std::shared_ptr<ScanIterator> iterator, ClientSocket& socket,
+            ScanMemory memory, uint16_t scanId);
 
     const ScanMemory& scanMemory() const {
         return mMemory;
     }
 
-    void processResponse(crossbow::buffer_reader& message);
+    /**
+     * @brief Whether the remote server has written any new data
+     */
+    bool available() const {
+        return mOffsetWritten > mOffsetRead;
+    }
 
-    void notifyProgress(uint16_t tupleCount);
+    /**
+     * @brief Returns the next available data chunk written by the remote server
+     *
+     * @return Tuple containing the start and end pointer to the next available chunk
+     */
+    std::tuple<const char*, const char*> nextChunk();
+
+private:
+    friend class ClientSocket;
+
+    virtual void onResponse(uint32_t messageType, crossbow::buffer_reader& message) final override;
+
+    virtual void onAbort(std::error_code ec) final override;
+
+    std::weak_ptr<ScanIterator> mIterator;
 
     ClientSocket& mSocket;
 
+    /// Memory region containing the data written by the remote server
     ScanMemory mMemory;
+
+    /// ID of the scan in the remote server
+    uint16_t mScanId;
+
+    /// Amount of data read by the client
+    size_t mOffsetRead;
+
+    /// Amount of data written by the remote server
+    size_t mOffsetWritten;
+};
+
+/**
+ * @brief Iterator encapsulating the ScanResponse objects across all shards
+ */
+class ScanIterator {
+public:
+    ScanIterator(crossbow::infinio::Fiber& fiber, Record record, size_t shardSize);
+
+    const Record& record() const {
+        return mRecord;
+    }
+
+    const std::error_code& error() const {
+        return mError;
+    }
+
+    /**
+     * @brief Whether the scan has pending elements to read
+     *
+     * Blocks until the scan is done or the next element is available.
+     */
+    bool hasNext();
+
+    /**
+     * @brief Advances the iterator to the next position and returns the element data
+     *
+     * @return Tuple containing the key, pointer to the data and the size of the element
+     */
+    std::tuple<uint64_t, const char*, size_t> next();
+
+    /**
+     * @brief Returns the current chunk of elements and advances the iterator to the next chunk
+     *
+     * @return Tuple containing the start and end pointer to the current chunk
+     */
+    std::tuple<const char*, const char*> nextChunk();
+
+    void wait();
+
+private:
+    friend class BaseClientProcessor;
+    friend class ScanResponse;
+
+    void addScanResponse(std::shared_ptr<ScanResponse> response) {
+        mScans.emplace_back(std::move(response));
+    }
+
+    /**
+     * @brief Notify the iterator about new data in any ScanResponse
+     */
+    void notify();
+
+    /**
+     * @brief Notify the iterator about an error in a ScanResponse
+     */
+    void abort(std::error_code ec);
+
+    crossbow::infinio::Fiber& mFiber;
+
+    std::vector<std::shared_ptr<ScanResponse>> mScans;
 
     Record mRecord;
 
-    uint16_t mScanId;
+    bool mWaiting;
 
-    const char* mPos;
+    std::error_code mError;
 
-    size_t mTuplePending;
+    const char* mChunkPos;
+
+    const char* mChunkEnd;
 };
 
 /**
@@ -178,13 +243,9 @@ private:
  * Sends RPC requests and returns the pending response.
  */
 class ClientSocket final : public crossbow::infinio::RpcClientSocket {
+    using Base = crossbow::infinio::RpcClientSocket;
 public:
-    ClientSocket(crossbow::infinio::InfinibandSocket socket, size_t maxPendingResponses)
-            : crossbow::infinio::RpcClientSocket(std::move(socket), maxPendingResponses),
-              mScanId(0x0u) {
-        mScans.set_empty_key(0x0u);
-        mScans.set_deleted_key(std::numeric_limits<uint16_t>::max());
-    }
+    using Base::Base;
 
     void connect(const crossbow::infinio::Endpoint& host, uint64_t threadNum);
 
@@ -211,19 +272,15 @@ public:
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot);
 
-    std::shared_ptr<ScanResponse> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, const Record& record,
-            ScanMemory scanMemory, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
-            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot);
+    void scanStart(uint16_t scanId, std::shared_ptr<ScanResponse> response, uint64_t tableId, ScanQueryType queryType,
+            uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query,
+            const commitmanager::SnapshotDescriptor& snapshot);
 
-private:
-    friend class ScanResponse;
+    void scanProgress(uint16_t scanId, std::shared_ptr<ScanResponse> response, size_t offset);
 
-    virtual void onImmediate(uint32_t data) final override;
-
-    void onScanComplete(uint16_t scanId);
-
-    uint16_t mScanId;
-    google::dense_hash_map<uint16_t, ScanResponse*> mScans;
+    void scanComplete(uint16_t scanId) {
+        completeAsyncRequest(scanId);
+    }
 };
 
 } // namespace store

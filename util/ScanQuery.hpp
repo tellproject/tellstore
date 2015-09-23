@@ -179,10 +179,9 @@ public:
      *
      * @param start Begin pointer to the buffer containing the tuples
      * @param end End pointer to the buffer containing the tuples
-     * @param tupleCount Number of tuples contained in the buffer
      * @param ec Error in case the write fails
      */
-    virtual void writeOngoing(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) = 0;
+    virtual void writeOngoing(const char* start, const char* end, std::error_code& ec) = 0;
 
     /**
      * @brief Writes the last tuples to the client
@@ -191,10 +190,9 @@ public:
      *
      * @param start Begin pointer to the buffer containing the tuples
      * @param end End pointer to the buffer containing the tuples
-     * @param tupleCount Number of tuples contained in the buffer
      * @param ec Error in case the write fails
      */
-    virtual void writeLast(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) = 0;
+    virtual void writeLast(const char* start, const char* end, std::error_code& ec) = 0;
 
     /**
      * @brief Writes the last tuples to the client

@@ -27,10 +27,9 @@ namespace {
 
 int64_t gTupleLargenumber = 0x7FFFFFFF00000001;
 crossbow::string gTupleText1 = crossbow::string("Bacon ipsum dolor amet t-bone chicken prosciutto, cupim ribeye turkey "
-        "bresaola leberkas bacon. Hamburger biltong bresaola, drumstick t-bone flank ball tip.");
+        "bresaola leberkas bacon.");
 crossbow::string gTupleText2 = crossbow::string("Chuck pork loin ham hock tri-tip pork ball tip drumstick tongue. Jowl "
-        "swine short loin, leberkas andouille pancetta strip steak doner ham bresaola. T-bone pastrami rump beef ribs, "
-        "bacon frankfurter meatball biltong bresaola short ribs.");
+        "swine short loin, leberkas andouille pancetta strip steak doner ham bresaola.");
 
 class OperationTimer {
 public:
@@ -62,18 +61,18 @@ class TestClient {
 public:
     TestClient(const ClientConfig& config, size_t scanMemoryLength, size_t numTuple, size_t numTransactions);
 
-    void run();
+    void run(bool check);
 
     void shutdown();
 
 private:
     void addTable(ClientHandle& client);
 
-    void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey);
+    void executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check);
 
-    void executeScan(ClientHandle& handle, float selectivity);
+    void executeScan(ClientHandle& handle, float selectivity, bool check);
 
-    void executeProjection(ClientHandle& client, float selectivity);
+    void executeProjection(ClientHandle& client, float selectivity, bool check);
 
     void executeAggregation(ClientHandle& client, float selectivity);
 
@@ -108,7 +107,7 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
     }
 }
 
-void TestClient::run() {
+void TestClient::run(bool check) {
     LOG_INFO("Starting test workload");
     auto startTime = std::chrono::steady_clock::now();
 
@@ -120,20 +119,30 @@ void TestClient::run() {
     for (decltype(mNumTransactions) i = 0; i < mNumTransactions; ++i) {
         auto startRange = i * mNumTuple;
         auto endRange = startRange + mNumTuple;
-        runner.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange));
+        runner.execute(std::bind(&TestClient::executeTransaction, this, std::placeholders::_1, startRange, endRange,
+                check));
     }
     runner.wait();
 
     LOG_INFO("Starting test scan transaction(s)");
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 1.0));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.5));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1, 0.25));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 1.0));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.5));
-    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1, 0.25));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 1.0,
+            check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.5,
+            check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25,
+            check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1,
+            1.0, check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1,
+            0.5, check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1,
+            0.25, check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1,
+            1.0));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1,
+            0.5));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeAggregation, this, std::placeholders::_1,
+            0.25));
 
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
@@ -161,7 +170,7 @@ void TestClient::addTable(ClientHandle& client) {
     LOG_INFO("Adding table took %1%ns", duration.count());
 }
 
-void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey) {
+void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {
     LOG_TRACE("Starting transaction");
     auto transaction = client.startTransaction();
     LOG_INFO("TID %1%] Started transaction", transaction.version());
@@ -213,24 +222,26 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
             return;
         }
 
-        LOG_TRACE("Check tuple");
-        if (mTable.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
-            LOG_ERROR("Number value does not match");
-            return;
+        if (check) {
+            LOG_TRACE("Check tuple");
+            if (mTable.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value does not match");
+                return;
+            }
+            if (mTable.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
+                LOG_ERROR("Text1 value does not match");
+                return;
+            }
+            if (mTable.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
+                LOG_ERROR("Text2 value does not match");
+                return;
+            }
+            if (mTable.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
+                LOG_ERROR("Text2 value does not match");
+                return;
+            }
+            LOG_TRACE("Tuple check successful");
         }
-        if (mTable.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
-            LOG_ERROR("Text1 value does not match");
-            return;
-        }
-        if (mTable.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
-            LOG_ERROR("Text2 value does not match");
-            return;
-        }
-        if (mTable.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
-            LOG_ERROR("Text2 value does not match");
-            return;
-        }
-        LOG_TRACE("Tuple check successful");
     }
 
     LOG_TRACE("Commit transaction");
@@ -247,7 +258,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
              std::chrono::duration_cast<std::chrono::microseconds>(getTimer.total()).count() / (endKey - startKey));
 }
 
-void TestClient::executeScan(ClientHandle& client, float selectivity) {
+void TestClient::executeScan(ClientHandle& client, float selectivity, bool check) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
     auto transaction = client.startTransaction(TransactionType::ANALYTICAL);
@@ -274,30 +285,20 @@ void TestClient::executeScan(ClientHandle& client, float selectivity) {
     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFutures = transaction.scan(mTable, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(),
+    auto scanIterator = transaction.scan(mTable, *mScanMemory, ScanQueryType::FULL, selectionLength, selection.get(),
             0x0u, nullptr);
-    for (auto& future : scanFutures) {
-        if (!future->get()) {
-            LOG_ERROR("Error scanning table");
-            return;
-        }
-        fiber.yield();
-
-        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
-    }
-    auto scanEndTime = std::chrono::steady_clock::now();
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
-    for (auto& future : scanFutures) {
-        while (future->hasNext()) {
-            uint64_t key;
-            const char* tuple;
-            size_t tupleLength;
-            std::tie(key, tuple, tupleLength) = future->next();
-            ++scanCount;
-            scanDataSize += tupleLength;
+    while (scanIterator->hasNext()) {
+        uint64_t key;
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(key, tuple, tupleLength) = scanIterator->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
 
+        if (check) {
             LOG_TRACE("Check tuple");
             if (mTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
                 LOG_ERROR("Number value of tuple %1% does not match", scanCount);
@@ -316,10 +317,17 @@ void TestClient::executeScan(ClientHandle& client, float selectivity) {
                 return;
             }
             LOG_TRACE("Tuple check successful");
-            if (scanCount % 250 == 0) {
+            if (scanCount % 1000 == 0) {
                 fiber.yield();
             }
         }
+    }
+    auto scanEndTime = std::chrono::steady_clock::now();
+
+    if (scanIterator->error()) {
+        auto& ec = scanIterator->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+        return;
     }
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
@@ -331,7 +339,7 @@ void TestClient::executeScan(ClientHandle& client, float selectivity) {
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
 
-void TestClient::executeProjection(ClientHandle& client, float selectivity) {
+void TestClient::executeProjection(ClientHandle& client, float selectivity, bool check) {
     LOG_TRACE("Starting transaction");
     auto& fiber = client.fiber();
     auto transaction = client.startTransaction(TransactionType::ANALYTICAL);
@@ -376,30 +384,20 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity) {
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFutures = transaction.scan(resultTable, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
+    auto scanIterator = transaction.scan(resultTable, *mScanMemory, ScanQueryType::PROJECTION, selectionLength,
             selection.get(), projectionLength, projection.get());
-    for (auto& future : scanFutures) {
-        if (!future->get()) {
-            LOG_ERROR("Error scanning table");
-            return;
-        }
-        fiber.yield();
-
-        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
-    }
-    auto scanEndTime = std::chrono::steady_clock::now();
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
-    for (auto& future : scanFutures) {
-        while (future->hasNext()) {
-            uint64_t key;
-            const char* tuple;
-            size_t tupleLength;
-            std::tie(key, tuple, tupleLength) = future->next();
-            ++scanCount;
-            scanDataSize += tupleLength;
+    while (scanIterator->hasNext()) {
+        uint64_t key;
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(key, tuple, tupleLength) = scanIterator->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
 
+        if (check) {
             LOG_TRACE("Check tuple");
             if (resultTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
                 LOG_ERROR("Number value of tuple %1% does not match", scanCount);
@@ -410,10 +408,17 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity) {
                 return;
             }
             LOG_TRACE("Tuple check successful");
-            if (scanCount % 250 == 0) {
+            if (scanCount % 1000 == 0) {
                 fiber.yield();
             }
         }
+    }
+
+    auto scanEndTime = std::chrono::steady_clock::now();
+    if (scanIterator->error()) {
+        auto& ec = scanIterator->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+        return;
     }
 
     auto scanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(scanEndTime - scanStartTime);
@@ -469,40 +474,35 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
-    auto scanFutures = transaction.scan(resultTable, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
+    auto scanIterator = transaction.scan(resultTable, *mScanMemory, ScanQueryType::AGGREGATION, selectionLength,
             selection.get(), aggregationLength, aggregation.get());
-    for (auto& future : scanFutures) {
-        if (!future->get()) {
-            LOG_ERROR("Error scanning table");
-            return;
-        }
-        fiber.yield();
-
-        LOG_ASSERT(future.unique(), "Future pointer should be unique at this point");
-    }
-    auto scanEndTime = std::chrono::steady_clock::now();
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
     int32_t totalSum = 0;
     int32_t totalMin = std::numeric_limits<int32_t>::max();
     int32_t totalMax = std::numeric_limits<int32_t>::min();
-    for (auto& future : scanFutures) {
-        while (future->hasNext()) {
-            const char* tuple;
-            size_t tupleLength;
-            std::tie(std::ignore, tuple, tupleLength) = future->next();
-            ++scanCount;
-            scanDataSize += tupleLength;
+    while (scanIterator->hasNext()) {
+        const char* tuple;
+        size_t tupleLength;
+        std::tie(std::ignore, tuple, tupleLength) = scanIterator->next();
+        ++scanCount;
+        scanDataSize += tupleLength;
 
-            totalSum += resultTable.field<int32_t>("sum", tuple);
-            totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
-            totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
+        totalSum += resultTable.field<int32_t>("sum", tuple);
+        totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
+        totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
 
-            if (scanCount % 250 == 0) {
-                fiber.yield();
-            }
+        if (scanCount % 1000 == 0) {
+            fiber.yield();
         }
+    }
+
+    auto scanEndTime = std::chrono::steady_clock::now();
+    if (scanIterator->error()) {
+        auto& ec = scanIterator->error();
+        LOG_ERROR("Error scanning table [error = %1% %2%]", ec, ec.message());
+        return;
     }
 
     LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%]", transaction.version(), totalSum, totalMin,
@@ -526,6 +526,7 @@ int main(int argc, const char** argv) {
     size_t numTuple = 1000000ull;
     size_t numTransactions = 10;
     tell::store::ClientConfig clientConfig;
+    bool check = false;
     bool help = false;
     crossbow::string logLevel("DEBUG");
 
@@ -538,6 +539,8 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<'n'>("tuple", &numTuple),
             crossbow::program_options::value<'t'>("transactions", &numTransactions),
             crossbow::program_options::value<-1>("network-threads", &clientConfig.numNetworkThreads,
+                    crossbow::program_options::tag::ignore_short<true>{}),
+            crossbow::program_options::value<-2>("check", &check,
                     crossbow::program_options::tag::ignore_short<true>{}));
 
     try {
@@ -558,7 +561,7 @@ int main(int argc, const char** argv) {
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
-    LOG_INFO("Starting TellStore client");
+    LOG_INFO("Starting TellStore test client%1%", check ? " (Check)" : "");
     LOG_INFO("--- Commit Manager: %1%", clientConfig.commitManager);
     for (auto& ep : clientConfig.tellStore) {
         LOG_INFO("--- TellStore Shards: %1%", ep);
@@ -570,7 +573,7 @@ int main(int argc, const char** argv) {
 
     // Initialize network stack
     TestClient client(clientConfig, scanMemoryLength, numTuple, numTransactions);
-    client.run();
+    client.run(check);
     client.shutdown();
 
     LOG_INFO("Exiting TellStore client");

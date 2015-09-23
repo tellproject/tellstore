@@ -19,6 +19,7 @@ namespace tell {
 namespace store {
 
 struct ServerConfig;
+class ServerSocket;
 
 /**
  * @brief Status of the scan
@@ -71,18 +72,27 @@ private:
  */
 class ServerScanQuery final : public ScanQuery {
 public:
-    ServerScanQuery(uint16_t scanId, crossbow::infinio::MessageId messageId, ScanQueryType queryType,
-            std::unique_ptr<char[]> selectionData, size_t selectionLength, std::unique_ptr<char[]> queryData,
-            size_t queryLength, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot, const Record& record,
+    ServerScanQuery(uint16_t scanId, ScanQueryType queryType, std::unique_ptr<char[]> selectionData,
+            size_t selectionLength, std::unique_ptr<char[]> queryData, size_t queryLength,
+            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot, const Record& record,
             ScanBufferManager& scanBufferManager, crossbow::infinio::RemoteMemoryRegion destRegion,
-            crossbow::infinio::InfinibandSocket socket);
+            ServerSocket& socket);
 
     /**
-     * @brief The message ID of the starting process on the remote host
+     * @brief Request a progress update from the client
+     *
+     * Must be called from the socket's processing thread.
+     *
+     * @param offsetRead The amount of data the client already received
      */
-    crossbow::infinio::MessageId messageId() const {
-        return mMessageId;
-    }
+    void requestProgress(size_t offsetRead);
+
+    /**
+     * @brief The scan completed and all in-flight packages have been received by the client
+     *
+     * Must be called from the socket's processing thread.
+     */
+    void completeScan();
 
     /**
      * @brief Acquires a new buffer from the pool
@@ -96,10 +106,9 @@ public:
      *
      * @param start Begin pointer to the buffer containing the tuples
      * @param end End pointer to the buffer containing the tuples
-     * @param tupleCount Number of tuples contained in the buffer
      * @param ec Error in case the write fails
      */
-    virtual void writeOngoing(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) final
+    virtual void writeOngoing(const char* start, const char* end, std::error_code& ec) final
             override;
 
     /**
@@ -110,10 +119,9 @@ public:
      *
      * @param start Begin pointer to the buffer containing the tuples
      * @param end End pointer to the buffer containing the tuples
-     * @param tupleCount Number of tuples contained in the buffer
      * @param ec Error in case the write fails
      */
-    virtual void writeLast(const char* start, const char* end, uint16_t tupleCount, std::error_code& ec) final override;
+    virtual void writeLast(const char* start, const char* end, std::error_code& ec) final override;
 
     /**
      * @brief Writes the last tuples to the client
@@ -138,12 +146,10 @@ private:
      *
      * @param start Begin pointer to the buffer containing the tuples
      * @param end End pointer to the buffer containing the tuples
-     * @param tupleCount Number of tuples contained in the buffer
      * @param status Indicator if the scan is still progressing
      * @param ec Error in case the write fails
      */
-    void doWrite(const char* start, const char* end, uint16_t tupleCount, ScanStatusIndicator status,
-            std::error_code& ec);
+    void doWrite(const char* start, const char* end, ScanStatusIndicator status, std::error_code& ec);
 
     /// Number of currently active ScanQueryProcessor
     uint32_t mActive;
@@ -151,8 +157,8 @@ private:
     /// Scan ID of the starting process on the remote host
     uint16_t mScanId;
 
-    /// Message ID of the starting process on the remote host
-    crossbow::infinio::MessageId mMessageId;
+    /// Whether the client requested a progress update
+    std::atomic<bool> mProgressRequest;
 
     /// Buffer pool to acquire scan buffer from
     ScanBufferManager& mScanBufferManager;
@@ -161,7 +167,7 @@ private:
     crossbow::infinio::RemoteMemoryRegion mDestRegion;
 
     /// Connection to the remote host
-    crossbow::infinio::InfinibandSocket mSocket;
+    ServerSocket& mSocket;
 
     /// Mutex used to serialize writes over the connection
     tbb::spin_mutex mSendMutex;

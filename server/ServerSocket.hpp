@@ -35,6 +35,42 @@ public:
               mStorage(storage) {
     }
 
+    /**
+     * @brief Execute the function in the event loop
+     */
+    template <typename Fun>
+    void execute(Fun fun) {
+        mSocket->processor()->execute(std::move(fun));
+    }
+
+    /**
+     * @brief Writes the buffer into the scan destination region
+     */
+    template <typename Buffer>
+    void writeScanBuffer(Buffer& buffer, crossbow::infinio::RemoteMemoryRegion& destRegion, size_t offset, uint32_t userId, std::error_code& ec) {
+        while (true) {
+            mSocket->write(buffer, destRegion, offset, userId, ec);
+            // When we get a no memory error we overran the work queue because we are sending too fast
+            if (ec == std::errc::not_enough_memory) {
+                std::this_thread::yield();
+                ec = std::error_code();
+                continue;
+            }
+            break;
+        }
+    }
+
+    /**
+     * @brief Notifies the client of the scan progress
+     *
+     * Must only be called from within the socket's processing thread.
+     *
+     * @param scanId ID associated with the scan
+     * @param done Whether the scan has completed
+     * @param offset Amount of data written into the scan destination region
+     */
+    void writeScanProgress(uint16_t scanId, bool done, size_t offset);
+
 private:
     friend Base;
 
@@ -136,21 +172,26 @@ private:
     /**
      * The scan request has the following format:
      * - 8 bytes: The table ID of the requested tuple
-     * - 2 bytes: The ID associated with this scan
-     * - 6 bytes: Padding
+     * - 1 byte:  The type of the query data
+     * - 7 bytes: Padding
      * - 8 bytes: The address of the remote memory region
      * - 8 bytes: Length of the remote memory region
      * - 4 bytes: The access key of the remote memory region
      * - 4 bytes: Length of the selection's data field
-     * - x bytes: The selection's data
-     * - 1 byte:  The type of the query data
-     * - y bytes: Padding to make the message 4 byte aligned
+     * - x bytes: The selection's data (8 byte aligned)
+     * - 4 bytes: Padding
      * - 4 bytes: Length of the  query's data field
      * - x bytes: The query's data
      * - y bytes: Variable padding to make message 8 byte aligned
      * - x bytes: Snapshot descriptor
      */
     void handleScan(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
+
+    /**
+     * The scan progress request has the following format:
+     * - 8 bytes: Offset the client read up to
+     */
+    void handleScanProgress(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     virtual void onWrite(uint32_t userId, uint16_t bufferId, const std::error_code& ec) final override;
 
