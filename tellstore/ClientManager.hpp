@@ -48,11 +48,15 @@ enum class TransactionType : uint8_t {
 class ClientTransaction : crossbow::non_copyable {
 public:
     ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, TransactionType type,
-            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
+            bool shared, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     ~ClientTransaction();
 
     ClientTransaction(ClientTransaction&& other);
+
+    const commitmanager::SnapshotDescriptor& snapshot() const {
+        return *mSnapshot;
+    }
 
     uint64_t version() const {
         return mSnapshot->version();
@@ -60,6 +64,14 @@ public:
 
     TransactionType type() const {
         return mType;
+    }
+
+    bool shared() const {
+        return mShared;
+    }
+
+    bool committed() const {
+        return mCommitted;
     }
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
@@ -99,6 +111,7 @@ private:
     google::dense_hash_set<std::tuple<uint64_t, uint64_t>, ModifiedHasher> mModified;
 
     TransactionType mType;
+    bool mShared;
     bool mCommitted;
 };
 
@@ -114,6 +127,9 @@ public:
     }
 
     ClientTransaction startTransaction(TransactionType type = TransactionType::READ_WRITE);
+
+    ClientTransaction startTransaction(TransactionType type,
+            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
 
     Table createTable(const crossbow::string& name, Schema schema);
 

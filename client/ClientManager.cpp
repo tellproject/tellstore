@@ -25,17 +25,21 @@ std::unique_ptr<commitmanager::SnapshotDescriptor> analyticalSnapshot(uint64_t l
 } // anonymous namespace
 
 ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
-        TransactionType type, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
+        TransactionType type, bool shared, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
         : mProcessor(processor),
           mFiber(fiber),
           mSnapshot(std::move(snapshot)),
           mType(type),
+          mShared(shared),
           mCommitted(false) {
+    if (mType == TransactionType::READ_WRITE && mShared) {
+        throw std::logic_error("Shared transaction must be read-only");
+    }
     mModified.set_empty_key(std::make_tuple(0x0u, 0x0u));
 }
 
 ClientTransaction::~ClientTransaction() {
-    if (mCommitted) {
+    if (mCommitted || mShared) {
         return;
     }
 
@@ -52,6 +56,7 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
           mSnapshot(std::move(other.mSnapshot)),
           mModified(std::move(other.mModified)),
           mType(other.mType),
+          mShared(other.mShared),
           mCommitted(other.mCommitted) {
     other.mCommitted = true;
 }
@@ -100,14 +105,23 @@ std::shared_ptr<ScanIterator> ClientTransaction::scan(const Table& table, ScanMe
 }
 
 void ClientTransaction::commit() {
-    mModified.clear();
+    if (mCommitted) {
+        throw std::logic_error("Transaction has already committed");
+    }
+    if (mShared) {
+        throw std::logic_error("Transaction is shared");
+    }
+
+    LOG_ASSERT(mModified.empty() || mType == TransactionType::READ_WRITE,
+            "Modified elements even though transaction is read-only");
+
     mProcessor.commit(mFiber, *mSnapshot);
+    mModified.clear();
     mCommitted = true;
 }
 
 void ClientTransaction::abort() {
     if (!mModified.empty()) {
-        LOG_ASSERT(mType == TransactionType::READ_WRITE, "Modified elements even though transaction is read-only");
         rollbackModified();
     }
     commit();
@@ -152,6 +166,11 @@ ClientHandle::ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fi
 
 ClientTransaction ClientHandle::startTransaction(TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
+}
+
+ClientTransaction ClientHandle::startTransaction(TransactionType type,
+        std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot) {
+    return {mProcessor, mFiber, type, true, std::move(snapshot)};
 }
 
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
@@ -227,7 +246,7 @@ ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, Tr
         throw std::system_error(startResponse->error());
     }
 
-    return {*this, fiber, type, startResponse->get()};
+    return {*this, fiber, type, false, startResponse->get()};
 }
 
 Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
