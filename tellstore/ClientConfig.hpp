@@ -19,6 +19,7 @@ struct ClientConfig {
 
     ClientConfig()
             : maxPendingResponses(100ull),
+              maxBatchSize(16ull),
               numNetworkThreads(2ull) {
         infinibandConfig.receiveBufferCount = 128;
         infinibandConfig.sendBufferCount = 128;
@@ -37,6 +38,9 @@ struct ClientConfig {
 
     /// Maximum number of concurrent pending network requests (per connection)
     size_t maxPendingResponses;
+
+    /// Maximum number of messages per batch
+    size_t maxBatchSize;
 
     /// Number of network threads to process transactions on
     size_t numNetworkThreads;

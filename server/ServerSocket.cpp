@@ -400,6 +400,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
         const ServerConfig& config)
         : Base(service, config.port),
           mStorage(storage),
+          mMaxBatchSize(config.maxBatchSize),
           mScanBufferManager(service, config),
           mMaxInflightScanBuffer(config.maxInflightScanBuffer) {
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
@@ -415,7 +416,7 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
     auto thread = *reinterpret_cast<const uint64_t*>(&data.front());
     auto& processor = *mProcessors.at(thread % mProcessors.size());
 
-    return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxInflightScanBuffer);
+    return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
 }
 
 } // namespace store

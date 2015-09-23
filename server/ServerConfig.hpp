@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace tell {
@@ -24,6 +25,9 @@ struct ServerConfig {
     /// Maximum number of scan buffers that are in flight on a socket at the same time
     /// This limit might be exceeded by a small factor
     uint64_t maxInflightScanBuffer = 16;
+
+    /// Maximum number of messages per batch
+    size_t maxBatchSize = 16;
 };
 
 } // namespace store

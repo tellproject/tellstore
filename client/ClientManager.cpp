@@ -195,14 +195,15 @@ std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, u
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
         uint64_t processorNum)
         : mProcessor(service.createProcessor()),
-          mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses),
+          mCommitManagerSocket(service.createSocket(*mProcessor), config.maxPendingResponses, config.maxBatchSize),
           mProcessorNum(processorNum),
           mScanId(0u) {
     mCommitManagerSocket.connect(config.commitManager);
 
     mTellStoreSocket.reserve(config.tellStore.size());
     for (auto& ep : config.tellStore) {
-        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses));
+        mTellStoreSocket.emplace_back(new ClientSocket(service.createSocket(*mProcessor), config.maxPendingResponses,
+                config.maxBatchSize));
         mTellStoreSocket.back()->connect(ep, mProcessorNum);
     }
 }

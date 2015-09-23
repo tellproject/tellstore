@@ -31,8 +31,8 @@ class ServerSocket : public crossbow::infinio::RpcServerSocket<ServerManager, Se
 
 public:
     ServerSocket(ServerManager& manager, Storage& storage, crossbow::infinio::InfinibandProcessor& processor,
-            crossbow::infinio::InfinibandSocket socket, uint64_t maxInflightScanBuffer)
-            : Base(manager, processor, std::move(socket), crossbow::string()),
+            crossbow::infinio::InfinibandSocket socket, size_t maxBatchSize, uint64_t maxInflightScanBuffer)
+            : Base(manager, processor, std::move(socket), crossbow::string(), maxBatchSize),
               mStorage(storage),
               mMaxInflightScanBuffer(maxInflightScanBuffer),
               mInflightScanBuffer(0u) {
@@ -263,6 +263,8 @@ private:
     }
 
     Storage& mStorage;
+
+    size_t mMaxBatchSize;
 
     ScanBufferManager mScanBufferManager;
     uint64_t mMaxInflightScanBuffer;
