@@ -298,10 +298,7 @@ protected:
     std::atomic<bool> mGo;
 };
 
-// TODO Reactivate Delta Main test (currently crashes)
-
-using HeavyStorageTestImplementations = ::testing::Types<StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>>;
-TYPED_TEST_CASE(HeavyStorageTest, HeavyStorageTestImplementations);
+TYPED_TEST_CASE(HeavyStorageTest, StorageTestImplementations);
 
 TYPED_TEST(HeavyStorageTest, DISABLED_heavy) {
     std::array<std::thread, 3> threads = {{
