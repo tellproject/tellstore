@@ -79,7 +79,7 @@ public:
     RowStorePage(PageManager& pageManager, char* data, Table *table = nullptr)
         : mPageManager(pageManager)
         , mData(data)
-        , mSize(uint64_t(*reinterpret_cast<const uint64_t*>(data)))
+        , mSize(data ? *reinterpret_cast<const uint64_t*>(data) : 0u)
         , mStartOffset(8)
         , mFillPage(nullptr)
         , mFillOffset(0) {}
