@@ -49,13 +49,13 @@ public:
         //TODO: check whether this loop does the correct thing... doesn't
         //this assume that the newestPtr is stored at the beginning of a
         //log record (which is actually not the case)?
-        while (ptr->load() % 2) {
+        while (p % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();
         }
-        return reinterpret_cast<char*>(p);
-        }
+        return reinterpret_cast<T>(p);
+    }
 
 
     T dataPtr() {
@@ -151,8 +151,7 @@ public:
             // If the newest version is smaller than the
             // lowest active version, we can delete the whole
             // entry.
-            //TODO: shouldn't that be: versions()[NV] < lowestActiveVersion
-            if (nV < lowestActiveVersion) return true;
+            if (versions()[nV - 1] < lowestActiveVersion) return true;
             // otherwise we need to keep it, but it could be
             // that there was an insert
             CDMRecord rec(mData);
@@ -381,13 +380,12 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         auto key = myRec.key();
         auto iter = insertMap.find(key);
         const char* current = newest;
-        if (current == nullptr && iter != insertMap.end()
-                && (versions.empty() || versions.rbegin()->second.size == 0)) {
+        bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
+        if (current == nullptr && iter != insertMap.end() && newestIsDelete) {
             // there are inserts that need to be processed
             current = iter->second.front();
             iter->second.pop_front();
         }
-        bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
         while (current) {
         //TODO: shouldn't newest somewhere get the value of the newestptr of the newest insert?! --> This way, we might loose updates!
             CDMRecord rec(current);
@@ -455,7 +453,7 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         // now we can write the new version
         RowStoreMVRecord<char*> newRec(dest);
         newRec.writeKey(key);
-        *reinterpret_cast<uint32_t*>(dest+ 4) = uint32_t(newNumberOfVersions);
+        *reinterpret_cast<uint32_t*>(dest + 4) = uint32_t(newNumberOfVersions);
         uint64_t* newVersions = newRec.versions();
         int32_t* newOffsets = newRec.offsets();
         newOffsets[0] = dest - newRec.dataPtr();

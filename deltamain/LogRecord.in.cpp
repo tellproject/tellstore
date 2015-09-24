@@ -61,7 +61,7 @@ public:
     }
 
     uint64_t version() const {
-        return *reinterpret_cast<const uint64_t*>(mData+ 16);
+        return *reinterpret_cast<const uint64_t*>(mData + 16);
     }
 
     T getPrevious() const {
@@ -100,7 +100,7 @@ class LogInsOrUpBase : public LogOp<T> {
 public:
     LogInsOrUpBase(T data) : LogOp<T>(data) {}
     T data_ptr() const {
-        return this->mData + 40;
+        return this->mData + 32;
     }
 };
 
@@ -122,7 +122,7 @@ public:
     using Type = typename DMRecordImplBase<T>::Type;
     LogInsertBase(T data) : LogInsOrUp<T>(data) {}
     size_t dataOffset() const {
-        return 40;
+        return 32;
     }
 
     std::atomic<const char*>* getNewestAtomic() const {
@@ -147,12 +147,12 @@ public:
         //TODO: check whether this loop does the correct thing... doesn't
         //this assume that the newestPtr is stored at the beginning of a
         //log record (which is actually not the case)?
-        while (ptr->load() % 2) {
+        while (p % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();
         }
-        return reinterpret_cast<char*>(p);
+        return reinterpret_cast<T>(p);
     }
 
     void revert(uint64_t version) {

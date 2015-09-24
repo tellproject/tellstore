@@ -121,15 +121,19 @@ char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& ins
         uint64_t key = fst->first.key;
         // since we truncate the log only on a page level, it could be that
         // there are still some inserts that got processed in the previous GC phase
-        if (hashTable.get(key)) { insertMap.erase(fst); continue; }
+        if (hashTable.get(key)) {
+            insertMap.erase(fst);
+            continue;
+        }
+        auto pos = mFillPage + mFillOffset;
         dummy.writeKey(key);
         mFillOffset += dummy.copyAndCompact(lowestActiveVersion,
                 insertMap,
-                mFillPage + mFillOffset,
+                pos,
                 TELL_PAGE_SIZE - mFillOffset,
                 couldRelocate);
         if (couldRelocate) {
-            hashTable.insert(key, mFillPage + mFillOffset);
+            hashTable.insert(key, pos);
             insertMap.erase(fst);
         } else {
             break;
