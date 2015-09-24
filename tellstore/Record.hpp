@@ -521,6 +521,14 @@ public:
         return mFieldMetaData.size();
     }
 
+    size_t fixedSizeFieldCount() const {
+        return mSchema.fixedSizeFields().size();
+    }
+
+    size_t varSizeFieldCount() const {
+        return mSchema.varSizeFields().size();
+    }
+
     const std::pair<Field, int32_t>& getFieldMeta(id_t id) const {
         return mFieldMetaData.at(id);
     }

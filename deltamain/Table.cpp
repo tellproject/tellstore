@@ -10,25 +10,29 @@
 namespace tell {
 namespace store {
 namespace deltamain {
+namespace {
 
-// this is just a very rough heuristic, but should hopefully be good enough
-#define GET_PAGE_CAPACITY(schema, record) \
-2 * ((uint) ( \
-    (double) TELL_PAGE_SIZE / (28.0 \
-        + mRecord.getFieldMeta(mNumberOfFixedSizedFields).second) \
-        + mNumberOfVarSizedFields * (12.0 + 4.0*VAR_SIZED_OVERHEAD) \
-+ 1.0) / 2)
+/**
+ * @brief Expected number of elements per page
+ *
+ * This is just a very rough heuristic, but should hopefully be good enough
+ */
+uint32_t pageCapacity(const Record& record) {
+    return TELL_PAGE_SIZE / (28 + record.minimumSize() + record.varSizeFieldCount() * (8 + 4 * VAR_SIZED_OVERHEAD)) + 1;
+}
+
+} // anonymous namespace
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     : mPageManager(pageManager)
-    , mRecord(schema)
+    , mRecord(std::move(schema))
     , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
     , mPages(crossbow::allocator::construct<PageList>())
-    , mNumberOfFixedSizedFields(schema.fixedSizeFields().size())
-    , mNumberOfVarSizedFields(schema.varSizeFields().size())
-    , mPageCapacity(GET_PAGE_CAPACITY(schema, mRecord))
+    , mNumberOfFixedSizedFields(mRecord.fixedSizeFieldCount())
+    , mNumberOfVarSizedFields(mRecord.varSizeFieldCount())
+    , mPageCapacity(pageCapacity(mRecord))
 {}
 
 Table::~Table() {
