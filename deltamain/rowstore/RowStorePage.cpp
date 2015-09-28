@@ -60,9 +60,6 @@ auto RowStorePage::end() const -> Iterator {
     return Iterator(mData + mSize);
 }
 
-//TODO: question: this implementation relies on the fact that fresh pages are meset to 0s. Is that actually the case?
-//TODO: question: will mStartOffset be valid for the whole GC phase? Can it happen that the page is called later again
-// by GC, but with a newly generated Page object (and mStartIndex reset to 8)?
 char* RowStorePage::gc(uint64_t lowestActiveVersion,
         InsertMap& insertMap,
         bool& done,
@@ -73,7 +70,7 @@ char* RowStorePage::gc(uint64_t lowestActiveVersion,
         // in the first iteration we just decide wether we
         // need to collect any garbage here
         bool hasToClean = mStartOffset != 8;
-        while (offset <= mSize && !hasToClean) {
+        while (offset < mSize && !hasToClean) {
             CDMRecord rec(mData + offset);
             if (rec.needsCleaning(lowestActiveVersion, insertMap)) {
                 hasToClean = true;
@@ -99,9 +96,10 @@ char* RowStorePage::gc(uint64_t lowestActiveVersion,
         while (offset < mSize) {
             CDMRecord rec(mData + offset);
             bool couldRelocate = false;
-            auto nSize = rec.copyAndCompact(lowestActiveVersion,
+            auto pos = mFillPage + mFillOffset;
+            mFillOffset += rec.copyAndCompact(lowestActiveVersion,
                     insertMap,
-                    mFillPage + mFillOffset,
+                    pos,
                     TELL_PAGE_SIZE - mFillOffset,
                     couldRelocate);
             if (!couldRelocate) {
@@ -113,8 +111,7 @@ char* RowStorePage::gc(uint64_t lowestActiveVersion,
                 done = false;
                 return res;
             }
-            mFillOffset += nSize;
-            hashTable.insert(rec.key(), mFillPage + mFillOffset, true);
+            hashTable.insert(rec.key(), pos, true);
             offset += rec.size();
         }
 
@@ -128,14 +125,15 @@ char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& ins
     // construct new fill page if needed
     constructFillPage();
 
+    // Create a dummy record to copy the inserts into the main page
+    // The dummy record has one version that is marked as delete so only inserts are processed. The newest pointer and
+    // the key have to be reset every time we use the dummy record.
     char dummyRecord[40];
     dummyRecord[0] = crossbow::to_underlying(RecordType::MULTI_VERSION_RECORD);
-    // there are 0 number of versions
-    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 1;
-    *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr;
-    *reinterpret_cast<uint64_t*>(dummyRecord + 24) = 0;
-    *reinterpret_cast<uint32_t*>(dummyRecord + 32) = 40;
-    *reinterpret_cast<uint32_t*>(dummyRecord + 36) = 40;
+    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 1; // Number of versions
+    *reinterpret_cast<uint64_t*>(dummyRecord + 24) = 0; // Version number
+    *reinterpret_cast<uint32_t*>(dummyRecord + 32) = 40; // Offset to first version (start of data region)
+    *reinterpret_cast<uint32_t*>(dummyRecord + 36) = 40; // Offset past the last version (end of data region)
     DMRecord dummy(dummyRecord);
     while (!insertMap.empty()) {
         bool couldRelocate;
@@ -147,8 +145,11 @@ char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& ins
             insertMap.erase(fst);
             continue;
         }
-        auto pos = mFillPage + mFillOffset;
+
+        *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr; // Newest pointer
         dummy.writeKey(key);
+
+        auto pos = mFillPage + mFillOffset;
         mFillOffset += dummy.copyAndCompact(lowestActiveVersion,
                 insertMap,
                 pos,
