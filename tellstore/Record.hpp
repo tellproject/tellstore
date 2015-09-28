@@ -61,7 +61,7 @@ enum class FieldType
 class Record;
 
 enum class PredicateType : uint8_t {
-    EQUAL,
+    EQUAL = 1,
     NOT_EQUAL,
     LESS,
     LESS_EQUAL,
