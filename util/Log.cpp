@@ -247,20 +247,19 @@ UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
 OrderedLogImpl::OrderedLogImpl(PageManager& pageManager)
         : BaseLogImpl(pageManager),
           mHead(acquirePage()),
-          mTail(mHead.load()) {
-    LOG_ASSERT(mHead.load() == mTail.load(), "Head and Tail do not point to the same page");
+          mTail(LogTail(mHead.load(), 0)) {
+    LOG_ASSERT(mHead.load() == mTail.load().tailPage, "Head and Tail do not point to the same page");
 }
 
-bool OrderedLogImpl::truncateLog(LogPage* oldTail, LogPage* newTail) {
-    if (oldTail == newTail) {
-        return (mTail.load() == newTail);
-    }
-
-    if (!mTail.compare_exchange_strong(oldTail, newTail)) {
+bool OrderedLogImpl::truncateLog(LogIterator oldTail, LogIterator newTail) {
+    LogTail old(oldTail.page(), oldTail.offset());
+    if (!mTail.compare_exchange_strong(old, LogTail(newTail.page(), newTail.offset()))) {
         return false;
     }
 
-    freePage(oldTail, newTail);
+    if (oldTail.page() != newTail.page()) {
+        freePage(oldTail.page(), newTail.page());
+    }
 
     return true;
 }
@@ -322,12 +321,12 @@ template <class Impl>
 Log<Impl>::~Log() {
     // Safe Memory Reclamation mechanism has to ensure that the Log class is only deleted when no one references it
     // anymore so we can safely delete all pages here
-    auto page = Impl::pageBegin();
-    auto end = Impl::pageEnd();
-    while (page != end) {
-        auto next = page->next().load();
+    auto i = pageBegin();
+    auto end = pageEnd();
+    while (i != end) {
+        auto page = i.operator->();
+        ++i;
         Impl::freePageNow(page);
-        page = next;
     }
 }
 

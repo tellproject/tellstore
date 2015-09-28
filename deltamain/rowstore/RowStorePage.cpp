@@ -138,13 +138,7 @@ char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& ins
     while (!insertMap.empty()) {
         bool couldRelocate;
         auto fst = insertMap.begin();
-        uint64_t key = fst->first.key;
-        // since we truncate the log only on a page level, it could be that
-        // there are still some inserts that got processed in the previous GC phase
-        if (hashTable.get(key)) {
-            insertMap.erase(fst);
-            continue;
-        }
+        auto key = fst->first.key;
 
         *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr; // Newest pointer
         dummy.writeKey(key);

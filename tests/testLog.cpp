@@ -579,34 +579,49 @@ TEST_F(OrderedLogFilledTest, logIterator) {
 
 /**
  * @class Log
- * @test Check that truncation works correctly
+ * @test Check that truncation works correctly when truncating over a page
  */
-TEST_F(OrderedLogFilledTest, truncateLog) {
+TEST_F(OrderedLogFilledTest, truncateLogDifferentPage) {
     auto tail = mLog.tail();
     auto begin = mLog.begin();
 
     // Advance iterator to second page
     auto i = begin;
-    ++i; ++i;
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
 
-    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
+    ++i;
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
+
+    ++i;
+    EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
+
+    EXPECT_TRUE(mLog.truncateLog(begin, i));
     EXPECT_EQ(mLog.tail(), tail->next()) << "New tail not pointing to next page";
+
+    auto j = mLog.begin();
+    EXPECT_EQ(mEntry3, &(*j)) << "Iterator not pointing to third entry";
 }
 
 /**
  * @class Log
- * @test Check that truncating the log to the previous tail page is a no-op
+ * @test Check that truncation works correctly on the same page
  */
-TEST_F(OrderedLogFilledTest, truncateLogTailPage) {
+TEST_F(OrderedLogFilledTest, truncateLogSamePage) {
     auto tail = mLog.tail();
     auto begin = mLog.begin();
 
-    // Advance iterator by one element (same page)
+    // Advance iterator to second page
     auto i = begin;
-    ++i;
+    EXPECT_EQ(mEntry1, &(*i)) << "Iterator not pointing to first entry";
 
-    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
-    EXPECT_EQ(mLog.tail(), tail) << "New tail not the same as the previous tail";
+    ++i;
+    EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
+
+    EXPECT_TRUE(mLog.truncateLog(begin, i));
+    EXPECT_EQ(mLog.tail(), tail) << "New tail not pointing to same page";
+
+    auto j = mLog.begin();
+    EXPECT_EQ(mEntry2, &(*j)) << "Iterator not pointing to second entry";
 }
 
 /**
@@ -621,13 +636,13 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
     auto i = begin;
     ++i; ++i;
 
-    EXPECT_TRUE(mLog.truncateLog(begin.page(), i.page()));
+    EXPECT_TRUE(mLog.truncateLog(begin, i));
     EXPECT_EQ(mLog.tail(), tail->next()) << "Iterator not pointing to end";
 
     // Advance iterator to same page
     auto j = begin;
     j++;
-    EXPECT_FALSE(mLog.truncateLog(begin.page(), j.page()));
+    EXPECT_FALSE(mLog.truncateLog(begin, j));
 }
 
 template <typename Impl>

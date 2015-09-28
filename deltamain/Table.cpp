@@ -319,9 +319,9 @@ void Table::runGC(uint64_t minVersion) {
         mHashTable.store(hashTable.done());
         crossbow::allocator::destroy(ht);
     }
-    auto insertRes = mInsertLog.truncateLog(insBegin.page(), insIter.page());
+    auto insertRes = mInsertLog.truncateLog(insBegin, insIter);
     LOG_ASSERT(insertRes, "Truncating insert log did not succeed");
-    auto updateRes = mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page());
+    auto updateRes = mUpdateLog.truncateLog(updateBegin, updateEnd);
     LOG_ASSERT(updateRes, "Truncating update log did not succeed");
 }
 
