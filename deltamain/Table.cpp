@@ -269,15 +269,16 @@ std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char
 void Table::runGC(uint64_t minVersion) {
     crossbow::allocator _;
     auto hashTable = mHashTable.load()->modifier();
-    // we need to process the insert-log first. There might be delted
-    // records which have an insert
-    auto insBegin = mInsertLog.begin();
-    auto insIter = insBegin;
-    auto end = mInsertLog.end();
+
+    // We need to process the insert-log first. There might be deleted records which have an insert
+    // Get the iterators for the update log first to not loose any updates when truncating
     auto updateBegin = mUpdateLog.end();
     auto updateEnd = mUpdateLog.end();
+    auto insBegin = mInsertLog.begin();
+    auto insIter = insBegin;
+    auto insEnd = mInsertLog.end();
     InsertMap insertMap;
-    for (; insIter != end && insIter->sealed(); ++insIter) {
+    for (; insIter != insEnd && insIter->sealed(); ++insIter) {
         CDMRecord rec(insIter->data());
         if (!rec.isValidDataRecord()) continue;
         auto k = rec.key();
@@ -308,7 +309,6 @@ void Table::runGC(uint64_t minVersion) {
     }
 
     // The garbage collection is finished - we can now reset the read only table
-    // Todo: question: should hash table be SWAPed first or page list?!
     {
         auto p = mPages.load();
         mPages.store(nPagesPtr);
@@ -319,8 +319,10 @@ void Table::runGC(uint64_t minVersion) {
         mHashTable.store(hashTable.done());
         crossbow::allocator::destroy(ht);
     }
-    while (!mInsertLog.truncateLog(insIter.page(), end.page()));
-    while (!mUpdateLog.truncateLog(updateBegin.page(), updateEnd.page())); 
+    __attribute__((unused)) auto insertRes = mInsertLog.truncateLog(insBegin, insIter);
+    LOG_ASSERT(insertRes, "Truncating insert log did not succeed");
+    __attribute__((unused)) auto updateRes = mUpdateLog.truncateLog(updateBegin, updateEnd);
+    LOG_ASSERT(updateRes, "Truncating update log did not succeed");
 }
 
 void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {

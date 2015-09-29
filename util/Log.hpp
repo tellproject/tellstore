@@ -592,47 +592,36 @@ protected:
     /**
      * @brief Page iteration starts from the head
      */
-    LogPage* pageBegin() {
-        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->pageBegin());
-    }
-
-    const LogPage* pageBegin() const {
+    template <typename Iterator>
+    Iterator pageBeginImpl() const {
         auto head = mHead.load();
-        return (head.appendHead ? head.appendHead : head.writeHead);
+        return Iterator(head.appendHead ? head.appendHead : head.writeHead);
     }
 
     /**
      * @brief Page iteration stops at the nullptr page
      */
-    LogPage* pageEnd() {
-        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->pageEnd());
-    }
-
-    const LogPage* pageEnd() const {
-        return nullptr;
+    template <typename Iterator>
+    Iterator pageEndImpl() const {
+        return Iterator(nullptr);
     }
 
     /**
      * @brief Log iteration starts from the head
      */
-    LogPage* entryBegin() {
-        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->entryBegin());
-    }
-
-    const LogPage* entryBegin() const {
+    template <typename Iterator>
+    Iterator entryBeginImpl() const {
         auto head = mHead.load();
-        return (head.appendHead ? head.appendHead : head.writeHead);
+        return Iterator(head.appendHead ? head.appendHead : head.writeHead);
     }
 
     /**
      * @brief Entry iteration stops at the tail page
      */
-    LogPage* entryEnd() {
-        return const_cast<LogPage*>(const_cast<const UnorderedLogImpl*>(this)->entryEnd());
-    }
-
-    const LogPage* entryEnd() const {
-        return mTail.load();
+    template <typename Iterator>
+    Iterator entryEndImpl() const {
+        auto page = mTail.load();
+        return Iterator(page, page->offset());
     }
 
 private:
@@ -784,11 +773,11 @@ public:
     }
 
     LogPage* tail() {
-        return mTail.load();
+        return mTail.load().tailPage;
     }
 
     /**
-     * @brief Tries to set the new tail page of the log from oldTail to newTail
+     * @brief Tries to set the new tail of the log from oldTail to newTail
      *
      * After this operation the log will begin at the new tail instead from the old tail. All truncated pages will be
      * freed by the Safe Memory Reclamation mechanism.
@@ -797,7 +786,7 @@ public:
      * @param newTail The new tail
      * @return True if the truncation succeeded
      */
-    bool truncateLog(LogPage* oldTail, LogPage* newTail);
+    bool truncateLog(LogIterator oldTail, LogIterator newTail);
 
 protected:
     OrderedLogImpl(PageManager& pageManager);
@@ -807,55 +796,67 @@ protected:
     /**
      * @brief Page iteration starts from the tail
      */
-    LogPage* pageBegin() {
-        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->pageBegin());
-    }
-
-    const LogPage* pageBegin() const {
-        return mTail.load();
+    template <typename Iterator>
+    Iterator pageBeginImpl() const {
+        auto tail = mTail.load();
+        return Iterator(tail.tailPage);
     }
 
     /**
      * @brief Page iteration ends with a nullptr
      */
-    LogPage* pageEnd() {
-        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->pageEnd());
-    }
-
-    const LogPage* pageEnd() const {
-        return nullptr;
+    template <typename Iterator>
+    Iterator pageEndImpl() const {
+        return Iterator(nullptr);
     }
 
     /**
      * @brief Entry iteration starts from the tail
      */
-    LogPage* entryBegin() {
-        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->entryBegin());
-    }
-
-    const LogPage* entryBegin() const {
-        return mTail.load();
+    template <typename Iterator>
+    Iterator entryBeginImpl() const {
+        auto tail = mTail.load();
+        return Iterator(tail.tailPage, tail.startOffset);
     }
 
     /**
      * @brief Entry iteration ends at the current head
      */
-    LogPage* entryEnd() {
-        return const_cast<LogPage*>(const_cast<const OrderedLogImpl*>(this)->entryEnd());
-    }
-
-    const LogPage* entryEnd() const {
-        return mHead.load();
+    template <typename Iterator>
+    Iterator entryEndImpl() const {
+        auto page = mHead.load();
+        return Iterator(page, page->offset());
     }
 
 private:
+    /**
+     * @brief Struct containing the log tail
+     *
+     * Stores a pointer to the current tail page and the offset up to which the page was truncated.
+     *
+     * The 16 byte alignment is required on x64 for the 128 bit CAS to work correctly. The stored offset value has to be
+     * 8 byte in size to make the object use the complete 16 bytes (otherwise the 128 bit CAS would fail on garbage
+     * data).
+     */
+    struct alignas(16) LogTail {
+        LogTail() noexcept = default;
+
+        LogTail(LogPage* tail, uint32_t offset)
+                : tailPage(tail),
+                  startOffset(offset) {
+        }
+
+        LogPage* tailPage;
+        uint64_t startOffset;
+    };
+
     /**
      * @brief Tries to allocate a new head page
      */
     LogPage* createPage(LogPage* oldHead);
 
     std::atomic<LogPage*> mHead;
-    std::atomic<LogPage*> mTail;
+    std::atomic<LogTail> mTail;
 };
 
 /**
@@ -927,15 +928,15 @@ public:
     LogEntry* append(uint32_t size, uint32_t type = 0x0u);
 
     PageIterator pageBegin() {
-        return PageIterator(Impl::pageBegin());
+        return Impl::template pageBeginImpl<PageIterator>();
     }
 
     PageIterator pageEnd() {
-        return PageIterator(Impl::pageEnd());
+        return Impl::template pageEndImpl<PageIterator>();
     }
 
     LogIterator begin() {
-        return LogIterator(Impl::entryBegin());
+        return Impl::template entryBeginImpl<typename Impl::LogIterator>();
     }
 
     ConstLogIterator begin() const {
@@ -943,12 +944,11 @@ public:
     }
 
     ConstLogIterator cbegin() const {
-        return ConstLogIterator(Impl::entryBegin());
+        return Impl::template entryBeginImpl<typename Impl::ConstLogIterator>();
     }
 
     LogIterator end() {
-        auto page = Impl::entryEnd();
-        return LogIterator(page, page->offset());
+        return Impl::template entryEndImpl<typename Impl::LogIterator>();
     }
 
     ConstLogIterator end() const {
@@ -956,8 +956,7 @@ public:
     }
 
     ConstLogIterator cend() const {
-        auto page = Impl::entryEnd();
-        return ConstLogIterator(page, page->offset());
+        return Impl::template entryEndImpl<typename Impl::ConstLogIterator>();
     }
 };
 

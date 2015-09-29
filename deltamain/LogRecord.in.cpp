@@ -195,7 +195,7 @@ public:
         //TODO: check whether this loop does the correct thing... doesn't
         //this assume that the newestPtr is stored at the beginning of a
         //log record (which is actually not the case)?
-        while (ptr->load() % 2) {
+        while (p % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();

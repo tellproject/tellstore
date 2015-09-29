@@ -117,7 +117,7 @@ public:
         //TODO: check whether this loop does the correct thing... doesn't
         //this assume that the newestPtr is stored at the beginning of a
         //log record (which is actually not the case)?
-        while (ptr->load() % 2) {
+        while (p % 2) {
             // we need to follow this pointer
             ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
             p = ptr->load();
@@ -139,7 +139,7 @@ public:
     const int32_t *offsets() const {
         auto nVersions = getNumberOfVersions();
         size_t off = 24 + 8*nVersions;
-        return reinterpret_cast<const int32_t*>(mData +off);
+        return reinterpret_cast<const int32_t*>(mData + off);
     }
 
     uint64_t size() const {
@@ -148,7 +148,7 @@ public:
         return off[v];
     }
 
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
+    bool needsCleaning(uint64_t lowestActiveVersion, const InsertMap& insertMap) const {
         if (getNewest()) return true;
         auto offs = offsets();
         auto nV = getNumberOfVersions();
@@ -257,7 +257,7 @@ public:
 
     uint64_t copyAndCompact(
             uint64_t lowestActiveVersion,
-            InsertMap& insertMap,
+            const InsertMap& insertMap,
             char* dest,
             uint64_t maxSize,
             bool& success) const;
@@ -343,12 +343,11 @@ struct RowStoreMVRecord<char*> : GeneralUpdates<RowStoreMVRecordBase<char*>> {
 template <class T>
 uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         uint64_t lowestActiveVersion,
-        InsertMap& insertMap,
+        const InsertMap& insertMap,
         char* dest,
         uint64_t maxSize,
         bool& success) const
 {
-        uint64_t offset = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
         auto v = versions();
         auto offs = offsets();
         auto nV = getNumberOfVersions();
@@ -400,28 +399,28 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         // now we need to collect all versions which are in the update and insert log
         CDMRecord myRec(mData);
         auto key = myRec.key();
-        auto iter = insertMap.find(key);
         const char* current = newest;
         bool newestIsDelete = versions.empty() || versions.rbegin()->second.size == 0;
-        if (current == nullptr && iter != insertMap.end() && newestIsDelete) {
+        auto iter = insertMap.find(key);
+        decltype(iter->second.begin()) insertsIter;
+        decltype(iter->second.end()) insertsEnd;
+        if (iter != insertMap.end()) {
+            insertsIter = iter->second.begin();
+            insertsEnd = iter->second.end();
+        }
+        if (current == nullptr && insertsIter != insertsEnd && newestIsDelete) {
             // there are inserts that need to be processed
-            current = iter->second.front();
-            iter->second.pop_front();
+            current = *insertsIter;
+            ++insertsIter;
         }
         while (current) {
         //TODO: shouldn't newest somewhere get the value of the newestptr of the newest insert?! --> This way, we might loose updates!
             CDMRecord rec(current);
             bool allVersionsInvalid;
             rec.collect(versions, newestIsDelete, allVersionsInvalid);
-            if (newestIsDelete || allVersionsInvalid) {
-                if (iter != insertMap.end()) {
-                    if (iter->second.empty()) {
-                        insertMap.erase(iter);
-                        break;
-                    }
-                    current = iter->second.front();
-                    iter->second.pop_front();
-                }
+            if ((newestIsDelete || allVersionsInvalid) && insertsIter != insertsEnd) {
+                current = *insertsIter;
+                ++insertsIter;
             } else {
                 // in this case we do not need to check further for
                 // inserts
@@ -446,26 +445,27 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
             success = true;
             return 0;
         }
-        // now we need to check whether the tuple will fit in the available memory
-        // first we calculate the size of all tuples:
-        size_t tupleDataSize = 0;
         auto firstValidVersion = versions.lower_bound(lowestActiveVersion);
         if (firstValidVersion == versions.end()) {
             --firstValidVersion;
         }
         versions.erase(versions.begin(), firstValidVersion);
+
+        // now we need to check whether the tuple will fit in the available memory
+        // first we calculate the size of all tuples:
+        size_t tupleDataSize = 0;
         auto newNumberOfVersions = versions.size();
         for (auto iter = versions.begin(); iter != versions.end(); ++iter) {
             LOG_ASSERT(reinterpret_cast<const uint64_t>(iter->second.record) % 8 == 0,
                     "Record needs to be 8 byte aligned");
             LOG_ASSERT(iter->second.size % 8 == 0, "The size of a record has to be a multiple of 8");
             tupleDataSize += iter->second.size;
-            ++newNumberOfVersions;
         }
-        auto newTotalSize = offset;
-        newTotalSize += 8*newNumberOfVersions;
-        newTotalSize += 4*(newNumberOfVersions + 1);
-        newTotalSize += newNumberOfVersions % 2 == 0 ? 4 : 0;
+        auto newHeaderSize = DMRecord::spaceOverhead(DMRecord::Type::MULTI_VERSION_RECORD);
+        newHeaderSize += 8*newNumberOfVersions;
+        newHeaderSize += 4*(newNumberOfVersions + 1);
+        newHeaderSize += newNumberOfVersions % 2 == 0 ? 4 : 0;
+        auto newTotalSize = newHeaderSize;
         newTotalSize += tupleDataSize;
         if (newTotalSize >= maxSize) {
             success = false;
@@ -478,7 +478,7 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         *reinterpret_cast<uint32_t*>(dest + 4) = uint32_t(newNumberOfVersions);
         uint64_t* newVersions = newRec.versions();
         int32_t* newOffsets = newRec.offsets();
-        newOffsets[0] = dest - newRec.dataPtr();
+        newOffsets[0] = newHeaderSize;
         newOffsets[newNumberOfVersions] = newTotalSize;
         uint32_t offsetCounter = 0;
         std::atomic<const char*>* newestIns = nullptr;
