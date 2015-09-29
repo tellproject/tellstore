@@ -21,6 +21,7 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 #pragma once
+#include <cstdint>
 
 namespace tell {
 namespace store {
