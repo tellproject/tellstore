@@ -27,6 +27,7 @@
 #include <tellstore/GenericTuple.hpp>
 #include <tellstore/ScanMemory.hpp>
 #include <tellstore/Table.hpp>
+#include <tellstore/TransactionType.hpp>
 
 #include <commitmanager/ClientSocket.hpp>
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -57,12 +58,6 @@ namespace store {
 struct ClientConfig;
 class BaseClientProcessor;
 class Record;
-
-enum class TransactionType : uint8_t {
-    READ_WRITE,
-    READ_ONLY,
-    ANALYTICAL,
-};
 
 /**
  * @brief Class representing a TellStore transaction

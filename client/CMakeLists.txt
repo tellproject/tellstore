@@ -15,6 +15,7 @@ set(CLIENT_PUBLIC_HDR
     ScanMemory.hpp
     Table.hpp
     TransactionRunner.hpp
+    TransactionType.hpp
 )
 
 # Transform public header list to use absolute paths
