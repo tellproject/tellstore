@@ -90,11 +90,27 @@ std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
+        const AbstractTuple& tuple, bool hasSucceeded /* = true */) {
+    checkTransaction(table, false);
+
+    mModified.insert(std::make_tuple(table.tableId(), key));
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
+}
+
+std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
         const GenericTuple& tuple, bool hasSucceeded /* = true */) {
     checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
+}
+
+std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
+        const AbstractTuple& tuple) {
+    checkTransaction(table, false);
+
+    mModified.insert(std::make_tuple(table.tableId(), key));
+    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,

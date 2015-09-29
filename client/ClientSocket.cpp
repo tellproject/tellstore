@@ -21,6 +21,7 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 #include <tellstore/ClientSocket.hpp>
+#include <tellstore/AbstractTuple.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 
@@ -30,6 +31,8 @@
 
 namespace tell {
 namespace store {
+
+AbstractTuple::~AbstractTuple() {}
 
 namespace {
 
@@ -288,11 +291,11 @@ std::shared_ptr<GetResponse> ClientSocket::get(crossbow::infinio::Fiber& fiber, 
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        uint64_t key, const Record& record, const GenericTuple& tuple,
+        uint64_t key, const Record& record, const AbstractTuple& tuple,
         const commitmanager::SnapshotDescriptor& snapshot, bool hasSucceeded) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
-    auto tupleLength = record.sizeOfTuple(tuple);
+    auto tupleLength = tuple.size();
     uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
     messageLength += messageAlign(messageLength, sizeof(uint64_t));
     messageLength += sizeof(uint64_t) + snapshot.serializedLength();
@@ -306,10 +309,61 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
 
         message.align(sizeof(uint32_t));
         message.write<uint32_t>(tupleLength);
-        if (!record.create(message.data(), tuple, tupleLength)) {
-            ec = error::invalid_tuple;
-            return;
-        }
+        tuple.serialize(message.data());
+        message.advance(tupleLength);
+
+        message.align(sizeof(uint64_t));
+        writeSnapshot(message, snapshot);
+    });
+
+    return response;
+}
+
+class GenericTupleSerializer : public AbstractTuple {
+    const Record& record;
+    const GenericTuple& tuple;
+    const size_t sz;
+public:
+    GenericTupleSerializer(const Record& rec, const GenericTuple& tuple)
+        : record(rec)
+        , tuple(tuple)
+        , sz(record.sizeOfTuple(tuple))
+    {}
+
+    size_t size() const override {
+        return sz;
+    }
+
+    void serialize(char* dest) const override {
+        record.create(dest, tuple, sz);
+    }
+};
+
+std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+        uint64_t key, const Record& record, const GenericTuple& tuple,
+        const commitmanager::SnapshotDescriptor& snapshot, bool hasSucceeded) {
+    GenericTupleSerializer ser(record, tuple);
+    return insert(fiber, tableId, key, record, ser, snapshot, hasSucceeded);
+}
+
+std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+        uint64_t key, const Record& record, const AbstractTuple& tuple,
+        const commitmanager::SnapshotDescriptor& snapshot) {
+    auto response = std::make_shared<ModificationResponse>(fiber);
+
+    auto tupleLength = tuple.size();
+    uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
+    messageLength += messageAlign(messageLength, sizeof(uint64_t));
+    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
+
+    sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
+            (crossbow::buffer_writer& message, std::error_code& ec) {
+        message.write<uint64_t>(tableId);
+        message.write<uint64_t>(key);
+
+        message.write<uint32_t>(0x0u);
+        message.write<uint32_t>(tupleLength);
+        tuple.serialize(message.data());
         message.advance(tupleLength);
 
         message.align(sizeof(uint64_t));
@@ -322,31 +376,8 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
 std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fiber& fiber, uint64_t tableId,
         uint64_t key, const Record& record, const GenericTuple& tuple,
         const commitmanager::SnapshotDescriptor& snapshot) {
-    auto response = std::make_shared<ModificationResponse>(fiber);
-
-    auto tupleLength = record.sizeOfTuple(tuple);
-    uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
-    messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
-
-    sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
-            (crossbow::buffer_writer& message, std::error_code& ec) {
-        message.write<uint64_t>(tableId);
-        message.write<uint64_t>(key);
-
-        message.write<uint32_t>(0x0u);
-        message.write<uint32_t>(tupleLength);
-        if (!record.create(message.data(), tuple, tupleLength)) {
-            ec = error::invalid_tuple;
-            return;
-        }
-        message.advance(tupleLength);
-
-        message.align(sizeof(uint64_t));
-        writeSnapshot(message, snapshot);
-    });
-
-    return response;
+    GenericTupleSerializer ser(record, tuple);
+    return update(fiber, tableId, key, record, ser, snapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::remove(crossbow::infinio::Fiber& fiber, uint64_t tableId,

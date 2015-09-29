@@ -93,9 +93,12 @@ public:
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
 
+    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, const AbstractTuple& tuple,
+            bool hasSucceeded = true);
     std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, const GenericTuple& tuple,
             bool hasSucceeded = true);
 
+    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, const AbstractTuple& tuple);
     std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, const GenericTuple& tuple);
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
@@ -213,9 +216,20 @@ private:
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
+            bool hasSucceeded) {
+        return shard(tableId, key)->insert(fiber, tableId, key, record, tuple, snapshot, hasSucceeded);
+    }
+
+    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
             bool hasSucceeded) {
         return shard(tableId, key)->insert(fiber, tableId, key, record, tuple, snapshot, hasSucceeded);
+    }
+
+    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
+        return shard(tableId, key)->update(fiber, tableId, key, record, tuple, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
