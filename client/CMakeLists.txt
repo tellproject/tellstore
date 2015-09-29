@@ -16,6 +16,7 @@ set(CLIENT_PUBLIC_HDR
     Table.hpp
     TransactionRunner.hpp
     TransactionType.hpp
+    StdTypes.hpp
 )
 
 # Transform public header list to use absolute paths

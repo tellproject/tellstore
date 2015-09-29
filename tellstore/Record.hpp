@@ -24,6 +24,7 @@
 #pragma once
 
 #include <tellstore/GenericTuple.hpp>
+#include <tellstore/StdTypes.hpp>
 
 #include <crossbow/logger.hpp>
 #include <crossbow/string.hpp>
@@ -39,51 +40,8 @@
 namespace tell {
 namespace store {
 
-enum class TableType : uint8_t {
-    UNKNOWN,
-    TRANSACTIONAL,
-    NON_TRANSACTIONAL,
-};
-
-enum class FieldType
-    : uint16_t {
-    NOTYPE = 0,
-    NULLTYPE = 1,
-    SMALLINT = 2,
-    INT,
-    BIGINT,
-    FLOAT,
-    DOUBLE,
-    TEXT, // this is used for CHAR and VARCHAR as well
-    BLOB
-};
-
 class Record;
 
-enum class PredicateType : uint8_t {
-    EQUAL = 1,
-    NOT_EQUAL,
-    LESS,
-    LESS_EQUAL,
-    GREATER,
-    GREATER_EQUAL,
-    LIKE,
-    NOT_LIKE,
-    IS_NULL,
-    IS_NOT_NULL
-};
-
-enum class AggregationType : uint8_t {
-    MIN,
-    MAX,
-    SUM,
-};
-
-enum ScanQueryType : uint8_t {
-    FULL = 0x1u,
-    PROJECTION,
-    AGGREGATION,
-};
 
 template<class NumberType>
 int cmp(NumberType left, NumberType right) {
