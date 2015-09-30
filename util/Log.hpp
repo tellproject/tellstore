@@ -825,6 +825,9 @@ protected:
     template <typename Iterator>
     Iterator entryEndImpl() const {
         auto page = mHead.load();
+        for (auto next = page->next().load(); next != nullptr; next = page->next().load()) {
+            page = next;
+        }
         return Iterator(page, page->offset());
     }
 
