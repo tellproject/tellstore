@@ -28,8 +28,9 @@ namespace store {
 namespace deltamain {
 
 
-RowStoreScanProcessor::RowStoreScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-        const PageList* pages,
+RowStoreScanProcessor::RowStoreScanProcessor(
+        const std::shared_ptr<crossbow::allocator>& alloc,
+        const std::vector<char*>& pages,
         size_t pageIdx,
         size_t pageEndIdx,
         const LogIterator& logIter,
@@ -47,8 +48,8 @@ RowStoreScanProcessor::RowStoreScanProcessor(const std::shared_ptr<crossbow::all
     , pageManager(pageManager)
     , query(queryBuffer, queryData)
     , record(record)
-    , pageIter(RowStorePage(*pageManager, (*pages)[pageIdx]).begin())
-    , pageEnd (RowStorePage(*pageManager, (*pages)[pageIdx]).end())
+    , pageIter(RowStorePage(*pageManager, pages[pageIdx]).begin())
+    , pageEnd (RowStorePage(*pageManager, pages[pageIdx]).end())
     , currKey(0u)
 {
 }
@@ -75,7 +76,7 @@ void RowStoreScanProcessor::next()
         ++pageIdx;
         if (pageIdx >= pageEndIdx)
             return;
-        RowStorePage p(*pageManager, (*pages)[pageIdx]);
+        RowStorePage p(*pageManager, pages[pageIdx]);
         pageIter = p.begin();
         pageEnd = p.end();
     }
@@ -110,7 +111,7 @@ void RowStoreScanProcessor::setCurrentEntry()
         ++pageIdx;
         if (pageIdx >= pageEndIdx)
             return;
-        RowStorePage p(*pageManager, (*pages)[pageIdx]);
+        RowStorePage p(*pageManager, pages[pageIdx]);
         pageIter = p.begin();
         pageEnd = p.end();
     }

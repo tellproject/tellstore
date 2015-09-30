@@ -37,7 +37,7 @@ private:
     using PageList = std::vector<char*>;
 private: // assigned members
     std::shared_ptr<crossbow::allocator> mAllocator;
-    const PageList* pages;
+    const std::vector<char*>& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
@@ -50,7 +50,7 @@ private: // calculated members
     uint64_t currKey;
 public:
     ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-             const PageList* pages,
+             const std::vector<char*>& pages,
              size_t pageIdx,
              size_t pageEndIdx,
              const LogIterator& logIter,

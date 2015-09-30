@@ -51,7 +51,7 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */)
     , mHashTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mPages(crossbow::allocator::construct<PageList>())
+    , mPages(crossbow::allocator::construct<PageList>(mInsertLog.begin()))
     , mNumberOfFixedSizedFields(mRecord.fixedSizeFieldCount())
     , mNumberOfVarSizedFields(mRecord.varSizeFieldCount())
     , mPageCapacity(pageCapacity(mRecord))
@@ -248,10 +248,10 @@ std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char
         const std::vector<ScanQuery*>& queries) const
 {
     auto alloc = std::make_shared<crossbow::allocator>();
-    auto insIter = mInsertLog.begin();
+    auto pageList = mPages.load();
+    decltype(mInsertLog.end()) insIter(pageList->insertBegin.page(), pageList->insertBegin.offset());
     auto endIns = mInsertLog.end();
-    const auto* pages = mPages.load();
-    auto numPages = pages->size();
+    auto numPages = pageList->pages.size();
     std::vector<ScanProcessor> result;
     result.reserve(numThreads);
     size_t beginIdx = 0;
@@ -259,8 +259,8 @@ std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char
     for (decltype(numThreads) i = 0; i < numThreads; ++i) {
         const auto& startIter = (i == numThreads - 1 ? insIter : endIns);
         auto endIdx = beginIdx + numPages / numThreads + (i < mod ? 1 : 0);
-        result.emplace_back(alloc, pages, beginIdx, endIdx, startIter, endIns, &mPageManager, queryBuffer, queries,
-                &mRecord);
+        result.emplace_back(alloc, pageList->pages, beginIdx, endIdx, startIter, endIns, &mPageManager, queryBuffer,
+                queries, &mRecord);
         beginIdx = endIdx;
     }
     return result;
@@ -270,11 +270,13 @@ void Table::runGC(uint64_t minVersion) {
     crossbow::allocator _;
     auto hashTable = mHashTable.load()->modifier();
 
+    auto pageList = mPages.load();
+
     // We need to process the insert-log first. There might be deleted records which have an insert
     // Get the iterators for the update log first to not loose any updates when truncating
     auto updateBegin = mUpdateLog.end();
     auto updateEnd = mUpdateLog.end();
-    auto insBegin = mInsertLog.begin();
+    auto insBegin = pageList->insertBegin;
     auto insIter = insBegin;
     auto insEnd = mInsertLog.end();
     InsertMap insertMap;
@@ -284,12 +286,11 @@ void Table::runGC(uint64_t minVersion) {
         auto k = rec.key();
         insertMap[InsertMapKey(k)].push_back(insIter->data());
     }
-    auto& roPages = *mPages.load();
-    auto nPagesPtr = crossbow::allocator::construct<PageList>();
-    auto& nPages = *nPagesPtr;
+    auto newPageList = crossbow::allocator::construct<PageList>(insEnd);
+    auto& nPages = newPageList->pages;
     // this loop just iterates over all pages
     Page page(mPageManager, nullptr, this);
-    for (auto& roPage: roPages) {
+    for (auto roPage: pageList->pages) {
         page.reset(roPage);
         bool done;
         auto newPage = page.gc(minVersion, insertMap, done, hashTable);
@@ -309,11 +310,8 @@ void Table::runGC(uint64_t minVersion) {
     }
 
     // The garbage collection is finished - we can now reset the read only table
-    {
-        auto p = mPages.load();
-        mPages.store(nPagesPtr);
-        crossbow::allocator::destroy(p);
-    }
+    mPages.store(newPageList);
+    crossbow::allocator::destroy(pageList);
     {
         auto ht = mHashTable.load();
         mHashTable.store(hashTable.done());
