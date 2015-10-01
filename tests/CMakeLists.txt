@@ -10,6 +10,7 @@ set(TEST_SRCS
     testOpenAddressingHash.cpp
     testScanQuery.cpp
     simpleTests.cpp
+    deltamain/testInsertHash.cpp
     logstructured/testTable.cpp
 )
 

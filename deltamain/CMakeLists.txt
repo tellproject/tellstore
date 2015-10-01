@@ -2,6 +2,7 @@
 # TellStore Delta Main implementation
 ###################
 set(DELTAMAIN_SRCS
+    InsertHash.cpp
     Record.cpp
     Table.cpp
     rowstore/RowStorePage.cpp
@@ -11,6 +12,7 @@ set(DELTAMAIN_SRCS
 )
 
 set(DELTAMAIN_PRIVATE_HDR
+    InsertHash.hpp
     InsertMap.hpp
     Record.hpp
     rowstore/RowStorePage.hpp
