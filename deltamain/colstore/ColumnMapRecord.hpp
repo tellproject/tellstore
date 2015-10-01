@@ -20,12 +20,15 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
+#pragma once
+
+#include "ColumnMapUtils.hpp"
+
 namespace tell {
 namespace store {
 namespace deltamain {
 namespace impl {
-
-#include "ColumnMapUtils.in.cpp" // includes convenience functions for colum-layout
 
 /**
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a
@@ -73,7 +76,7 @@ namespace impl {
 /**
  * The following macro is used to chare the common code in getNewest and casNewest.
  */
-#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(getNewestPtrAt(index, basePtr, recordCount))); \
+#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(index, basePtr, recordCount))); \
     auto p = ptr->load(); \
     while (ptr->load() % 2) { \
         ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1); \
@@ -170,7 +173,7 @@ public:
                      bool copyData
     ) const {
         COMPUTE_BASE_KNOWLEDGE(mData, table)
-        const size_t nullBitMapSize = getNullBitMapSize(table);
+        const size_t nullBitMapSize = ColumnMapUtils::getNullBitMapSize(table);
 
         auto newest = getNewest(table, index, basePtr, recordCount);
         if (newest) {
@@ -190,8 +193,8 @@ public:
         isValid = false;
 
         bool found = false;
-        auto key = getKeyAt(index, basePtr);
-        auto varLength = getVarsizedLenghtAt(index, basePtr, recordCount, nullBitMapSize);
+        auto key = ColumnMapUtils::getKeyAt(index, basePtr);
+        auto varLength = ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, nullBitMapSize);
         for (; ; index++, key += 2, varLength++) {
             if (*varLength < 0) continue;
             isValid = true;
@@ -218,25 +221,25 @@ public:
 
                 auto fixedSizeFields = table->getNumberOfFixedSizedFields();
                 uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
-                        + *getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
+                        + *ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, ColumnMapUtils::getNullBitMapSize(table));
                 char *res = reinterpret_cast<char*>(crossbow::allocator::malloc(recordSize));
                 char *src;
                 char *dest = res;
                 // copy nullbitmap
-                src = const_cast<char *>(getNullBitMapAt(index, basePtr, recordCount, nullBitMapSize));
+                src = const_cast<char *>(ColumnMapUtils::getNullBitMapAt(index, basePtr, recordCount, nullBitMapSize));
                 memcpy(dest, src, nullBitMapSize);
                 dest += nullBitMapSize;
 
                 // copy fixed-sized columns
                 for (uint i = 0; i < fixedSizeFields; i++)
                 {
-                    src = const_cast<char*>(getColumnNAt(table, i, index, basePtr, recordCount, nullBitMapSize));
+                    src = const_cast<char*>(ColumnMapUtils::getColumnNAt(table, i, index, basePtr, recordCount, nullBitMapSize));
                     auto fieldSize = table->getFieldSize(i);
                     memcpy(dest, src, fieldSize);
                     dest += fieldSize;
                 }
                 // copy var-sized colums in a batch
-                src = const_cast<char *>(getColumnNAt(table, fixedSizeFields, index, basePtr, recordCount, nullBitMapSize));
+                src = const_cast<char *>(ColumnMapUtils::getColumnNAt(table, fixedSizeFields, index, basePtr, recordCount, nullBitMapSize));
                 src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
                 memcpy(dest, src, *varLength);
 
@@ -346,8 +349,8 @@ struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
             }
         }
 
-        auto key = getKeyAt(index, basePtr);
-        auto varLength = getVarsizedLenghtAt(index, basePtr, recordCount, getNullBitMapSize(table));
+        auto key = ColumnMapUtils::getKeyAt(index, basePtr);
+        auto varLength = ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, ColumnMapUtils::getNullBitMapSize(table));
         for (; ; index++, key += 2, varLength++) {
             if (*varLength >= 0) break;
             if (key[2] != key[0])  // loop exit condition
@@ -355,7 +358,7 @@ struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
                 return false;
         }
         isValid = true;
-        if (snapshot.inReadSet(*getVersionAt(index, basePtr)))
+        if (snapshot.inReadSet(*ColumnMapUtils::getVersionAt(index, basePtr)))
             return false;
         DMRecord nextRec(next);
         nextRec.writePrevious(this->mData);

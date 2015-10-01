@@ -20,6 +20,13 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
+#include "RowStoreVersionIterator.hpp"
+
+#include <tellstore/Record.hpp>
+#include <deltamain/Record.hpp>
+#include <deltamain/rowstore/RowStoreRecord.hpp>
+
 namespace tell {
 namespace store {
 namespace deltamain {

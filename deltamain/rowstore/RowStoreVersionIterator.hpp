@@ -20,8 +20,16 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
+#pragma once
+
+#include <util/IteratorEntry.hpp>
+
 namespace tell {
 namespace store {
+
+class Record;
+
 namespace deltamain {
 
 class RowStoreVersionIterator {

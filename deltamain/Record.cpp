@@ -30,12 +30,11 @@
 #include <map>
 
 #include "Table.hpp"
+#include "LogRecord.hpp"
 
-// including non-header files
-#include "LogRecord.in.cpp"
-#include "rowstore/RowStoreRecord.in.cpp"
-#include "rowstore/RowStoreVersionIterator.imp.cpp"
-#include "colstore/ColumnMapRecord.in.cpp"
+#include "rowstore/RowStoreRecord.hpp"
+#include "rowstore/RowStoreVersionIterator.hpp"
+#include "colstore/ColumnMapRecord.hpp"
 
 namespace tell {
 namespace store {

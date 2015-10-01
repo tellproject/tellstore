@@ -20,14 +20,17 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
-/**
- *************************************************************************
- * The following convenience functions and macros are used to get pointers
- * to items of interest within the colum-oriented page.
- */
 
-inline const uint32_t getIndex(const char *basePtr, const char *recordPtr)
-{
+#pragma once
+
+#include <deltamain/Table.hpp>
+
+namespace tell {
+namespace store {
+namespace deltamain {
+namespace ColumnMapUtils {
+
+inline const uint32_t getIndex(const char *basePtr, const char *recordPtr) {
     return (reinterpret_cast<uint64_t>(recordPtr-2-8-reinterpret_cast<uint64_t>(basePtr)) / 16);
 }
 
@@ -49,29 +52,29 @@ inline uint32_t getBaseKnowledge(const char* data, const Table *table, const cha
 #define COMPUTE_BASE_KNOWLEDGE(data, table) const char *basePtr; \
     uint32_t recordCount; \
     uint32_t index; \
-    index = getBaseKnowledge(data, table, basePtr, recordCount);
+    index = ColumnMapUtils::getBaseKnowledge(data, table, basePtr, recordCount);
 
-inline const uint32_t getRecordCount(const char *basePtr) {
+inline uint32_t getRecordCount(const char *basePtr) {
     return *(reinterpret_cast<uint32_t*>(const_cast<char *>(basePtr)));
 }
 
-inline const uint32_t getCountHat(uint32_t recordCount) {
+inline uint32_t getCountHat(uint32_t recordCount) {
     return 2 * ((recordCount + 1) / 2);
 }
 
-inline const char *getKeyVersionPtrAt(const uint32_t index, const char * basePtr) {
+inline const char* getKeyVersionPtrAt(const uint32_t index, const char * basePtr) {
     return basePtr + 8 + (index*16);
 }
 
-inline const uint64_t *getKeyAt(const uint32_t index, const char * basePtr) {
+inline const uint64_t* getKeyAt(const uint32_t index, const char * basePtr) {
     return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr));
 }
 
-inline const uint64_t *getVersionAt(const uint32_t index, const char * basePtr) {
+inline const uint64_t* getVersionAt(const uint32_t index, const char * basePtr) {
     return reinterpret_cast<const uint64_t*>(getKeyVersionPtrAt(index, basePtr) + 8);
 }
 
-inline const char *getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t recordCount) {
+inline const char* getNewestPtrAt(const uint32_t index, const char * basePtr, const uint32_t recordCount) {
     return basePtr + 8 + (recordCount*16) + (index*8);
 
 }
@@ -83,15 +86,15 @@ inline size_t getNullBitMapSize(const Table *table) {
         return (table->getNumberOfFixedSizedFields() + table->getNumberOfVarSizedFields() + 7) / 8;
 }
 
-inline const char *getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
+inline const char* getNullBitMapAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
     return basePtr + 8 + (recordCount*24) + (index*nullBitMapSize);
 }
 
-inline const int32_t *getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
+inline const int32_t* getVarsizedLenghtAt(const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
     return reinterpret_cast<const int32_t*>(basePtr + 8 + (recordCount*(24 + nullBitMapSize)) + (index*4));
 }
 
-inline char *getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
+inline char* getColumnNAt(const Table *table, const uint32_t N, const uint32_t index, const char * basePtr, const uint32_t recordCount, const size_t nullBitMapSize) {
     auto countHat = getCountHat(recordCount);
     // end of var-sized = beginning of fixed-sized columns
     char *res = const_cast<char *>(reinterpret_cast<const char *>(getVarsizedLenghtAt(countHat, basePtr, recordCount, nullBitMapSize)));
@@ -117,6 +120,7 @@ inline uint32_t getSpaceConsumptionExeptHeap(uint32_t recordCount, size_t nullBi
     return fixSpace;
 }
 
-/**
- * End of convenience functions
- *******************************/
+} // namespace ColumnMapUtils
+} // namespace deltamain
+} // namespace store
+} // namespace tell
