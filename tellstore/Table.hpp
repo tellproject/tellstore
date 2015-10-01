@@ -86,7 +86,7 @@ private:
     uint32_t mSize;
 };
 
-class Table : crossbow::non_copyable {
+class Table {
 public:
     Table()
             : mTableId(0x0u) {
@@ -103,12 +103,10 @@ public:
         other.mTableId = 0x0u;
     }
 
-    Table& operator=(Table&& other) {
-        mTableId = other.mTableId;
-        other.mTableId = 0x0u;
-        mRecord = std::move(other.mRecord);
-        return *this;
-    }
+    Table(const Table& other)
+        : mTableId(other.mTableId)
+        , mRecord(other.mRecord)
+    {}
 
     uint64_t tableId() const {
         return mTableId;
