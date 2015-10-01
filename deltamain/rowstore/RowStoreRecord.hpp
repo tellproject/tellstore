@@ -42,14 +42,10 @@ namespace impl {
  *    - An 8-byte pointer to the newest version
  *    - An array of version numbers
  *    - An array of size number_of_versions + 1 of 4 byte integers
- *      to store the offsets to
- *      the data for each version - this offset will be absolute.
- *      If the offset is euqal to the next offset, it means that the
+ *      to store the offsets to the data for each version.
+ *      If the offset is equal to the next offset, it means that the
  *      tuple was deleted at this version. The last offsets points to
  *      the byte after the record.
- *      If an offset is negative, its absolute value is still the
- *      size of the value, but the tuple is marked as reverted, it
- *      will be deleted at the next GC phase
  *    - A 4 byte padding if there are an even number of versions
  *
  *    - The data (if not delete)
@@ -90,31 +86,19 @@ public:
     T dataPtr() {
         auto nV = getNumberOfVersions();
         auto offs = offsets();
-        return mData + std::abs(offs[nV]);
+        return mData + offs[nV];
     }
 
     bool isValidDataRecord() const {
         // a RowStoreMVRecord is valid if at least one of the records
         // is valid
         auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] > 0) return true;
-        }
-        return false;
+        return nV > 0u;
     }
 
-    void revert(uint64_t version) {
-        auto newest = getNewest();
-        if (newest) {
-            CDMRecord rec(newest);
-            rec.revert(version);
-            return;
-        }
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
-        LOG_ASSERT(versions()[nV-1] == version, "Can only revert newest version");
-        const_cast<int32_t&>(offs[nV - 1]) *= -1;
+    void revert(uint64_t /* version */) {
+        LOG_FATAL("Can not revert a MVRecord");
+        std::terminate();
     }
 
     bool casNewest(const char* expected, const char* desired) const {
@@ -135,18 +119,18 @@ public:
         return ptr->compare_exchange_strong(exp, des);
     }
 
-    int32_t getNumberOfVersions() const {
-        return *reinterpret_cast<const int32_t*>(mData + 4);
+    uint32_t getNumberOfVersions() const {
+        return *reinterpret_cast<const uint32_t*>(mData + 4);
     }
 
     const uint64_t *versions() const {
         return reinterpret_cast<const uint64_t*>(mData + 24);
     }
 
-    const int32_t *offsets() const {
+    const uint32_t *offsets() const {
         auto nVersions = getNumberOfVersions();
         size_t off = 24 + 8*nVersions;
-        return reinterpret_cast<const int32_t*>(mData + off);
+        return reinterpret_cast<const uint32_t*>(mData + off);
     }
 
     uint64_t size() const {
@@ -159,10 +143,6 @@ public:
         if (getNewest()) return true;
         auto offs = offsets();
         auto nV = getNumberOfVersions();
-        // check whether there were some reverts
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] < 0) return true;
-        }
         if (versions()[0] < lowestActiveVersion) {
             if (nV == 1) {
                 // Check if this was a delition
@@ -219,7 +199,6 @@ public:
         int idx = numVersions - 1;
         auto off = offsets();
         for (; idx >=0; --idx) {
-            if (off[idx] < 0) continue;
             isValid = true;
             if (snapshot.inReadSet(v[idx])) {
                 version = v[idx];
@@ -231,9 +210,9 @@ public:
             if (wasDeleted) *wasDeleted = false;
             return nullptr;
         }
-        if (std::abs(off[idx]) != std::abs(off[idx + 1])) {
+        if (off[idx] != off[idx + 1]) {
             //TODO: question: if we are here, then size can never be 0, right?!
-            size = size_t(std::abs(off[idx + 1]) - std::abs(off[idx]));
+            size = size_t(off[idx + 1] - off[idx]);
             if (wasDeleted) {
                 // a tuple is deleted, if its size is 0
                 *wasDeleted = size == 0;
@@ -251,14 +230,7 @@ public:
             auto res = rec.typeOfNewestVersion(isValid);
             if (isValid) return res;
         }
-        auto nV = getNumberOfVersions();
-        auto offs = offsets();
         isValid = true;
-        for (decltype(nV) i = 0; i < nV; ++i) {
-            if(offs[i] > 0)
-                return Type::MULTI_VERSION_RECORD;
-        }
-        isValid = false;
         return Type::MULTI_VERSION_RECORD;
     }
 
@@ -301,10 +273,10 @@ struct RowStoreMVRecord<char*> : GeneralUpdates<RowStoreMVRecordBase<char*>> {
         return reinterpret_cast<uint64_t*>(mData + 24);
     }
 
-    int32_t* offsets() {
+    uint32_t* offsets() {
         auto nVersions = getNumberOfVersions();
         size_t off = 24 + 8*nVersions;
-        return reinterpret_cast<int32_t*>(mData +off);
+        return reinterpret_cast<uint32_t*>(mData +off);
     }
 
     char* dataPtr() {
@@ -331,9 +303,6 @@ struct RowStoreMVRecord<char*> : GeneralUpdates<RowStoreMVRecordBase<char*>> {
         }
         auto versionIdx = getNumberOfVersions() - 1;
         auto v = versions();
-        auto offs = offsets();
-        for (; offs[versionIdx] < 0; --versionIdx) {
-        }
         if (versionIdx < 0) {
             isValid = false;
             return false;
@@ -373,14 +342,14 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         impl::VersionMap versions;
         int32_t newestValidVersionIdx = -1;
         for (decltype(nV) i = 0; i < nV; ++i) {
-            if (offs[i] > 0 && lowestActiveVersion <= v[i]) {
-                if (i > newestValidVersionIdx)
+            if (lowestActiveVersion <= v[i]) {
+                if (static_cast<int32_t>(i) > newestValidVersionIdx)
                     newestValidVersionIdx = i;
                 versions.insert(std::make_pair(v[i],
                             impl::VersionHolder {
                                 mData + offs[i],
                                 RecordType::MULTI_VERSION_RECORD,
-                                size_t(std::abs(offs[i+1])) - offs[i],
+                                offs[i+1] - offs[i],
                                 nullptr}));
             }
         }
@@ -389,7 +358,7 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
                 // All versions in this set are invalid, therefore, we could delete
                 // the record right away. But there might be another insert with the
                 // same key
-            } else if (std::abs(offs[newestValidVersionIdx]) == std::abs(offs[newestValidVersionIdx - 1])) {
+            } else if (offs[newestValidVersionIdx] == offs[newestValidVersionIdx - 1]) {
                 // this tuple got deleted
             } else {
                 // All records are older than the lowest active version
@@ -399,7 +368,7 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
                             impl::VersionHolder {
                             mData + offs[newestValidVersionIdx],
                             RecordType::MULTI_VERSION_RECORD,
-                            size_t(std::abs(offs[newestValidVersionIdx+1]) - offs[newestValidVersionIdx]),
+                            offs[newestValidVersionIdx+1] - offs[newestValidVersionIdx],
                             nullptr}));
             }
         }
@@ -483,8 +452,8 @@ uint64_t RowStoreMVRecordBase<T>::copyAndCompact(
         RowStoreMVRecord<char*> newRec(dest);
         newRec.writeKey(key);
         *reinterpret_cast<uint32_t*>(dest + 4) = uint32_t(newNumberOfVersions);
-        uint64_t* newVersions = newRec.versions();
-        int32_t* newOffsets = newRec.offsets();
+        auto newVersions = newRec.versions();
+        auto newOffsets = newRec.offsets();
         newOffsets[0] = newHeaderSize;
         newOffsets[newNumberOfVersions] = newTotalSize;
         uint32_t offsetCounter = 0;

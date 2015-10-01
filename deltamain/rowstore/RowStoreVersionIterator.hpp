@@ -39,7 +39,7 @@ class RowStoreVersionIterator {
         IteratorEntry currEntry;
 //        const Record* record; TODO: seems like it wouldn't be used...
         const char* current = nullptr;
-        int idx = 0;
+        uint32_t idx = 0;
         void initRes();
 
     public:
