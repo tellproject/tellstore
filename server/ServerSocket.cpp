@@ -210,7 +210,6 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
     auto data = request.read(dataLength);
     LOG_ASSERT(dataLength % 8 == 0, "Data must be 8 byte padded");
 
-    request.advance(sizeof(uint32_t));
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
         auto succeeded = mStorage.insert(tableId, key, dataLength, data, snapshot);
