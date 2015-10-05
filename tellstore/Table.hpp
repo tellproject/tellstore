@@ -103,10 +103,25 @@ public:
         other.mTableId = 0x0u;
     }
 
+    Table& operator=(Table&& other) {
+        mTableId = other.mTableId;
+        other.mTableId = 0x0u;
+
+        mRecord = std::move(other.mRecord);
+
+        return *this;
+    }
+
     Table(const Table& other)
         : mTableId(other.mTableId)
         , mRecord(other.mRecord)
     {}
+
+    Table& operator=(const Table& other) {
+        mTableId = other.mTableId;
+        mRecord = other.mRecord;
+        return *this;
+    }
 
     uint64_t tableId() const {
         return mTableId;
