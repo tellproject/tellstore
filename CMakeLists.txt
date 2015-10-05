@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
-set(IMPLEMENTATION "DELTA_MAIN_REWRITE" CACHE STRING "The approach to use in the implementation")
+set(IMPLEMENTATION "LOGSTRUCTURED_MEMORY" CACHE STRING "The approach to use in the implementation")
 set(STORAGE_LAYOUT "ROW_STORE" CACHE STRING "The storage layout to use in the implementation")
 set(SCAN_PROCESSOR "LOG" CACHE STRING "The scan processor to use in the implementation")
 set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
