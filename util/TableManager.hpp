@@ -189,16 +189,15 @@ public:
     }
 
 
-    void insert(uint64_t tableId,
+    bool insert(uint64_t tableId,
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
-        lookupTable(tableId)->insert(key, size, data, snapshot, succeeded);
+        return lookupTable(tableId)->insert(key, size, data, snapshot);
     }
 
     bool remove(uint64_t tableId,

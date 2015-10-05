@@ -158,8 +158,7 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanag
     return false;
 }
 
-void Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
-        bool* succeeded /* = nullptr */) {
+bool Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
     VersionRecordIterator recIter(*this, key);
     LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= minVersion(),
@@ -209,11 +208,10 @@ void Table::insert(uint64_t key, size_t size, const char* data, const commitmana
         }
         recordWriter.seal();
 
-        if (succeeded) *succeeded = true;
-        return;
+        return true;
     }
 
-    if (succeeded) *succeeded = false;
+    return false;
 }
 
 bool Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {

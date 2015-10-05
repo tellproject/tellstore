@@ -147,11 +147,10 @@ private:
      * - 4 bytes: Padding
      * - 4 bytes: Length of the tuple's data field
      * - x bytes: The tuple's data
-     * - y bytes: Variable padding to make message 8 byte aligned
      * - x bytes: Snapshot descriptor
      *
      * The response consists of the following format:
-     * - 1 byte:  Whether the update was successfull
+     * - 1 byte:  Whether the update was successful
      */
     void handleUpdate(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
@@ -159,15 +158,13 @@ private:
      * The insert request has the following format:
      * - 8 bytes: The table ID of the requested tuple
      * - 8 bytes: The key of the requested tuple
-     * - 1 byte:  Whether we want to know if the operation was successful or not
-     * - 3 bytes: Padding
+     * - 4 bytes: Padding
      * - 4 bytes: Length of the tuple's data field
      * - x bytes: The tuple's data
-     * - y bytes: Variable padding to make message 8 byte aligned
      * - x bytes: Snapshot descriptor
      *
      * The response consists of the following format:
-     * - 1 byte:  Whether the insert was successfull
+     * - 1 byte:  Whether the insert was successful
      */
     void handleInsert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
@@ -178,7 +175,7 @@ private:
      * - x bytes: Snapshot descriptor
      *
      * The response consists of the following format:
-     * - 1 byte:  Whether the remove was successfull
+     * - 1 byte:  Whether the remove was successful
      */
     void handleRemove(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
@@ -189,7 +186,7 @@ private:
      * - x bytes: Snapshot descriptor
      *
      * The response consists of the following format:
-     * - 1 byte:  Whether the revert was successfull
+     * - 1 byte:  Whether the revert was successful
      */
     void handleRevert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 

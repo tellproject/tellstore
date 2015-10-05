@@ -292,27 +292,23 @@ std::shared_ptr<GetResponse> ClientSocket::get(crossbow::infinio::Fiber& fiber, 
 
 std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fiber& fiber, uint64_t tableId,
         uint64_t key, const Record& record, const AbstractTuple& tuple,
-        const commitmanager::SnapshotDescriptor& snapshot, bool hasSucceeded) {
+        const commitmanager::SnapshotDescriptor& snapshot) {
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = tuple.size();
-    uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
-    messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
+    LOG_ASSERT(tupleLength % 8 == 0, "Data must be 8 byte padded");
 
-    sendRequest(response, RequestType::INSERT, messageLength,
-            [tableId, key, &record, tupleLength, &tuple, &snapshot, hasSucceeded]
+    uint32_t messageLength = 4 * sizeof(uint64_t) + tupleLength + snapshot.serializedLength();
+    sendRequest(response, RequestType::INSERT, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
             (crossbow::buffer_writer& message, std::error_code& ec) {
         message.write<uint64_t>(tableId);
         message.write<uint64_t>(key);
-        message.write<uint8_t>(hasSucceeded ? 0x1u : 0x0u);
 
-        message.align(sizeof(uint32_t));
+        message.write<uint32_t>(0x0u);
         message.write<uint32_t>(tupleLength);
         tuple.serialize(message.data());
         message.advance(tupleLength);
 
-        message.align(sizeof(uint64_t));
         writeSnapshot(message, snapshot);
     });
 
@@ -341,9 +337,9 @@ public:
 
 std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fiber& fiber, uint64_t tableId,
         uint64_t key, const Record& record, const GenericTuple& tuple,
-        const commitmanager::SnapshotDescriptor& snapshot, bool hasSucceeded) {
+        const commitmanager::SnapshotDescriptor& snapshot) {
     GenericTupleSerializer ser(record, tuple);
-    return insert(fiber, tableId, key, record, ser, snapshot, hasSucceeded);
+    return insert(fiber, tableId, key, record, ser, snapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fiber& fiber, uint64_t tableId,
@@ -352,10 +348,9 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = tuple.size();
-    uint32_t messageLength = 3 * sizeof(uint64_t) + tupleLength;
-    messageLength += messageAlign(messageLength, sizeof(uint64_t));
-    messageLength += sizeof(uint64_t) + snapshot.serializedLength();
+    LOG_ASSERT(tupleLength % 8 == 0, "Data must be 8 byte padded");
 
+    uint32_t messageLength = 4 * sizeof(uint64_t) + tupleLength + snapshot.serializedLength();
     sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, &record, tupleLength, &tuple, &snapshot]
             (crossbow::buffer_writer& message, std::error_code& ec) {
         message.write<uint64_t>(tableId);
@@ -366,7 +361,6 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
         tuple.serialize(message.data());
         message.advance(tupleLength);
 
-        message.align(sizeof(uint64_t));
         writeSnapshot(message, snapshot);
     });
 

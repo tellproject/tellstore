@@ -26,6 +26,7 @@
 
 #include "PageManager.hpp"
 
+#include <crossbow/alignment.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/non_copyable.hpp>
 
@@ -68,8 +69,7 @@ public:
      */
     static uint32_t entrySizeFromSize(uint32_t size) {
         // TODO Make alignment configurable
-        size += LOG_ENTRY_SIZE;
-        size += ((size % 16 != 0) ? (16 - (size % 16)) : 0);
+        size = crossbow::align(size + LOG_ENTRY_SIZE, 16);
         LOG_ASSERT(size % 16 == 0, "Final LogEntry size must be 16 byte padded");
         return size;
     }
@@ -825,6 +825,9 @@ protected:
     template <typename Iterator>
     Iterator entryEndImpl() const {
         auto page = mHead.load();
+        for (auto next = page->next().load(); next != nullptr; next = page->next().load()) {
+            page = next;
+        }
         return Iterator(page, page->offset());
     }
 

@@ -97,20 +97,6 @@ public:
               mRecord(std::move(schema)) {
     }
 
-    Table(Table&& other)
-            : mTableId(other.mTableId),
-              mRecord(std::move(other.mRecord)) {
-        other.mTableId = 0x0u;
-    }
-
-    Table(const Table& other)
-        : mTableId(other.mTableId)
-        , mRecord(other.mRecord)
-    {}
-
-    Table& operator=(const Table&) = default;
-    Table& operator=(Table&&) = default;
-
     uint64_t tableId() const {
         return mTableId;
     }

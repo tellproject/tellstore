@@ -82,9 +82,9 @@ public:
         return mTableManager.update(tableId, key, size, data, snapshot);
     }
 
-    void insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
-            const commitmanager::SnapshotDescriptor& snapshot, bool* succeeded = nullptr) {
-        mTableManager.insert(tableId, key, size, data, snapshot, succeeded);
+    bool insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot) {
+        return mTableManager.insert(tableId, key, size, data, snapshot);
     }
 
     bool remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {

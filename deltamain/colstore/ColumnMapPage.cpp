@@ -21,17 +21,17 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 #include "ColumnMapPage.hpp"
-#include "deltamain/InsertMap.hpp"
-#include "deltamain/Record.hpp"
-#include "deltamain/Table.hpp"
+#include "ColumnMapUtils.hpp"
+
+#include <deltamain/InsertMap.hpp>
+#include <deltamain/Record.hpp>
+#include <deltamain/Table.hpp>
 
 #include <util/CuckooHash.hpp>
 
 namespace tell {
 namespace store {
 namespace deltamain {
-
-#include "ColumnMapUtils.in.cpp" // includes convenience functions for colum-layout
 
 inline uint roundToMultiple(uint value, uint multiple) {
     return multiple*((value + (multiple-1))/multiple);
@@ -40,7 +40,7 @@ inline uint roundToMultiple(uint value, uint multiple) {
 ColumnMapPage::ColumnMapPage(PageManager& pageManager, char* data, Table *table)
     : mPageManager(pageManager)
     , mTable(table)
-    , mNullBitmapSize(getNullBitMapSize(table))
+    , mNullBitmapSize(ColumnMapUtils::getNullBitMapSize(table))
     , mNumFixedSized(table->getNumberOfFixedSizedFields())
     , mNumVarSized(table->getNumberOfVarSizedFields())
     , mNumColumns(mNumFixedSized + mNumVarSized)
@@ -101,9 +101,9 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
 
     // do first quick path to detect whether the page needs cleaning at all
     bool needsCleaning = false;
-    auto keyVersionPtr = getKeyAt(0, mData);        // this ptr gets always advance by 2 such that ptr[0] refers to key and ptr[1] to version
-    auto newestPtr = reinterpret_cast<char**>(const_cast<char*>(getNewestPtrAt(0, mData, mRecordCount)));
-    auto varLengthPtr = getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
+    auto keyVersionPtr = ColumnMapUtils::getKeyAt(0, mData);        // this ptr gets always advance by 2 such that ptr[0] refers to key and ptr[1] to version
+    auto newestPtr = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(0, mData, mRecordCount)));
+    auto varLengthPtr = ColumnMapUtils::getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
     auto keyVersionPtrEnd = keyVersionPtr + 2*mRecordCount;
     for (; !needsCleaning && keyVersionPtr < keyVersionPtrEnd; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
         if (keyVersionPtr[1] < lowestActiveVersion                              // version below base version
@@ -121,9 +121,9 @@ bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& inser
     mPageCleaningSummaries.back().first = mData;
     std::deque<RecordCleaningInfo> &pageCleaningSummary = mPageCleaningSummaries.back().second;
 
-    keyVersionPtr = getKeyAt(0, mData);
-    newestPtr = reinterpret_cast<char**>(const_cast<char*>(getNewestPtrAt(0, mData, mRecordCount)));
-    varLengthPtr = getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
+    keyVersionPtr = ColumnMapUtils::getKeyAt(0, mData);
+    newestPtr = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(0, mData, mRecordCount)));
+    varLengthPtr = ColumnMapUtils::getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
     for (; keyVersionPtr < keyVersionPtrEnd; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
         pageCleaningSummary.emplace_back();
         RecordCleaningInfo &recInfo = pageCleaningSummary.back();
@@ -203,7 +203,7 @@ void ColumnMapPage::copyLogRecord(uint64_t key,
                                   char *destBasePtr,
                                   uint32_t destIndex) {
     // copy key-version column
-    auto keyVersionPtr = const_cast<uint64_t *>(getKeyAt(destIndex, destBasePtr));
+    auto keyVersionPtr = const_cast<uint64_t *>(ColumnMapUtils::getKeyAt(destIndex, destBasePtr));
     keyVersionPtr[0] = key;
     keyVersionPtr[1] = version;
     // newest ptr will be copied later
@@ -213,20 +213,20 @@ void ColumnMapPage::copyLogRecord(uint64_t key,
     char *srcPtr = const_cast<char *>(logRecordVersionHolder.record);
     // copy null bitmap
     memcpy(
-        const_cast<char *>(getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
+        const_cast<char *>(ColumnMapUtils::getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
         srcPtr,
         mNullBitmapSize);
     srcPtr += mNullBitmapSize;
     // copy var-size column
     auto totalVarSize = logRecordVersionHolder.size - mFixedValuesSize;
-    *(const_cast<int32_t *>(getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)))
+    *(const_cast<int32_t *>(ColumnMapUtils::getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)))
             = totalVarSize;
 
     // copy fixed-sized column data
     for (uint col = 0; col < mNumFixedSized; ++col) {
         auto fieldSize = mTable->getFieldSize((col));
         memcpy(
-            getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
+            ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
             srcPtr,
             fieldSize);
         srcPtr += fieldSize;
@@ -241,7 +241,7 @@ void ColumnMapPage::copyLogRecord(uint64_t key,
     // copy var-sized column data
     for (uint col = mNumFixedSized; col < mNumColumns; ++col) {
         auto fieldSize = *(reinterpret_cast<uint32_t*>(srcPtr));    // field size including 4-byte size prefix
-        auto destPtr = getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize);
+        auto destPtr = ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize);
         *(reinterpret_cast<uint32_t*>(destPtr)) = mFillPageVarOffset;
         memcpy(
             &destPtr[4],
@@ -261,39 +261,39 @@ void ColumnMapPage::copyColumnRecords(char *srcBasePtr,
                                       uint32_t numElements)
 {
     // copy key-version column
-    memcpy(const_cast<char *>(getKeyVersionPtrAt(destIndex, destBasePtr)), getKeyVersionPtrAt(srcIndex, srcBasePtr), 16*numElements);
+    memcpy(const_cast<char *>(ColumnMapUtils::getKeyVersionPtrAt(destIndex, destBasePtr)), ColumnMapUtils::getKeyVersionPtrAt(srcIndex, srcBasePtr), 16*numElements);
     // newest ptrs will be copied later
     // copy null bitmpas
     mempcpy(
-        const_cast<char *>(getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
-        getNullBitMapAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
+        const_cast<char *>(ColumnMapUtils::getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
+        ColumnMapUtils::getNullBitMapAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
         numElements * mNullBitmapSize);
     // var-size-length column
     memcpy(
-        const_cast<int32_t *>(getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
-        getVarsizedLenghtAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
+        const_cast<int32_t *>(ColumnMapUtils::getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
+        ColumnMapUtils::getVarsizedLenghtAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
         numElements * 4);
 
     // copy fixed-sized and var-sized column data
     for (uint col = 0; col < mNumColumns; ++col) {
         memcpy(
-            getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
-            getColumnNAt(mTable, col, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
+            ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
+            ColumnMapUtils::getColumnNAt(mTable, col, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
             numElements * mTable->getFieldSize(col));
     }
 
     // copy var-sized heap data
     memcpy(
         const_cast<char *>(destBasePtr + mFillPageVarOffset),
-        srcBasePtr + *(reinterpret_cast<uint32_t*>(getColumnNAt(mTable, mNumFixedSized, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize))),
+        srcBasePtr + *(reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, mNumFixedSized, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize))),
         totalVarLenghtSize);
 
     // adjust var-sized offsets
-    uint32_t srcVarHeapOffset = *reinterpret_cast<uint32_t*>(getColumnNAt(mTable, 0, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize));
+    uint32_t srcVarHeapOffset = *reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, 0, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize));
     int32_t diff = int32_t(mFillPageVarOffset) - int32_t(srcVarHeapOffset);
 
     for (uint col = mNumFixedSized; col < mNumColumns; ++col) {
-        auto destVarLenghtPtr = reinterpret_cast<uint32_t*>(getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize));
+        auto destVarLenghtPtr = reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize));
         for (uint i = destIndex; i < numElements; ++i, destVarLenghtPtr += 2) {
             (*destVarLenghtPtr) = (int32_t(*destVarLenghtPtr) + diff);
         }
@@ -325,7 +325,7 @@ char *ColumnMapPage::fillPage(Modifier& hashTable, RecordQueueIterator &end) {
     *(reinterpret_cast<uint32_t*>(fillPage)) = mFillPageRecordCount;
 
     // use this offset for constructing the new page
-    mFillPageVarOffset = getSpaceConsumptionExeptHeap(mFillPageRecordCount, mNullBitmapSize, mFixedValuesSize);
+    mFillPageVarOffset = ColumnMapUtils::getSpaceConsumptionExeptHeap(mFillPageRecordCount, mNullBitmapSize, mFixedValuesSize);
 
     // copy data and adjust hash map (TODO: optimize copying of contiguous tuples accross record boundaries
     uint32_t destIndex = 0;
@@ -334,16 +334,16 @@ char *ColumnMapPage::fillPage(Modifier& hashTable, RecordQueueIterator &end) {
         auto srcRecordCount = srcBasePtr ? *(reinterpret_cast<uint32_t*>(srcBasePtr)) : 0u;    // on "fill with inserts", baseptr is nullptr
         auto recordIterEnd = pageSummaryIter->second.end();
         for (auto recordIter = pageSummaryIter->second.begin(); recordIter != recordIterEnd && recordIter != end; ++recordIter) {
-            recordIter->newNewestPtrLocation = reinterpret_cast<char**>(const_cast<char*>(getNewestPtrAt(destIndex, fillPage, mFillPageRecordCount)));
+            recordIter->newNewestPtrLocation = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(destIndex, fillPage, mFillPageRecordCount)));
             auto key = recordIter->key;
-            hashTable.insert(key, const_cast<char*>(getKeyVersionPtrAt(destIndex, fillPage))+2);
+            hashTable.insert(key, const_cast<char*>(ColumnMapUtils::getKeyVersionPtrAt(destIndex, fillPage))+2);
             auto versionIter = recordIter->versionMap.begin();
             auto versionIterEnd = recordIter->versionMap.end();
             while (versionIter != versionIterEnd) {
                 if (versionIter->second.type == RecordType::MULTI_VERSION_RECORD) {
                     // copy ALL contiguous records
                     auto oldRecord = versionIter->second.record;
-                    auto srcIndex = getIndex(srcBasePtr, oldRecord);
+                    auto srcIndex = ColumnMapUtils::getIndex(srcBasePtr, oldRecord);
                     uint32_t numElements = 1;
                     uint32_t totalVarLenghtSize = roundToMultiple((versionIter->second.size - mFixedValuesSize), 4);
                     while ((++versionIter) != versionIterEnd) {
@@ -401,7 +401,7 @@ bool ColumnMapPage::checkRecordFits(RecordCleaningInfo &recInfo) {
     auto hypotheticalVarOffset = mFillPageVarOffset - recInfo.totalVarSizedCount;
 
     // compute space requirements and check
-    if (getSpaceConsumptionExeptHeap(hypotheticalCount, mNullBitmapSize, mFixedValuesSize) > hypotheticalVarOffset)
+    if (ColumnMapUtils::getSpaceConsumptionExeptHeap(hypotheticalCount, mNullBitmapSize, mFixedValuesSize) > hypotheticalVarOffset)
         return false;
 
     // otherwise we know that the record fits and will adjust the fillpage stats
@@ -490,4 +490,3 @@ char *ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& in
 } // namespace deltamain
 } // namespace store
 } // namespace tell
-

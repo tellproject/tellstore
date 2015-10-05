@@ -111,10 +111,9 @@ public:
      * @param size Size of the tuple to insert
      * @param data Pointer to the data of the tuple to insert
      * @param snapshot Descriptor containing the version to write
-     * @param succeeded Whether the tuple was inserted successfully
+     * @return Whether the tuple was inserted successfully
      */
-    void insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
-            bool* succeeded = nullptr);
+    bool insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Updates an already existing tuple in the table

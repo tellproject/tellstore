@@ -20,6 +20,13 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
+#pragma once
+
+#include <util/Log.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 namespace tell {
 namespace store {
 namespace deltamain {

@@ -20,6 +20,13 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
+#include "RowStoreVersionIterator.hpp"
+
+#include <tellstore/Record.hpp>
+#include <deltamain/Record.hpp>
+#include <deltamain/rowstore/RowStoreRecord.hpp>
+
 namespace tell {
 namespace store {
 namespace deltamain {
@@ -119,9 +126,8 @@ RowStoreVersionIterator& RowStoreVersionIterator::operator++() {
         if (rec.type() == RecordType::MULTI_VERSION_RECORD) {
             impl::RowStoreMVRecord<const char*> mvRec(current);
             auto numV = mvRec.getNumberOfVersions();
-            auto offs = mvRec.offsets();
             ++idx;
-            while (numV > idx && offs[idx] < 0);
+            while (numV > idx);
             if (numV == idx) {
                 // we reachted the end of the MVRecord
                 current = mvRec.getNewest();

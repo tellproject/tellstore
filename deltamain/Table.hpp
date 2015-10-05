@@ -51,7 +51,18 @@ class ScanQuery;
 namespace deltamain {
 
 class Table {
-    using PageList = std::vector<char*>;
+    struct PageList {
+        PageList(Log<OrderedLogImpl>::LogIterator begin)
+                : insertBegin(begin) {
+        }
+
+        /// List of pages in the main
+        std::vector<char*> pages;
+
+        /// Iterator pointing to the first element not contained in the main pages
+        Log<OrderedLogImpl>::LogIterator insertBegin;
+    };
+
     PageManager& mPageManager;
     Record mRecord;
     std::atomic<CuckooTable*> mHashTable;
@@ -129,11 +140,10 @@ public:
              uint64_t& version,
              bool& isNewest) const;
 
-    void insert(uint64_t key,
+    bool insert(uint64_t key,
                 size_t size,
                 const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
     bool update(uint64_t key,
                 size_t size,
