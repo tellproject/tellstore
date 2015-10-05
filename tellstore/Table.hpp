@@ -108,6 +108,9 @@ public:
         , mRecord(other.mRecord)
     {}
 
+    Table& operator=(const Table&) = default;
+    Table& operator=(Table&&) = default;
+
     uint64_t tableId() const {
         return mTableId;
     }
