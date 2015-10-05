@@ -140,11 +140,10 @@ public:
              uint64_t& version,
              bool& isNewest) const;
 
-    void insert(uint64_t key,
+    bool insert(uint64_t key,
                 size_t size,
                 const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr);
+                const commitmanager::SnapshotDescriptor& snapshot);
 
     bool update(uint64_t key,
                 size_t size,

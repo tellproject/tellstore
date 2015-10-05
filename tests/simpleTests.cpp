@@ -94,12 +94,11 @@ TYPED_TEST(StorageTest, insert_and_get) {
     this->mStorage->forceGC();
     auto tx = this->mCommitManager.startTx();
     {
-        bool res = false;
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
         }), size));
-        this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx, &res);
+        auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx);
         ASSERT_TRUE(res) << "This insert must not fail!";
     }
     {
@@ -125,12 +124,11 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
     // Transaction 1 can insert a new tuple
     {
         crossbow::allocator _;
-        bool res = false;
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
         }), size));
-        this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx1, &res);
+        auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx1);
         ASSERT_TRUE(res) << "This insert must not fail!";
     }
 
@@ -153,12 +151,11 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
     // Transaction 2 can not insert a new tuple already written by transaction 1
     {
         crossbow::allocator _;
-        bool res = true;
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
         }), size));
-        this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx2, &res);
+        auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx2);
         EXPECT_FALSE(res) << "Insert succeeded despite tuple already existing in different version";
     }
 
@@ -260,15 +257,14 @@ public:
         auto transaction = mCommitManager.startTx();
 
         for (auto key = startKey; key < endKey; ++key) {
-            bool succeeded = false;
-            mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(), transaction, &succeeded);
+            auto succeeded = mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(),
+                    transaction);
             ASSERT_TRUE(succeeded);
 
             size_t getSize;
             const char* getData;
             uint64_t version = 0x0u;
             bool isNewest = false;
-            succeeded = false;
             succeeded = mStorage->get(mTableId, key, getSize, getData, transaction, version, isNewest);
             ASSERT_TRUE(succeeded);
             EXPECT_EQ(version, transaction.descriptor().version());

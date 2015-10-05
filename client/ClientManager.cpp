@@ -90,19 +90,19 @@ std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
-        const AbstractTuple& tuple, bool hasSucceeded /* = true */) {
+        const AbstractTuple& tuple) {
     checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
-        const GenericTuple& tuple, bool hasSucceeded /* = true */) {
+        const GenericTuple& tuple) {
     checkTransaction(table, false);
 
     mModified.insert(std::make_tuple(table.tableId(), key));
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot, hasSucceeded);
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
@@ -227,11 +227,11 @@ std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key)
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,
-        const GenericTuple& tuple, bool hasSucceeded) {
+        const GenericTuple& tuple) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
     auto snapshot = nonTransactionalSnapshot(version);
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *snapshot, hasSucceeded);
+    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *snapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key, uint64_t version,

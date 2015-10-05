@@ -183,11 +183,11 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
 
-    request.read<uint32_t>();
+    request.advance(sizeof(uint32_t));
     auto dataLength = request.read<uint32_t>();
     auto data = request.read(dataLength);
+    LOG_ASSERT(dataLength % 8 == 0, "Data must be 8 byte padded");
 
-    request.align(sizeof(uint64_t));
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
         auto succeeded = mStorage.update(tableId, key, dataLength, data, snapshot);
@@ -204,17 +204,16 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
 void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
     auto tableId = request.read<uint64_t>();
     auto key = request.read<uint64_t>();
-    bool wantsSucceeded = request.read<uint8_t>();
 
-    request.align(sizeof(uint32_t));
+    request.advance(sizeof(uint32_t));
     auto dataLength = request.read<uint32_t>();
     auto data = request.read(dataLength);
+    LOG_ASSERT(dataLength % 8 == 0, "Data must be 8 byte padded");
 
-    request.align(sizeof(uint64_t));
-    handleSnapshot(messageId, request, [this, messageId, tableId, key, wantsSucceeded, dataLength, data]
+    request.advance(sizeof(uint32_t));
+    handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        bool succeeded = false;
-        mStorage.insert(tableId, key, dataLength, data, snapshot, (wantsSucceeded ? &succeeded : nullptr));
+        auto succeeded = mStorage.insert(tableId, key, dataLength, data, snapshot);
 
         // Message size is 1 byte (succeeded)
         uint32_t messageLength = sizeof(uint8_t);

@@ -97,14 +97,13 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
         return tableManager.update(tableId, key, size, data, snapshot);
     }
 
-    void insert(uint64_t tableId,
+    bool insert(uint64_t tableId,
                 uint64_t key,
                 size_t size,
                 const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                bool* succeeded = nullptr)
+                const commitmanager::SnapshotDescriptor& snapshot)
     {
-        tableManager.insert(tableId, key, size, data, snapshot, succeeded);
+        return tableManager.insert(tableId, key, size, data, snapshot);
     }
 
     bool remove(uint64_t tableId,

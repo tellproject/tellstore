@@ -111,11 +111,10 @@ bool Table::get(uint64_t key,
     return false;
 }
 
-void Table::insert(uint64_t key,
+bool Table::insert(uint64_t key,
                    size_t size,
                    const char* const data,
-                   const commitmanager::SnapshotDescriptor& snapshot,
-                   bool* succeeded /*= nullptr*/) {
+                   const commitmanager::SnapshotDescriptor& snapshot) {
     // we need to get the iterator as a first step to make
     // sure to check the part of the log that was visible
     // at this point in time
@@ -132,8 +131,7 @@ void Table::insert(uint64_t key,
         rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted, this, false);
 
         if (isValid && !(wasDeleted && isNewest)) {
-            if (succeeded) *succeeded = false;
-            return;
+            return false;
         }
         // the tuple was deleted/reverted and we don't have a
         // write-write conflict, therefore we can continue
@@ -159,15 +157,13 @@ void Table::insert(uint64_t key,
         const LogEntry* en = iter.operator->();
         if (en == entry) {
             entry->seal();
-            if (succeeded) *succeeded = true;
-            return;
+            return true;
         }
         CDMRecord rec(en->data());
         if (rec.isValidDataRecord() && rec.key() == key) {
             insertRecord.revert(snapshot.version());
             entry->seal();
-            if (succeeded) *succeeded = false;
-            return;
+            return false;
         }
     }
     LOG_ASSERT(false, "We should never reach this point");

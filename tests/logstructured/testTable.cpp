@@ -104,9 +104,7 @@ protected:
  * @test Check if an insert followed by a get returns the inserted element
  */
 TEST_F(TableTest, insertGet) {
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     assertElement(1, *mTx, mField, true);
     mTx.commit();
@@ -124,9 +122,7 @@ TEST_F(TableTest, insertGetMultiple) {
     };
 
     for (auto& e : elements) {
-        bool succeeded = false;
-        mTable.insert(e.first, e.second.size(), e.second.c_str(), *mTx, &succeeded);
-        EXPECT_TRUE(succeeded);
+        EXPECT_TRUE(mTable.insert(e.first, e.second.size(), e.second.c_str(), *mTx));
     }
 
     for (auto& e : elements) {
@@ -142,9 +138,7 @@ TEST_F(TableTest, insertGetMultiple) {
 TEST_F(TableTest, insertUpdateGet) {
     std::string fieldNew = "Test Field Update";
 
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), *mTx));
     assertElement(1, *mTx, fieldNew, true);
@@ -156,9 +150,7 @@ TEST_F(TableTest, insertUpdateGet) {
  * @test Check if an insert followed by a remove returns no element in the same transaction
  */
 TEST_F(TableTest, insertRemoveGetSameTransaction) {
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     EXPECT_TRUE(mTable.remove(1, *mTx));
 
@@ -177,9 +169,7 @@ TEST_F(TableTest, insertRemoveGetSameTransaction) {
  * @test Check if an insert followed by a remove returns no element
  */
 TEST_F(TableTest, insertRemoveGet) {
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     // Commit insert transaction
     mTx.commit();
@@ -207,15 +197,11 @@ TEST_F(TableTest, insertRemoveGet) {
 TEST_F(TableTest, insertRemoveInsertGet) {
     std::string field2 = "Test Field 2";
 
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     EXPECT_TRUE(mTable.remove(1, *mTx));
 
-    succeeded = false;
-    mTable.insert(1, field2.size(), field2.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, field2.size(), field2.c_str(), *mTx));
 
     assertElement(1, *mTx, field2, true);
     mTx.commit();
@@ -229,9 +215,7 @@ TEST_F(TableTest, insertUpdateRevert) {
     std::string fieldNew = "Test Field Update";
 
     // Insert first element
-    bool succeeded = false;
-    mTable.insert(1, mField.size(), mField.c_str(), *mTx, &succeeded);
-    EXPECT_TRUE(succeeded);
+    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     // Commit insert transaction
     mTx.commit();

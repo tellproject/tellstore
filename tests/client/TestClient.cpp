@@ -203,7 +203,7 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
     for (auto key = startKey; key < endKey; ++key) {
         LOG_TRACE("Insert tuple");
         insertTimer.start();
-        auto insertFuture = transaction.insert(mTable, key, mTuple[key % mTuple.size()], true);
+        auto insertFuture = transaction.insert(mTable, key, mTuple[key % mTuple.size()]);
         if (!insertFuture->waitForResult()) {
             auto& ec = insertFuture->error();
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());

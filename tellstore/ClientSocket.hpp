@@ -283,12 +283,10 @@ public:
             const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
-            bool hasSucceeded);
+            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot,
-            bool hasSucceeded);
+            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot);
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot);
