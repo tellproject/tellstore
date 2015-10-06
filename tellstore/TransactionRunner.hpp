@@ -108,6 +108,7 @@ public:
      */
     void block() {
         mState.store(TransactionState::BLOCKED);
+        mWaitCondition.notify_all();
         mFiber->wait();
     }
 
