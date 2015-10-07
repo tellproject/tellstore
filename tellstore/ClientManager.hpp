@@ -100,6 +100,7 @@ public:
     std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, const GenericTuple& tuple);
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
+    std::shared_ptr<ModificationResponse> revert(const Table& table, uint64_t key);
 
     std::shared_ptr<ScanIterator> scan(const Table& table, ScanMemoryManager& memoryManager, ScanQueryType queryType,
             uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query);
@@ -117,16 +118,12 @@ private:
         }
     };
 
-    void rollbackModified();
-
     void checkTransaction(const Table& table, bool readOnly);
 
     BaseClientProcessor& mProcessor;
     crossbow::infinio::Fiber& mFiber;
 
     std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;
-
-    google::dense_hash_set<std::tuple<uint64_t, uint64_t>, ModifiedHasher> mModified;
 
     TransactionType mType;
     bool mShared;

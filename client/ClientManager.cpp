@@ -57,7 +57,6 @@ ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::i
     if (mType == TransactionType::READ_WRITE && mShared) {
         throw std::logic_error("Shared transaction must be read-only");
     }
-    mModified.set_empty_key(std::make_tuple(0x0u, 0x0u));
 }
 
 ClientTransaction::~ClientTransaction() {
@@ -76,7 +75,6 @@ ClientTransaction::ClientTransaction(ClientTransaction&& other)
         : mProcessor(other.mProcessor),
           mFiber(other.mFiber),
           mSnapshot(std::move(other.mSnapshot)),
-          mModified(std::move(other.mModified)),
           mType(other.mType),
           mShared(other.mShared),
           mCommitted(other.mCommitted) {
@@ -93,7 +91,6 @@ std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& tab
         const AbstractTuple& tuple) {
     checkTransaction(table, false);
 
-    mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
@@ -101,7 +98,6 @@ std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& tab
         const GenericTuple& tuple) {
     checkTransaction(table, false);
 
-    mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
@@ -109,7 +105,6 @@ std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& tab
         const AbstractTuple& tuple) {
     checkTransaction(table, false);
 
-    mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
@@ -117,14 +112,12 @@ std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& tab
         const GenericTuple& tuple) {
     checkTransaction(table, false);
 
-    mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
 }
 
 std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& table, uint64_t key) {
     checkTransaction(table, false);
 
-    mModified.insert(std::make_tuple(table.tableId(), key));
     return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
 }
 
@@ -150,40 +143,16 @@ void ClientTransaction::commit() {
         throw std::logic_error("Transaction is shared");
     }
 
-    LOG_ASSERT(mModified.empty() || mType == TransactionType::READ_WRITE,
-            "Modified elements even though transaction is read-only");
-
     mProcessor.commit(mFiber, *mSnapshot);
-    mModified.clear();
     mCommitted = true;
 }
 
 void ClientTransaction::abort() {
-    if (!mModified.empty()) {
-        rollbackModified();
-    }
     commit();
 }
 
-void ClientTransaction::rollbackModified() {
-    std::queue<std::shared_ptr<ModificationResponse>> responses;
-    for (auto& modified : mModified) {
-        auto revertResponse = mProcessor.revert(mFiber, std::get<0>(modified), std::get<1>(modified), *mSnapshot);
-        responses.emplace(std::move(revertResponse));
-    }
-    responses.back()->waitForResult();
-
-    while (!responses.empty()) {
-        auto revertResponse = std::move(responses.front());
-        responses.pop();
-
-        if (!revertResponse->waitForResult()) {
-            throw std::system_error(revertResponse->error());
-        }
-        if (!revertResponse->get()) {
-            throw std::logic_error("Revert did not succeed");
-        }
-    }
+std::shared_ptr<ModificationResponse> ClientTransaction::revert(const Table& table, uint64_t key) {
+    return mProcessor.revert(mFiber, table.tableId(), key, *mSnapshot);
 }
 
 void ClientTransaction::checkTransaction(const Table& table, bool readOnly) {
