@@ -133,28 +133,16 @@ public:
         return mRecord.schema().type();
     }
 
-    bool get(uint64_t key,
-             size_t& size,
-             const char*& data,
-             const commitmanager::SnapshotDescriptor& snapshot,
-             uint64_t& version,
-             bool& isNewest) const;
+    int get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+             uint64_t& version, bool& isNewest) const;
 
-    bool insert(uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot);
+    int insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
-    bool update(uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot);
+    int update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
-    bool remove(uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot);
+    int remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
-    bool revert(uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot);
+    int revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
     void runGC(uint64_t minVersion);
 
@@ -172,9 +160,7 @@ public:
             const std::vector<ScanQuery*>& queries) const;
 private:
     template<class Fun>
-    bool genericUpdate(const Fun& appendFun,
-                       uint64_t key,
-                       const commitmanager::SnapshotDescriptor& snapshot);
+    int genericUpdate(const Fun& appendFun, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 };
 
 //TODO: question: isn't that code that could be shared between different approaches?

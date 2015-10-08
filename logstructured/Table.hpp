@@ -99,9 +99,9 @@ public:
      * @param snapshot Descriptor containing the versions allowed to read
      * @param version Reference to the tuple's version
      * @param isNewest Whether the returned tuple contains the newest version written
-     * @return Whether the tuple was found
+     * @return Error code or 0 if the tuple was successfully retrieved
      */
-    bool get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+    int get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
             uint64_t& version, bool& isNewest);
 
     /**
@@ -111,9 +111,9 @@ public:
      * @param size Size of the tuple to insert
      * @param data Pointer to the data of the tuple to insert
      * @param snapshot Descriptor containing the version to write
-     * @return Whether the tuple was inserted successfully
+     * @return Error code or 0 if the tuple was successfully inserted
      */
-    bool insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
+    int insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Updates an already existing tuple in the table
@@ -122,18 +122,18 @@ public:
      * @param size Size of the updated tuple
      * @param data Pointer to the data of the updated tuple
      * @param snapshot Descriptor containing the version to write
-     * @return Whether the tuple was updated successfully
+     * @return Error code or 0 if the tuple was successfully updated
      */
-    bool update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
+    int update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Removes an already existing tuple from the table
      *
      * @param key Key of the tuple to remove
      * @param snapshot Descriptor containing the version to remove
-     * @return Whether the tuple was removed successfully
+     * @return Error code or 0 if the tuple was successfully removed
      */
-    bool remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
+    int remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Reverts the existing element with the given version to the element with the previous version
@@ -142,9 +142,9 @@ public:
      *
      * @param key Key of the tuple to revert
      * @param snapshot Descriptor containing the version to revert
-     * @return Whether the element was successfully reverted to the older version
+     * @return Error code or 0 if the tuple was successfully reverted
      */
-    bool revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
+    int revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
     /**
      * @brief Start a full scan of this table
@@ -180,7 +180,7 @@ private:
      * @param deleted Whether the entry marks a deletion
      * @return Whether the entry was successfully written
      */
-    bool internalUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
+    int internalUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             bool deletion);
 
     VersionManager& mVersionManager;

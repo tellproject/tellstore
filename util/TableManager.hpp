@@ -164,24 +164,16 @@ public:
         return lookupTable(res->second);
     }
 
-    bool get(uint64_t tableId,
-             uint64_t key,
-             size_t& size,
-             const char*& data,
-             const commitmanager::SnapshotDescriptor& snapshot,
-             uint64_t& version,
-             bool& isNewest)
+    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
+            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->get(key, size, data, snapshot, version, isNewest);
     }
 
-    bool update(uint64_t tableId,
-                uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
@@ -189,36 +181,29 @@ public:
     }
 
 
-    bool insert(uint64_t tableId,
-                uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->insert(key, size, data, snapshot);
     }
 
-    bool remove(uint64_t tableId,
-                uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->remove(key, snapshot);
     }
 
-    bool revert(uint64_t tableId,
-                uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->revert(key, snapshot);
     }
 
-    bool scan(uint64_t tableId, ScanQuery* query) {
+    int scan(uint64_t tableId, ScanQuery* query) {
         if (query && query->snapshot()) {
             mVersionManager.addSnapshot(*query->snapshot());
         }

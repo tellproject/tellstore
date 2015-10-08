@@ -77,50 +77,35 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
         return tableManager.getTable(name, id);
     }
 
-    bool get(uint64_t tableId,
-             uint64_t key,
-             size_t& size,
-             const char*& data,
-             const commitmanager::SnapshotDescriptor& snapshot,
-             uint64_t& version,
-             bool& isNewest)
+    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
+            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest)
     {
         return tableManager.get(tableId, key, size, data, snapshot, version, isNewest);
     }
 
-    bool update(uint64_t tableId,
-                uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
+            const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.update(tableId, key, size, data, snapshot);
     }
 
-    bool insert(uint64_t tableId,
-                uint64_t key,
-                size_t size,
-                const char* const data,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
+               const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.insert(tableId, key, size, data, snapshot);
     }
 
-    bool remove(uint64_t tableId,
-                uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.remove(tableId, key, snapshot);
     }
 
-    bool revert(uint64_t tableId,
-                uint64_t key,
-                const commitmanager::SnapshotDescriptor& snapshot)
+    int revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         return tableManager.revert(tableId, key, snapshot);
     }
 
-    bool scan(uint64_t tableId, ScanQuery* query)
+    int scan(uint64_t tableId, ScanQuery* query)
     {
         return tableManager.scan(tableId, query);
     }

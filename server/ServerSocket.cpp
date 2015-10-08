@@ -161,8 +161,12 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
         const char* data = nullptr;
         uint64_t version = 0x0u;
         bool isNewest = false;
-        __attribute__((unused)) auto success = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
-        LOG_ASSERT(success || (size == 0x0u), "Size of 0 does not indicate element-not-found");
+        auto ec = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
+
+        if (ec) {
+            writeErrorResponse(messageId, static_cast<error::errors>(ec));
+            return;
+        }
 
         // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
         uint32_t messageLength = 2 * sizeof(uint64_t) + size;
@@ -190,14 +194,8 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        auto succeeded = mStorage.update(tableId, key, dataLength, data, snapshot);
-
-        // Message size is 1 byte (succeeded)
-        uint32_t messageLength = sizeof(uint8_t);
-        writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
-        });
+        auto ec = mStorage.update(tableId, key, dataLength, data, snapshot);
+        writeModificationResponse(messageId, ec);
     });
 }
 
@@ -212,14 +210,8 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        auto succeeded = mStorage.insert(tableId, key, dataLength, data, snapshot);
-
-        // Message size is 1 byte (succeeded)
-        uint32_t messageLength = sizeof(uint8_t);
-        writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
-        });
+        auto ec = mStorage.insert(tableId, key, dataLength, data, snapshot);
+        writeModificationResponse(messageId, ec);
     });
 }
 
@@ -229,14 +221,8 @@ void ServerSocket::handleRemove(crossbow::infinio::MessageId messageId, crossbow
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        auto succeeded = mStorage.remove(tableId, key, snapshot);
-
-        // Message size is 1 byte (succeeded)
-        uint32_t messageLength = sizeof(uint8_t);
-        writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
-        });
+        auto ec = mStorage.remove(tableId, key, snapshot);
+        writeModificationResponse(messageId, ec);
     });
 }
 
@@ -246,14 +232,8 @@ void ServerSocket::handleRevert(crossbow::infinio::MessageId messageId, crossbow
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        auto succeeded = mStorage.revert(tableId, key, snapshot);
-
-        // Message size is 1 byte (succeeded)
-        uint32_t messageLength = sizeof(uint8_t);
-        writeResponse(messageId, ResponseType::MODIFICATION, messageLength, [succeeded]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint8_t>(succeeded ? 0x1u : 0x0u);
-        });
+        auto ec = mStorage.revert(tableId, key, snapshot);
+        writeModificationResponse(messageId, ec);
     });
 }
 
@@ -312,9 +292,9 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
             return;
         }
 
-        auto succeeded = mStorage.scan(tableId, scanDataPtr);
-        if (!succeeded) {
-            writeErrorResponse(messageId, error::server_overlad);
+        auto ec = mStorage.scan(tableId, scanDataPtr);
+        if (ec) {
+            writeErrorResponse(messageId, static_cast<error::errors>(ec));
             mScans.erase(res.first);
         }
     });
@@ -414,6 +394,16 @@ void ServerSocket::removeSnapshot(uint64_t version) {
         return;
     }
     mSnapshots.erase(i);
+}
+
+void ServerSocket::writeModificationResponse(crossbow::infinio::MessageId messageId, int ec) {
+    if (ec) {
+        writeErrorResponse(messageId, static_cast<error::errors>(ec));
+    } else {
+        writeResponse(messageId, ResponseType::MODIFICATION, 0, []
+                (crossbow::buffer_writer& /* message */, std::error_code& /* ec */) {
+        });
+    }
 }
 
 ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Storage& storage,

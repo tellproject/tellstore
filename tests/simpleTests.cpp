@@ -99,7 +99,7 @@ TYPED_TEST(StorageTest, insert_and_get) {
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
         }), size));
         auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx);
-        ASSERT_TRUE(res) << "This insert must not fail!";
+        ASSERT_TRUE(!res) << "This insert must not fail!";
     }
     {
         bool isNewest = false;
@@ -107,7 +107,7 @@ TYPED_TEST(StorageTest, insert_and_get) {
         const char* rec;
         size_t s;
         auto res = this->mStorage->get(this->mTableId, 1, s, rec, tx, version, isNewest);
-        ASSERT_TRUE(res) << "Tuple not found";
+        ASSERT_TRUE(!res) << "Tuple not found";
         ASSERT_EQ(tx->version(), version) << "Tuple has not the version of the snapshot descriptor";
         ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
     }
@@ -129,7 +129,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
         }), size));
         auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx1);
-        ASSERT_TRUE(res) << "This insert must not fail!";
+        ASSERT_TRUE(!res) << "This insert must not fail!";
     }
 
     // Start transaction 2
@@ -143,7 +143,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
         const char* rec;
         size_t size;
         auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx2, version, isNewest);
-        EXPECT_FALSE(res) << "Tuple found for uncommited version";
+        EXPECT_FALSE(!res) << "Tuple found for uncommited version";
         EXPECT_EQ(0u, version) << "Version has to be 0 for tuples that were not found";
         EXPECT_FALSE(isNewest) << "Tuple should not be the newest";
     }
@@ -156,7 +156,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
         }), size));
         auto res = this->mStorage->insert(this->mTableId, 1, size, rec.get(), tx2);
-        EXPECT_FALSE(res) << "Insert succeeded despite tuple already existing in different version";
+        EXPECT_FALSE(!res) << "Insert succeeded despite tuple already existing in different version";
     }
 
     // Transaction 2 can not update the tuple written by transaction 1
@@ -167,7 +167,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
         }), size));
         auto res = this->mStorage->update(this->mTableId, 1, size, rec.get(), tx2);
-        EXPECT_FALSE(res) << "Update succeeded despite tuple already existing in different version";
+        EXPECT_FALSE(!res) << "Update succeeded despite tuple already existing in different version";
     }
 
     // Commit Transaction 1
@@ -184,7 +184,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
         const char* rec;
         size_t size;
         auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx3, version, isNewest);
-        EXPECT_TRUE(res) << "Tuple not found for commited version";
+        EXPECT_TRUE(!res) << "Tuple not found for commited version";
         EXPECT_EQ(tx1->version(), version) << "Version does not match the version of the first transaction";
         EXPECT_TRUE(isNewest) << "Tuple should be the newest";
     }
@@ -197,7 +197,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
         }), size));
         auto res = this->mStorage->update(this->mTableId, 1, size, rec.get(), tx3);
-        EXPECT_TRUE(res) << "Update not successful";
+        EXPECT_TRUE(!res) << "Update not successful";
     }
 
     // Transaction 2 should not be able to see all versions
@@ -208,7 +208,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
         const char* rec;
         size_t size;
         auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx2, version, isNewest);
-        EXPECT_FALSE(res) << "Tuple found for uncommited version";
+        EXPECT_FALSE(!res) << "Tuple found for uncommited version";
         EXPECT_EQ(0u, version) << "Version has to be 0 for tuples that were not found";
         EXPECT_FALSE(isNewest) << "Tuple should not be the newest";
     }
@@ -257,16 +257,15 @@ public:
         auto transaction = mCommitManager.startTx();
 
         for (auto key = startKey; key < endKey; ++key) {
-            auto succeeded = mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(),
-                    transaction);
-            ASSERT_TRUE(succeeded);
+            auto ec = mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(), transaction);
+            ASSERT_FALSE(ec);
 
             size_t getSize;
             const char* getData;
             uint64_t version = 0x0u;
             bool isNewest = false;
-            succeeded = mStorage->get(mTableId, key, getSize, getData, transaction, version, isNewest);
-            ASSERT_TRUE(succeeded);
+            ec = mStorage->get(mTableId, key, getSize, getData, transaction, version, isNewest);
+            ASSERT_FALSE(ec);
             EXPECT_EQ(version, transaction.descriptor().version());
             EXPECT_TRUE(isNewest);
 

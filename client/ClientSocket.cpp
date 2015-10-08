@@ -66,9 +66,8 @@ void GetResponse::processResponse(crossbow::buffer_reader& message) {
     setResult(Tuple::deserialize(message));
 }
 
-void ModificationResponse::processResponse(crossbow::buffer_reader& message) {
-    auto succeeded = (message.read<uint8_t>() != 0x0u);
-    setResult(succeeded);
+void ModificationResponse::processResponse(crossbow::buffer_reader& /* message */) {
+    // Nothing to do
 }
 
 ScanResponse::ScanResponse(crossbow::infinio::Fiber& fiber, std::shared_ptr<ScanIterator> iterator,

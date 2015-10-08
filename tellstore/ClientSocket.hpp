@@ -121,8 +121,8 @@ private:
 /**
  * @brief Response for a Modificatoin (insert, update, remove, revert) request
  */
-class ModificationResponse final : public crossbow::infinio::RpcResponseResult<ModificationResponse, bool> {
-    using Base = crossbow::infinio::RpcResponseResult<ModificationResponse, bool>;
+class ModificationResponse final : public crossbow::infinio::RpcResponseResult<ModificationResponse, void> {
+    using Base = crossbow::infinio::RpcResponseResult<ModificationResponse, void>;
 
 public:
     using Base::Base;

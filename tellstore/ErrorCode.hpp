@@ -54,6 +54,18 @@ enum errors {
 
     /// Operation failed due to server overload.
     server_overlad,
+
+    /// Out of memory.
+    out_of_memory,
+
+    /// Tuple not found.
+    not_found,
+
+    /// Most recent tuple is not in read set of the snapshot.
+    not_in_snapshot,
+
+    /// Write operation unable to complete.
+    invalid_write,
 };
 
 /**
@@ -87,6 +99,18 @@ public:
 
         case error::server_overlad:
             return "Operation failed due to server overload";
+
+        case out_of_memory:
+            return "Out of memory";
+
+        case not_found:
+            return "Tuple not found";
+
+        case not_in_snapshot:
+            return "Most recent tuple is not in read set of the snapshot";
+
+        case invalid_write:
+            return "Write operation unable to complete";
 
         default:
             return "tell.store.server error";

@@ -248,6 +248,11 @@ private:
      */
     void removeSnapshot(uint64_t version);
 
+    /**
+     * @brief Writes the result of the modification response back to the client
+     */
+    void writeModificationResponse(crossbow::infinio::MessageId messageId, int ec);
+
     Storage& mStorage;
 
     /// Maximum number of scan buffers that are in flight on the socket at the same time

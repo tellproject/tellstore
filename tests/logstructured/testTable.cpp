@@ -74,7 +74,7 @@ protected:
         const char* ptr = nullptr;
         uint64_t version = 0x0u;
         bool isNewest = false;
-        EXPECT_TRUE(mTable.get(key, size, ptr, tx, version, isNewest));
+        EXPECT_EQ(0, mTable.get(key, size, ptr, tx, version, isNewest));
         EXPECT_EQ(expected, std::string(ptr, size));
         EXPECT_EQ(expectedVersion, version);
         EXPECT_EQ(expectedNewest, isNewest);
@@ -104,7 +104,7 @@ protected:
  * @test Check if an insert followed by a get returns the inserted element
  */
 TEST_F(TableTest, insertGet) {
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     assertElement(1, *mTx, mField, true);
     mTx.commit();
@@ -122,7 +122,7 @@ TEST_F(TableTest, insertGetMultiple) {
     };
 
     for (auto& e : elements) {
-        EXPECT_TRUE(mTable.insert(e.first, e.second.size(), e.second.c_str(), *mTx));
+        EXPECT_EQ(0, mTable.insert(e.first, e.second.size(), e.second.c_str(), *mTx));
     }
 
     for (auto& e : elements) {
@@ -138,9 +138,9 @@ TEST_F(TableTest, insertGetMultiple) {
 TEST_F(TableTest, insertUpdateGet) {
     std::string fieldNew = "Test Field Update";
 
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
-    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.update(1, fieldNew.size(), fieldNew.c_str(), *mTx));
     assertElement(1, *mTx, fieldNew, true);
     mTx.commit();
 }
@@ -150,15 +150,15 @@ TEST_F(TableTest, insertUpdateGet) {
  * @test Check if an insert followed by a remove returns no element in the same transaction
  */
 TEST_F(TableTest, insertRemoveGetSameTransaction) {
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
-    EXPECT_TRUE(mTable.remove(1, *mTx));
+    EXPECT_EQ(0, mTable.remove(1, *mTx));
 
     std::size_t size = 0;
     const char* ptr = nullptr;
     uint64_t version = 0x0u;
     bool isNewest = false;
-    EXPECT_FALSE(mTable.get(1, size, ptr, *mTx, version, isNewest));
+    EXPECT_NE(0, mTable.get(1, size, ptr, *mTx, version, isNewest));
     EXPECT_EQ(0x0u, version);
     EXPECT_TRUE(isNewest);
     mTx.commit();
@@ -169,7 +169,7 @@ TEST_F(TableTest, insertRemoveGetSameTransaction) {
  * @test Check if an insert followed by a remove returns no element
  */
 TEST_F(TableTest, insertRemoveGet) {
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     // Commit insert transaction
     mTx.commit();
@@ -178,13 +178,13 @@ TEST_F(TableTest, insertRemoveGet) {
     auto tx2 = mCommitManager.startTx();
 
     // Remove element
-    EXPECT_TRUE(mTable.remove(1, *tx2));
+    EXPECT_EQ(0, mTable.remove(1, *tx2));
 
     std::size_t size = 0;
     const char* ptr = nullptr;
     uint64_t version = 0x0u;
     bool isNewest = false;
-    EXPECT_FALSE(mTable.get(1, size, ptr, *tx2, version, isNewest));
+    EXPECT_NE(0, mTable.get(1, size, ptr, *tx2, version, isNewest));
     EXPECT_EQ(tx2->version(), version);
     EXPECT_TRUE(isNewest);
     tx2.commit();
@@ -197,11 +197,11 @@ TEST_F(TableTest, insertRemoveGet) {
 TEST_F(TableTest, insertRemoveInsertGet) {
     std::string field2 = "Test Field 2";
 
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
-    EXPECT_TRUE(mTable.remove(1, *mTx));
+    EXPECT_EQ(0, mTable.remove(1, *mTx));
 
-    EXPECT_TRUE(mTable.insert(1, field2.size(), field2.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, field2.size(), field2.c_str(), *mTx));
 
     assertElement(1, *mTx, field2, true);
     mTx.commit();
@@ -215,7 +215,7 @@ TEST_F(TableTest, insertUpdateRevert) {
     std::string fieldNew = "Test Field Update";
 
     // Insert first element
-    EXPECT_TRUE(mTable.insert(1, mField.size(), mField.c_str(), *mTx));
+    EXPECT_EQ(0, mTable.insert(1, mField.size(), mField.c_str(), *mTx));
 
     // Commit insert transaction
     mTx.commit();
@@ -224,11 +224,11 @@ TEST_F(TableTest, insertUpdateRevert) {
     auto tx2 = mCommitManager.startTx();
 
     // Update element
-    EXPECT_TRUE(mTable.update(1, fieldNew.size(), fieldNew.c_str(), *tx2));
+    EXPECT_EQ(0, mTable.update(1, fieldNew.size(), fieldNew.c_str(), *tx2));
     assertElement(1, *tx2, fieldNew, true);
 
     // Revert element
-    EXPECT_TRUE(mTable.revert(1, *tx2));
+    EXPECT_EQ(0, mTable.revert(1, *tx2));
     assertElement(1, *tx2, mField, mTx->version(), true);
     tx2.commit();
 }

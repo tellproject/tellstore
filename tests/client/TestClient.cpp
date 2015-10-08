@@ -204,20 +204,12 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         LOG_TRACE("Insert tuple");
         insertTimer.start();
         auto insertFuture = transaction.insert(mTable, key, mTuple[key % mTuple.size()]);
-        if (!insertFuture->waitForResult()) {
-            auto& ec = insertFuture->error();
+        if (auto ec = insertFuture->error()) {
             LOG_ERROR("Error inserting tuple [error = %1% %2%]", ec, ec.message());
             return;
         }
         auto insertDuration = insertTimer.stop();
         LOG_DEBUG("Inserting tuple took %1%ns", insertDuration.count());
-
-        auto succeeded = insertFuture->get();
-        if (!succeeded) {
-            LOG_ERROR("Insert did not succeed");
-            return;
-        }
-
 
         LOG_TRACE("Get tuple");
         getTimer.start();

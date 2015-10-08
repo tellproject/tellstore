@@ -20,9 +20,12 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "Table.hpp"
 #include "Record.hpp"
 #include "InsertMap.hpp"
+
+#include <tellstore/ErrorCode.hpp>
 
 #include <config.h>
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -65,12 +68,8 @@ Table::~Table() {
     crossbow::allocator::destroy_now(ht);
 }
 
-bool Table::get(uint64_t key,
-                size_t& size,
-                const char*& data,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                uint64_t& version,
-                bool& isNewest) const {
+int Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+        uint64_t& version, bool& isNewest) const {
     auto ptr = mHashTable.load()->get(key);
     if (ptr) {
         CDMRecord rec(reinterpret_cast<char*>(ptr));
@@ -83,7 +82,10 @@ bool Table::get(uint64_t key,
         // if the newest version is a delete, it might be that there is
         // a new insert in the insert log
         if (isValid && !(wasDeleted && isNewest)) {
-            return (data != nullptr && !wasDeleted);
+            if (data == nullptr || wasDeleted) {
+                return (isNewest ? error::not_found : error::not_in_snapshot);
+            }
+            return 0;
         }
     }
     // in this case we need to scan through the insert log
@@ -101,20 +103,20 @@ bool Table::get(uint64_t key,
                 // then updated - in this case we to continue scanning
                 continue;
             }
-            return (data != nullptr && !wasDeleted);
+            if (data == nullptr || wasDeleted) {
+                return (isNewest ? error::not_found : error::not_in_snapshot);
+            }
+            return 0;
         }
     }
     // in this case the tuple does not exist
     isNewest = true;
     size = 0u;
     data = nullptr;
-    return false;
+    return error::not_found;
 }
 
-bool Table::insert(uint64_t key,
-                   size_t size,
-                   const char* const data,
-                   const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
     // we need to get the iterator as a first step to make
     // sure to check the part of the log that was visible
     // at this point in time
@@ -131,7 +133,7 @@ bool Table::insert(uint64_t key,
         rec.data(snapshot, s, version, isNewest, isValid, &wasDeleted, this, false);
 
         if (isValid && !(wasDeleted && isNewest)) {
-            return false;
+            return (isNewest ? error::invalid_write : error::not_in_snapshot);
         }
         // the tuple was deleted/reverted and we don't have a
         // write-write conflict, therefore we can continue
@@ -142,6 +144,9 @@ bool Table::insert(uint64_t key,
     // the insert succeeded.
     auto logEntrySize = size + DMRecord::spaceOverhead(DMRecord::Type::LOG_INSERT);
     auto entry = mInsertLog.append(logEntrySize);
+    if (!entry) {
+        return error::out_of_memory;
+    }
     // We do this in another scope, after this scope is closed, the log
     // is read only (when seal is called)
     auto iterEnd = mInsertLog.end();
@@ -157,27 +162,27 @@ bool Table::insert(uint64_t key,
         const LogEntry* en = iter.operator->();
         if (en == entry) {
             entry->seal();
-            return true;
+            return 0;
         }
         CDMRecord rec(en->data());
         if (rec.isValidDataRecord() && rec.key() == key) {
             insertRecord.revert(snapshot.version());
             entry->seal();
-            return false;
+            return error::not_in_snapshot;
         }
     }
     LOG_ASSERT(false, "We should never reach this point");
 }
 
-bool Table::update(uint64_t key,
-                   size_t size,
-                   const char* const data,
-                   const commitmanager::SnapshotDescriptor& snapshot)
+int Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot)
 {
     auto fun = [this, key, size, data, &snapshot]()
     {
         auto logEntrySize = size + DMRecord::spaceOverhead(DMRecord::Type::LOG_UPDATE);
         auto entry = mUpdateLog.append(logEntrySize);
+        if (!entry) {
+            return static_cast<char*>(nullptr);
+        }
         {
             DMRecord updateRecord(entry->data());
             updateRecord.setType(DMRecord::Type::LOG_UPDATE);
@@ -191,10 +196,13 @@ bool Table::update(uint64_t key,
     return genericUpdate(fun, key, snapshot);
 }
 
-bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     auto fun = [this, key, &snapshot]() {
         auto logEntrySize = DMRecord::spaceOverhead(DMRecord::Type::LOG_DELETE);
         auto entry = mUpdateLog.append(logEntrySize);
+        if (!entry) {
+            return static_cast<char*>(nullptr);
+        }
         DMRecord rmRecord(entry->data());
         rmRecord.setType(DMRecord::Type::LOG_DELETE);
         rmRecord.writeKey(key);
@@ -205,15 +213,13 @@ bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
     return genericUpdate(fun, key, snapshot);
 }
 
-bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     // TODO Implement
-    return false;
+    return error::unkown_request;
 }
 
 template<class Fun>
-bool Table::genericUpdate(const Fun& appendFun,
-                          uint64_t key,
-                          const commitmanager::SnapshotDescriptor& snapshot)
+int Table::genericUpdate(const Fun& appendFun, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
 {
     auto iter = mInsertLog.begin();
     auto iterEnd = mInsertLog.end();
@@ -230,14 +236,17 @@ bool Table::genericUpdate(const Fun& appendFun,
     }
     if (!ptr) {
         // no record with key exists
-        return false;
+        return error::invalid_write;
     }
     // now we found it. Therefore we first append the
     // update optimistically
     char* nextPtr = appendFun();
+    if (!nextPtr) {
+        return error::out_of_memory;
+    }
     DMRecord rec(reinterpret_cast<char*>(ptr));
     bool isValid;
-    return rec.update(nextPtr, isValid, snapshot, this);
+    return (rec.update(nextPtr, isValid, snapshot, this) ? 0 : error::not_in_snapshot);
 }
 
 std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,

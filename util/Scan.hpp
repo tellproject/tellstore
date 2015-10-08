@@ -25,6 +25,7 @@
 #include <config.h>
 #include "ScanQuery.hpp"
 
+#include <tellstore/ErrorCode.hpp>
 #include <tellstore/Record.hpp>
 
 #include <crossbow/allocator.hpp>
@@ -109,8 +110,8 @@ public:
         }
     }
 
-    bool scan(uint64_t tableId, Table* table, ScanQuery* query) {
-        return queryQueue.tryWrite(std::make_tuple(tableId, table, query));
+    int scan(uint64_t tableId, Table* table, ScanQuery* query) {
+        return (queryQueue.tryWrite(std::make_tuple(tableId, table, query)) ? 0 : error::server_overlad);
     }
 
 private:

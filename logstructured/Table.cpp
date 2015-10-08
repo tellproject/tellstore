@@ -20,7 +20,10 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "Table.hpp"
+
+#include <tellstore/ErrorCode.hpp>
 
 #include "ChainedVersionRecord.hpp"
 #include "VersionRecordIterator.hpp"
@@ -129,7 +132,7 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, V
           mLog(pageManager) {
 }
 
-bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
+int Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
         uint64_t& version, bool& isNewest) {
     VersionRecordIterator recIter(*this, key);
     for (; !recIter.done(); recIter.next()) {
@@ -144,21 +147,21 @@ bool Table::get(uint64_t key, size_t& size, const char*& data, const commitmanag
 
         // Check if the entry marks a deletion
         if (crossbow::from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
-            return false;
+            return (isNewest ? error::not_found : error::not_in_snapshot);
         }
 
         // Set the data pointer and size field
         data = recIter->data();
         size = entry->size() - sizeof(ChainedVersionRecord);
-        return true;
+        return 0;
     }
 
     // Element not found
     isNewest = recIter.isNewest();
-    return false;
+    return (isNewest ? error::not_found : error::not_in_snapshot);
 }
 
-bool Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
     LazyRecordWriter recordWriter(*this, key, data, size, VersionRecordType::DATA, snapshot.version());
     VersionRecordIterator recIter(*this, key);
     LOG_ASSERT(mRecord.schema().type() == TableType::NON_TRANSACTIONAL || snapshot.version() >= minVersion(),
@@ -171,24 +174,24 @@ bool Table::insert(uint64_t key, size_t size, const char* data, const commitmana
         if (!recIter.done()) {
             // Cancel if element is not in the read set
             if (!snapshot.inReadSet(recIter->validFrom())) {
-                break;
+                return error::not_in_snapshot;
             }
 
             auto oldEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
 
             // Check if the entry marks a data tuple
             if (crossbow::from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DATA) {
-                break;
+                return error::invalid_write;
             }
 
             // Cancel if a concurrent revert is taking place
             if (recIter.validTo() != ChainedVersionRecord::ACTIVE_VERSION) {
-                break;
+                return error::not_in_snapshot;
             }
 
             // Cancel if the entry is not yet sealed
             if (BOOST_UNLIKELY(!oldEntry->sealed())) {
-                break;
+                return error::not_in_snapshot;
             }
 
             sameVersion = (recIter->validFrom() == snapshot.version());
@@ -198,7 +201,7 @@ bool Table::insert(uint64_t key, size_t size, const char* data, const commitmana
 
         auto record = recordWriter.record();
         if (!record) {
-            break;
+            return error::out_of_memory;
         }
 
         auto res = (sameVersion ? recIter.replace(record)
@@ -208,32 +211,32 @@ bool Table::insert(uint64_t key, size_t size, const char* data, const commitmana
         }
         recordWriter.seal();
 
-        return true;
+        return 0;
     }
 
-    return false;
+    LOG_ASSERT(false, "Must never reach this point");
 }
 
-bool Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
     return internalUpdate(key, size, data, snapshot, false);
 }
 
-bool Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     return internalUpdate(key, 0, nullptr, snapshot, true);
 }
 
-bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+int Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     VersionRecordIterator recIter(*this, key);
     while (!recIter.done()) {
         // Cancel if the element in the hash map is of a different version
         if (recIter->validFrom() != snapshot.version()) {
             // Succeed if the version list contains no element of the given version
-            return !recIter.find(snapshot.version());
+            return (!recIter.find(snapshot.version()) ? 0 : error::not_in_snapshot);
         }
 
         // Cancel if a concurrent revert is taking place
         if (recIter.validTo() != ChainedVersionRecord::ACTIVE_VERSION) {
-            return false;
+            return error::not_in_snapshot;
         }
 
         // Cancel if the entry is not yet sealed
@@ -243,18 +246,18 @@ bool Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsh
         // though it should be active).
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
         if (BOOST_UNLIKELY(!entry->sealed())) {
-            return false;
+            return error::not_in_snapshot;
         }
 
         // This only fails when a newer element was written in the meantime or the garbage collection recycled the
         // current element
         if (recIter.remove()) {
-            return true;
+            return 0;
         }
     }
 
     // Element not found
-    return false;
+    return 0;
 }
 
 uint64_t Table::minVersion() const {
@@ -265,7 +268,7 @@ uint64_t Table::minVersion() const {
     }
 }
 
-bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
+int Table::internalUpdate(uint64_t key, size_t size, const char* data,
         const commitmanager::SnapshotDescriptor& snapshot, bool deletion) {
     auto type = (deletion ? VersionRecordType::DELETION : VersionRecordType::DATA);
     LazyRecordWriter recordWriter(*this, key, data, size, type, snapshot.version());
@@ -278,24 +281,24 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
 
         // Cancel if element is not in the read set
         if (!snapshot.inReadSet(recIter->validFrom())) {
-            break;
+            return error::not_in_snapshot;
         }
 
         auto oldEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
 
         // Check if the entry marks a deletion
         if (crossbow::from_underlying<VersionRecordType>(oldEntry->type()) == VersionRecordType::DELETION) {
-            break;
+            return error::invalid_write;
         }
 
         // Cancel if a concurrent revert is taking place
         if (recIter.validTo() != ChainedVersionRecord::ACTIVE_VERSION) {
-            break;
+            return error::not_in_snapshot;
         }
 
         // Cancel if the entry is not yet sealed
         if (BOOST_UNLIKELY(!oldEntry->sealed())) {
-            break;
+            return error::not_in_snapshot;
         }
 
         auto sameVersion = (recIter->validFrom() == snapshot.version());
@@ -308,12 +311,12 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
                 // Version list changed - This might be due to update, revert or garbage collection, just retry again
                 continue;
             }
-            return true;
+            return 0;
         }
 
         auto record = recordWriter.record();
         if (!record) {
-            break;
+            return error::out_of_memory;
         }
 
         auto res = (sameVersion ? recIter.replace(record)
@@ -323,10 +326,11 @@ bool Table::internalUpdate(uint64_t key, size_t size, const char* data,
         }
         recordWriter.seal();
 
-        return true;
+        return 0;
     }
 
-    return false;
+    // Element not found
+    return error::invalid_write;
 }
 
 } // namespace logstructured

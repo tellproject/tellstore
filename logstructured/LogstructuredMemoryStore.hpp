@@ -72,30 +72,30 @@ public:
         return mTableManager.getTable(name, id);
     }
 
-    bool get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
+    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
             const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) {
         return mTableManager.get(tableId, key, size, data, snapshot, version, isNewest);
     }
 
-    bool update(uint64_t tableId, uint64_t key, size_t size, const char* data,
+    int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.update(tableId, key, size, data, snapshot);
     }
 
-    bool insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
+    int insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.insert(tableId, key, size, data, snapshot);
     }
 
-    bool remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+    int remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.remove(tableId, key, snapshot);
     }
 
-    bool revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+    int revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
         return mTableManager.revert(tableId, key, snapshot);
     }
 
-    bool scan(uint64_t tableId, ScanQuery* query) {
+    int scan(uint64_t tableId, ScanQuery* query) {
         return mTableManager.scan(tableId, query);
     }
 
