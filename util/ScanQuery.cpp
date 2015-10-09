@@ -432,5 +432,26 @@ off_t ScanQueryBatchProcessor::offsetToNextPredicate(const char* current, const 
     }
 }
 
+ScanQueryBatchPageProcessor::ScanQueryBatchPageProcessor(const char *queryBuffer, const std::vector<ScanQuery *> &queryData, const size_t maxRecordCount):
+    ScanQueryBatchProcessor(queryBuffer, queryData),
+    mNumberOfConjuncts(getNumberOfConjucts(queryBuffer)),
+//    mMaxRecordCount(maxRecordCount),
+    mConjunctBitVectorLength((maxRecordCount+BlockSize-1)/BlockSize),
+    mBitMatrix(mConjunctBitVectorLength*mNumberOfConjuncts,0)
+{}
+
+uint64_t *ScanQueryBatchPageProcessor::getConjunctBitVector(uint conjunctId) {
+    return &mBitMatrix[conjunctId*mConjunctBitVectorLength];
+}
+
+void ScanQueryBatchPageProcessor::resetBitMatrix() {
+    memset(mBitMatrix.data(),0,mBitMatrix.size()*BlockSize);
+}
+
+void ScanQueryBatchPageProcessor::processPage(const char *page, const Record& record, const char* data, uint32_t length) {
+    resetBitMatrix();
+    //TODO: implement
+}
+
 } // namespace store
 } // namespace tell
