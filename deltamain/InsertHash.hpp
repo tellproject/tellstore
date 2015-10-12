@@ -25,6 +25,8 @@
 
 #include <util/functional.hpp>
 
+#include <crossbow/enum_underlying.hpp>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -36,7 +38,7 @@ namespace deltamain {
 /**
  * @brief Lock-Free Open-Addressing hash table for associating a pointer with a key
  *
- * The hash table is designed to only support inserts and gets of the data.
+ * Space occupied by deleted keys is never reclaimed.
  */
 class InsertTable {
 public:
@@ -74,23 +76,57 @@ public:
      */
     bool insert(uint64_t key, void* data, void** actualData = nullptr);
 
+    /**
+     * @brief Tries to update the already existing element in the hash table
+     *
+     * Atomically changes the value pointer from the old to the new pointer.
+     *
+     * @param key The key ID of the entry
+     * @param oldData The old data pointer
+     * @param newData The new data pointer
+     * @param actualData Pointer to the element which caused the conflict
+     * @return True if the update was successful, false if the element does not exist or the data was changed
+     */
+    bool update(uint64_t key, const void* oldData, void* newData, void** actualData = nullptr);
+
+    /**
+     * @brief Tries to remove the already existing element in the hash table
+     *
+     * @param key The key ID of the entry
+     * @param oldData The old data pointer
+     * @param actualData Pointer to the element which caused the conflict
+     * @return True if the removal was successful, false if the element does not exist or the data was changed
+     */
+    bool remove(uint64_t key, const void* oldData, void** actualData = nullptr);
+
 private:
+    /**
+     * @brief The potential states a Entry pointer can be tagged with
+     */
+    enum class EntryMarker : uintptr_t {
+        /// The entry is still free
+        FREE = 0x0u,
+
+        /// The entry is deleted and can be reused (actual pointer will be null)
+        DELETED = 0x1u,
+    };
+
     /**
      * @brief Struct holding the bucket data
      */
     struct alignas(16) Entry {
         Entry()
                 : key(0x0u),
-                  value(nullptr) {
+                  value(crossbow::to_underlying(EntryMarker::FREE)) {
         }
 
-        Entry(uint64_t k, void* v)
+        Entry(uint64_t k, uintptr_t v)
                 : key(k),
                   value(v) {
         }
 
         uint64_t key;
-        void* value;
+        uintptr_t value;
     };
 
     /**
@@ -107,10 +143,15 @@ private:
             return key;
         }
 
-        void* loadValue() const noexcept {
-            void* value;
+        uintptr_t loadValue() const noexcept {
+            uintptr_t value;
             __atomic_load(&mEntry.value, &value, std::memory_order_seq_cst);
             return value;
+        }
+
+        bool updateValue(uintptr_t& expected, uintptr_t desired) noexcept {
+            return __atomic_compare_exchange(&mEntry.value, &expected, &desired, false, std::memory_order_seq_cst,
+                    std::memory_order_seq_cst);
         }
 
         bool compare_exchange_strong(Entry& expected, Entry desired) noexcept {
@@ -121,6 +162,27 @@ private:
     private:
         Entry mEntry;
     };
+
+    /**
+     * @brief Searches the hash table for the element with key and executes the function on the element
+     *
+     * @param key The key ID of the entry
+     * @param notFound The value to return when the element was not found
+     * @param fun The function to be executed on the target element, interface must match T fun(AtomicEntry&, void* ptr)
+     * @return The return value of fun or notFound if the element was not found
+     */
+    template <typename T, typename F>
+    T execOnElement(uint64_t key, T notFound, F fun) const;
+
+    template <typename T, typename F>
+    T execOnElement(uint64_t key, T notFound, F fun);
+
+    /**
+     * @brief Tries to update the existing element
+     *
+     * Used internally by delete and update to change the stored pointer.
+     */
+    bool internalUpdate(uint64_t key, const void* oldData, uintptr_t newData, void** actualData);
 
     size_t mCapacity;
 

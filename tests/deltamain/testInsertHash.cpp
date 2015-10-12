@@ -83,4 +83,53 @@ TEST_F(InsertTableTest, insertDuplicate) {
     EXPECT_EQ(&mElement1, mTable.get(10u));
 }
 
+/**
+ * @class InsertTable
+ * @test Check if removing an element works correctly
+ */
+TEST_F(InsertTableTest, remove) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+
+    EXPECT_TRUE(mTable.remove(10u, &mElement1));
+    EXPECT_EQ(nullptr, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if removing a changed element is prevented
+ */
+TEST_F(InsertTableTest, removeChanged) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    void* actualData = nullptr;
+    EXPECT_FALSE(mTable.remove(10u, &mElement2, &actualData));
+    EXPECT_EQ(&mElement1, actualData);
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if updating an element works
+ */
+TEST_F(InsertTableTest, update) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    EXPECT_TRUE(mTable.update(10u, &mElement1, &mElement2));
+    EXPECT_EQ(&mElement2, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if updating a changed element is prevented
+ */
+TEST_F(InsertTableTest, updateChanged) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    void* actualData = nullptr;
+    EXPECT_FALSE(mTable.update(10u, &mElement3, &mElement2, &actualData));
+    EXPECT_EQ(&mElement1, actualData);
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+}
+
 }
