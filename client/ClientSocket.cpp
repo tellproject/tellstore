@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include <tellstore/ClientSocket.hpp>
 #include <tellstore/AbstractTuple.hpp>
 
@@ -224,7 +225,7 @@ void ScanIterator::abort(std::error_code ec) {
 void ClientSocket::connect(const crossbow::infinio::Endpoint& host, uint64_t threadNum) {
     LOG_INFO("Connecting to TellStore server %1% on processor %2%", host, threadNum);
 
-    crossbow::string data;
+    auto data = handshakeString();
     data.append(reinterpret_cast<char*>(&threadNum), sizeof(uint64_t));
 
     crossbow::infinio::RpcClientSocket::connect(host, data);

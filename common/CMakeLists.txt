@@ -2,6 +2,7 @@
 # TellStore common
 ###################
 set(COMMON_SRCS
+    MessageTypes.cpp
     Record.cpp
 )
 

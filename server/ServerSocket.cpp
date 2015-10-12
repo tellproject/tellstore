@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "ServerSocket.hpp"
 
 #include <util/PageManager.hpp>
@@ -420,12 +421,17 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
 
 ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocket socket,
         const crossbow::string& data) {
-    if (data.size() < sizeof(uint64_t)) {
-        throw std::logic_error("Client did not send enough data in connection attempt");
+    // The length of the data field may be larger than the actual data sent (behavior of librdma_cm) so check the
+    // handshake against the substring
+    auto& handshake = handshakeString();
+    if (data.size() < (handshake.size() + sizeof(uint64_t)) || data.substr(0, handshake.size()) != handshake) {
+        LOG_ERROR("Connection handshake failed");
+        return nullptr;
     }
-    auto thread = *reinterpret_cast<const uint64_t*>(&data.front());
+    auto thread = *reinterpret_cast<const uint64_t*>(&data[handshake.size()]);
     auto& processor = *mProcessors.at(thread % mProcessors.size());
 
+    LOG_INFO("%1%] New client connection on processor %2%", socket->remoteAddress(), thread);
     return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
 }
 

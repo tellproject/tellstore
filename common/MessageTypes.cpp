@@ -21,47 +21,15 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 
-#pragma once
-
-#include <cstdint>
-
-#include <crossbow/string.hpp>
+#include <tellstore/MessageTypes.hpp>
 
 namespace tell {
 namespace store {
 
-/**
- * @brief Unique string sent as first argument in the connection handshake
- */
-const crossbow::string& handshakeString();
-
-/**
- * @brief The possible messages types of a request
- */
-enum class RequestType : uint32_t {
-    CREATE_TABLE = 0x1u,
-    GET_TABLE,
-    GET,
-    UPDATE,
-    INSERT,
-    REMOVE,
-    REVERT,
-    SCAN,
-    SCAN_PROGRESS,
-    COMMIT,
-};
-
-/**
- * @brief The possible messages types of a response
- */
-enum class ResponseType : uint32_t {
-    CREATE_TABLE = 0x01u,
-    GET_TABLE,
-    GET,
-    MODIFICATION,
-    SCAN,
-    COMMIT,
-};
+const crossbow::string& handshakeString() {
+    static crossbow::string str("TELLSTORE");
+    return str;
+}
 
 } // namespace store
 } // namespace tell
