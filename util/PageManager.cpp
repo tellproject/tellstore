@@ -56,6 +56,11 @@ PageManager::PageManager(size_t size)
 }
 
 PageManager::~PageManager() {
+    // TODO Fix this behavior
+    // Wait for all pages to be released
+    // This is required as the epoch might delete the PageManager while a previous epoch is being deleted (with a
+    // reference to this page manager).
+    while (mPages.capacity() != mPages.size());
     munmap(mData, mSize);
 }
 
