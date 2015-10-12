@@ -301,7 +301,7 @@ bool GcScanProcessor::replaceElement(ChainedVersionRecord* oldElement, ChainedVe
 void GcScanGarbageCollector::run(const std::vector<Table*>& tables, uint64_t /* minVersion */) {
     for (auto i : tables) {
         LOG_TRACE("Starting garbage collection on table %1%", i->id());
-        if (!mStorage.scan(i->id(), nullptr)) {
+        if (mStorage.scan(i->id(), nullptr)) {
             LOG_ERROR("Unable to start Garbage Collection scan");
             return;
         }
