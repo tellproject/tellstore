@@ -104,12 +104,12 @@ public:
     void freeEmpty(void* page);
 
     /**
-     * Given an address that points into a random memory
-     * address within a page, returns the start address
-     * of this page.
-     * @braunl: added as utility for colum store approaches
+     * Given an address that points into a random memory address within a page, returns the start address of this page.
      */
-    const char *getPageStart(const char *address) const;
+    const char* getPageStart(const char* address) const {
+        return reinterpret_cast<const char *>(reinterpret_cast<uintptr_t>(address)
+                - ((reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(mData)) % TELL_PAGE_SIZE));
+    }
 };
 
 } // namespace store

@@ -87,12 +87,5 @@ void PageManager::freeEmpty(void* page) {
     while (!mPages.push(page));
 }
 
-const char *PageManager::getPageStart(const char *address) const {
-    return reinterpret_cast<const char *> (
-        reinterpret_cast<uint64_t>(address)
-        - ((reinterpret_cast<uint64_t>(address) - reinterpret_cast<uint64_t>(mData)) % TELL_PAGE_SIZE)
-        );
-}
-
 } // namespace store
 } // namespace tell
