@@ -367,7 +367,6 @@ public:
     crossbow::string stringValue() const;
 };
 
-
 /**
 * This class is used to create and parse a table schema.
 *
@@ -402,7 +401,7 @@ private:
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
-    std::vector<std::vector<id_t>> mIndexes;
+    std::unordered_map<crossbow::string, std::vector<id_t>> mIndexes;
 public:
     Schema() = default;
 
@@ -417,7 +416,14 @@ public:
     Schema& operator=(const Schema&) = default;
 
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
-    void addIndexes(const std::vector<std::vector<crossbow::string>>& idxs);
+    template<class Name, class Fields>
+    void addIndex(Name&& name, Fields&& fields) {
+        mIndexes.emplace(std::forward<Name>(name), std::forward<Fields>(fields));
+    }
+    template<class Name>
+    void addIndex(Name&& name, std::initializer_list<id_t> fields) {
+        mIndexes.emplace(std::forward<Name>(name), fields);
+    }
 
     TableType type() const {
         return mType;
@@ -435,7 +441,7 @@ public:
         return mVarSizeFields;
     }
 
-    const std::vector<std::vector<id_t>>& indexes() const {
+    const std::unordered_map<crossbow::string, std::vector<id_t>>& indexes() const {
         return mIndexes;
     }
 

@@ -129,31 +129,6 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
     return true;
 }
 
-void Schema::addIndexes(const std::vector<std::vector<crossbow::string>>& idxs)
-{
-    std::vector<std::vector<id_t>> indexes;
-    indexes.resize(idxs.size());
-    for (decltype(idxs.size()) i = 0; i < idxs.size(); ++i) {
-        for (decltype(idxs[i].size()) j = 0; j < idxs[i].size(); ++j) {
-            indexes[i].resize(idxs[i][j].size());
-        }
-    }
-    id_t numFields = id_t(mFixedSizeFields.size() + mVarSizeFields.size());
-    // this is a simple nested loop join
-    for (id_t id = 0; id < numFields; ++id) {
-        auto& str = id < mFixedSizeFields.size() ?
-            mFixedSizeFields[id].name()
-            : mVarSizeFields[id - mFixedSizeFields.size()].name();
-        for (decltype(idxs.size()) i = 0; i < idxs.size(); ++i) {
-            for (decltype(idxs[i].size()) j = 0; j < idxs[i].size(); ++i) {
-                if (idxs[i][j] == str) {
-                    indexes[i][j] = id;
-                }
-            }
-        }
-    }
-    mIndexes = std::move(indexes);
-}
 
 Record::Record(Schema schema)
         : mSchema(std::move(schema)),
@@ -189,8 +164,10 @@ size_t Schema::serializedLength() const
     }
     res += sizeof(uint16_t);
     for (auto& idx : mIndexes) {
-        res += sizeof(uint16_t);
-        res += idx.size() * sizeof(id_t);
+        res += 2 * sizeof(uint16_t);
+        auto strLen = idx.first.size();
+        res += strLen + (strLen % 2);
+        res += sizeof(id_t) * idx.second.size();
     }
     return res;
 }
@@ -216,9 +193,12 @@ void Schema::serialize(crossbow::buffer_writer& writer) const
     }
     writer.write<uint16_t>(mIndexes.size());
     for (auto& idx : mIndexes) {
-        writer.write<uint16_t>(idx.size());
-        for (auto id : idx) {
-            writer.write<id_t>(id);
+        auto strLen = idx.first.size();
+        writer.write<uint16_t>(idx.second.size());
+        writer.write<uint16_t>(strLen);
+        writer.write(idx.first.data(), strLen + (strLen % 2));
+        for (auto id : idx.second) {
+            writer.write<decltype(id)>(id);
         }
     }
 }
@@ -246,12 +226,15 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
     }
     auto numIndexes = reader.read<uint16_t>();
     for (uint16_t i = 0; i < numIndexes; ++i) {
-        auto numCols = reader.read<uint16_t>();
-        std::vector<id_t> ids;
-        for (uint16_t i = 0; i < numCols; ++i) {
-            ids.push_back(reader.read<id_t>());
+        uint16_t numFields = reader.read<uint16_t>();
+        uint16_t nameSize = reader.read<uint16_t>();
+        const char* name = reader.data();
+        reader.advance(nameSize + (nameSize % 2));
+        std::vector<id_t> fields;
+        for (uint16_t j = 0; j < numFields; ++j) {
+            fields.push_back(reader.read<uint16_t>());
         }
-        res.mIndexes.emplace_back(std::move(ids));
+        res.mIndexes.emplace(crossbow::string(name, nameSize), std::move(fields));
     }
     return res;
 }
