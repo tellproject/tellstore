@@ -1,1 +1,3 @@
 - [ ] Take PageManager out of the epoch mechanism
+- [ ] Add DropTable command
+- [ ] Fix alignment in serialized records
