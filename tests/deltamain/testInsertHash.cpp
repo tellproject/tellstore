@@ -85,14 +85,17 @@ TEST_F(InsertTableTest, insertDuplicate) {
 
 /**
  * @class InsertTable
- * @test Check if removing an element works correctly
+ * @test Check if removing an element and inserting another one works correctly
  */
-TEST_F(InsertTableTest, remove) {
+TEST_F(InsertTableTest, removeAndInsert) {
     EXPECT_TRUE(mTable.insert(10u, &mElement1));
     EXPECT_EQ(&mElement1, mTable.get(10u));
 
     EXPECT_TRUE(mTable.remove(10u, &mElement1));
     EXPECT_EQ(nullptr, mTable.get(10u));
+
+    EXPECT_TRUE(mTable.insert(10u, &mElement2));
+    EXPECT_EQ(&mElement2, mTable.get(10u));
 }
 
 /**
