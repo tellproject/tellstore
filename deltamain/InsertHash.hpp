@@ -35,6 +35,8 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+class InsertLogEntry;
+
 /**
  * @brief Lock-Free Open-Addressing hash table for associating a pointer with a key
  *
@@ -189,6 +191,42 @@ private:
     std::unique_ptr<AtomicEntry[]> mBuckets;
 
     cuckoo_hash_function mHash;
+};
+
+struct InsertLogTableEntry {
+    InsertLogTableEntry(InsertLogTableEntry* next, uint64_t capacity)
+            : nextList(next),
+              table(capacity) {
+    }
+
+    /// Pointer to the last list or null if there is no more page
+    std::atomic<InsertLogTableEntry*> nextList;
+
+    InsertTable table;
+};
+
+class InsertLogTable {
+public:
+    InsertLogTable(size_t capacity);
+
+    ~InsertLogTable();
+
+    const InsertLogEntry* get(uint64_t key, InsertLogTableEntry** headList = nullptr) const;
+
+    InsertLogEntry* get(uint64_t key, InsertLogTableEntry** headList = nullptr) {
+        return const_cast<InsertLogEntry*>(const_cast<const InsertLogTable*>(this)->get(key, headList));
+    }
+
+    bool insert(uint64_t key, InsertLogEntry* record, InsertLogTableEntry* headList);
+
+    bool remove(uint64_t key, const InsertLogEntry* oldRecord, InsertLogTableEntry* tailList);
+
+    InsertLogTableEntry* allocateHead();
+
+    void truncate(InsertLogTableEntry* endList);
+
+private:
+    std::atomic<InsertLogTableEntry*> mHeadList;
 };
 
 } // namespace deltamain

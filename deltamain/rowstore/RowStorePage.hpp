@@ -20,117 +20,162 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
-#include <cstdint>
-#include <cstddef>
+#include "RowStoreRecord.hpp"
 
 #include <config.h>
-#include <util/PageManager.hpp>
-#include <util/Scan.hpp>
 
-#include "deltamain/Record.hpp"
-#include "deltamain/InsertMap.hpp"
+#include <deltamain/Record.hpp>
 
-#include <crossbow/allocator.hpp>
+#include <commitmanager/SnapshotDescriptor.hpp>
+
+#include <crossbow/alignment.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 namespace tell {
 namespace store {
-
-class CuckooTable;
-class Modifier;
-
 namespace deltamain {
 
-/**
- * Contains the functionality for garbagabe collection and scan of a memory
- * page in row format (with RowStorePage::Iterator).
- * In case of garbage collection, the page object should only be constructed
- * once for the first page and for all subsequent steps, the reset(.) method
- * should be called. This is important to keep state accross pages.
- */
-class RowStorePage {
-    PageManager& mPageManager;
-    char* mData;
-    uint64_t mSize;             //size (used memory) of current page (first 8 bits of data)
-    uint64_t mStartOffset;      //offset in current page where gc proceeds
-    char* mFillPage;            //page to copy to
-    uint64_t mFillOffset;       //offset in fillpage to copy to next
-
-private:
-
-    /**
-     * construct new fill page if needed
-     */
-    void constructFillPage()
-    {
-        if (!mFillPage)
-        {
-            mFillPage = reinterpret_cast<char*>(mPageManager.alloc());
-            mFillOffset = 8;
-        }
-    }
-
-
-    void markCurrentForDeletion() {
-        auto oldPage = mData;
-        auto& pageManager = mPageManager;
-        crossbow::allocator::invoke([oldPage, &pageManager]() { pageManager.free(oldPage); });
-    }
-
+class alignas(8) RowStoreMainPage {
 public:
-    class Iterator {
-        friend class RowStorePage;
-    private:
-        const char* current;
-        Iterator(const char* current) : current(current) {}
+    template <typename EntryType>
+    class IteratorImpl {
     public:
-        Iterator() {}
-        Iterator(const Iterator&) = default;
-        Iterator& operator=(const Iterator&) = default;
-    public:
-        Iterator& operator++();
-        Iterator operator++(int);
-        bool operator==(const Iterator& other) const;
-        bool operator!=(const Iterator& other) const {
-            return !(*this == other);
+        static constexpr bool is_const_iterator = std::is_const<EntryType>::value;
+        using reference = typename std::conditional<is_const_iterator, const EntryType&, EntryType&>::type;
+        using pointer = typename std::conditional<is_const_iterator, const EntryType*, EntryType*>::type;
+
+        IteratorImpl(uintptr_t current)
+                : mCurrent(current) {
         }
-        const char* operator*() const;
+
+        IteratorImpl<EntryType>& operator++() {
+            mCurrent += reinterpret_cast<EntryType*>(mCurrent)->size();
+            return *this;
+        }
+
+        IteratorImpl<EntryType> operator++(int) {
+            IteratorImpl<EntryType> result(*this);
+            operator++();
+            return result;
+        }
+
+        bool operator==(const IteratorImpl<EntryType>& rhs) const {
+            return (mCurrent == rhs.mCurrent);
+        }
+
+        bool operator!=(const IteratorImpl<EntryType>& rhs) const {
+            return !operator==(rhs);
+        }
+
+        reference operator*() const {
+            return *operator->();
+        }
+
+        pointer operator->() const {
+            return reinterpret_cast<pointer>(mCurrent);
+        }
+
+    private:
+        /// Current record this iterator is pointing to
+        uintptr_t mCurrent;
     };
 
-    RowStorePage(PageManager& pageManager, char* data, Table *table = nullptr)
-        : mPageManager(pageManager)
-        , mData(data)
-        , mSize(data ? *reinterpret_cast<const uint64_t*>(data) : 0u)
-        , mStartOffset(8)
-        , mFillPage(nullptr)
-        , mFillOffset(0) {}
+    using Iterator = IteratorImpl<RowStoreMainEntry>;
+    using ConstIterator = IteratorImpl<const RowStoreMainEntry>;
 
-    void reset(char *data)
-    {
-        mData = data;
-        mStartOffset = 8;
-        mSize = uint64_t(*reinterpret_cast<const uint64_t*>(data));
+    RowStoreMainPage()
+            : mOffset(0u) {
     }
 
-    /**
-     * Performs a gc step on this page and copies data to a new page.
-     * This call either ends when there are
-     * (a) no changes to be done (done is set to true and result is set to current page) --> store page in page list, call reset() with address of next page, followed by gc ()
-     * (b) no records to copy anymore (done is set to true and result is set to nullptr otherwise) --> call reset() with the address of the next page, followed by gc()
-     * (c) new page is full (done is set to false and result is set to new page) --> store new page in page list and call gc() again
-     */
-    char* gc(uint64_t lowestActiveVersion, InsertMap& insertMap, bool& done, Modifier& hashTable);
+    ConstIterator cbegin() const {
+        return ConstIterator(reinterpret_cast<uintptr_t>(data()));
+    }
 
-    /**
-     * fills inserts (from the insertmap) into a new page.
-     * Returns the address of that page such that it can be stored.
-     */
-    char *fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable);
+    Iterator begin() {
+        return Iterator(reinterpret_cast<uintptr_t>(data()));
+    }
 
-    Iterator begin() const;
-    Iterator end() const;
+    ConstIterator begin() const {
+        return cbegin();
+    }
+
+    ConstIterator cend() const {
+        return ConstIterator(reinterpret_cast<uintptr_t>(data()) + mOffset);
+    }
+
+    Iterator end() {
+        return Iterator(reinterpret_cast<uintptr_t>(data()) + mOffset);
+    }
+
+    ConstIterator end() const {
+        return cend();
+    }
+
+    bool needsCleaning(uint64_t minVersion) const;
+
+    RowStoreMainEntry* append(uint64_t key, const std::vector<RecordHolder>& elements);
+
+    RowStoreMainEntry* append(const RowStoreMainEntry* record);
+
+private:
+    const char* data() const {
+        return reinterpret_cast<const char*>(this) + sizeof(RowStoreMainPage);
+    }
+
+    char* data() {
+        return const_cast<char*>(const_cast<const RowStoreMainPage*>(this)->data());
+    }
+
+    uint64_t mOffset;
 };
+
+class RowStorePageModifier {
+public:
+    RowStorePageModifier(PageManager& pageManager)
+            : mPageManager(pageManager),
+              mFillPage(nullptr) {
+    }
+
+    void append(RowStoreMainPage* page) {
+        mPageList.emplace_back(page);
+    }
+
+    void* append(const RowStoreMainEntry* record);
+
+    template <typename Rec>
+    void* recycle(Rec& oldRecord, const std::vector<RecordHolder>& elements);
+
+    std::vector<RowStoreMainPage*> done() {
+        return std::move(mPageList);
+    }
+
+private:
+    RowStoreMainEntry* appendRecord(uint64_t key, const std::vector<RecordHolder>& elements);
+
+    template <typename Fun>
+    RowStoreMainEntry* internalAppend(Fun fun);
+
+    PageManager& mPageManager;
+
+    std::vector<RowStoreMainPage*> mPageList;
+
+    RowStoreMainPage* mFillPage;
+};
+
+template <typename Rec>
+void* RowStorePageModifier::recycle(Rec& oldRecord, const std::vector<RecordHolder>& elements) {
+    auto ptr = appendRecord(oldRecord.key(), elements);
+    while (!oldRecord.tryUpdate(reinterpret_cast<uintptr_t>(ptr) | crossbow::to_underlying(NewestPointerTag::MAIN))) {
+        ptr->newest(oldRecord.newest());
+    }
+    return ptr;
+}
 
 } // namespace deltamain
 } // namespace store

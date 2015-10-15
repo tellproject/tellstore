@@ -13,7 +13,6 @@ set(UTIL_PRIVATE_HDR
     chunk_allocator.hpp
     CuckooHash.hpp
     functional.hpp
-    IteratorEntry.hpp
     Log.hpp
     OpenAddressingHash.hpp
     PageManager.hpp

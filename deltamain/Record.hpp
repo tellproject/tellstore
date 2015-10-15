@@ -20,223 +20,257 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
+
+#include <crossbow/enum_underlying.hpp>
+
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <map>
-#include <atomic>
-
-#include <config.h>
-#include <crossbow/enum_underlying.hpp>
-#include <util/IteratorEntry.hpp>
-
-#include "InsertMap.hpp"
-
-#include "rowstore/RowStoreVersionIterator.hpp"
+#include <vector>
 
 namespace tell {
 namespace commitmanager {
+
 class SnapshotDescriptor;
+
 } // namespace commitmanager
 
 namespace store {
 
+class PageManager;
+
 namespace deltamain {
 
-enum class RecordType : uint8_t {
-    LOG_INSERT,
-    LOG_UPDATE,
-    LOG_DELETE,
-    MULTI_VERSION_RECORD
-};
+struct RecordHolder {
+    RecordHolder(uint64_t v, const char* d, size_t s)
+            : version(v),
+              data(d),
+              size(s) {
+    }
 
-class Table;
+    /// Version of the element
+    uint64_t version;
 
-namespace impl {
-struct VersionHolder {
-    const char* record; //points to the data directly (no key or version information)
-    RecordType type;
+    /// Pointer to the data directly (no key or version information)
+    const char* data;
+
+    /// Size of the data
     size_t size;
-    std::atomic<const char*>* newestPtrLocation;
 };
-using VersionMap = std::map<uint64_t, VersionHolder>;   // maps versions to version holders
 
+enum RecordType : uint32_t {
+    DATA = 0x1u,
+    DELETE,
+    REVERT,
+};
+
+enum NewestPointerTag : uintptr_t {
+    UPDATE = 0x0u,
+    MAIN = 0x1u,
+    INVALID = (0x1u << 1),
+};
+
+inline void* newestMainRecord(uintptr_t newest) {
+    if ((newest & crossbow::to_underlying(NewestPointerTag::MAIN)) != 0x0u) {
+        return reinterpret_cast<void*>(newest & ~crossbow::to_underlying(NewestPointerTag::MAIN));
+    }
+    return nullptr;
 }
 
-/**
- * // TODO: Implement revert
- *
- * This class handles Records which are either in the
- * log or in a table. The base pointer must be set in
- * a way, that it is able to find all relevant versions
- * of the record from there. The general memory layout
- * of a DMRecord looks like follows:
- *
- * - 1 byte: Record::Type
- * - meta data specific for the record type
- * - The data (if not delete)
- *
- * For the memory layout of log records:
- * PLEASE consult the specific comments in LogRecord.hpp
- *
- * For the memory layout of a MV-DMRecord:
- * PLEASE consult the specific comments in RowStoreRecord.hpp,
- * resp. ColumnMapRecord.hpp.
- *
- * This class comes in to flavors: const and non-const.
- * The non-const version provides also functionality for
- * writing to the memory.
- */
-
-/**
- * if we use columnMap, MV records need a special treatment for data pointers
- * as pointers point directly to a key but have the second last bit set to 1 to
- * indicate that this is an MV and not any kind of log record.
- */
-#if defined USE_COLUMN_MAP
-        #define IS_MV_RECORD ((reinterpret_cast<uint64_t>(mData) >> 1) % 2)
-#endif
-
-template<class T>
-class DMRecordImplBase {
-    using target_type = typename std::remove_pointer<T>::type;
-    static_assert(sizeof(target_type) == 1, "only pointers to one byte size types are supported");
-protected:
-    T mData;
+class alignas(8) InsertLogEntry {
 public:
-    using Type = RecordType;
-
-    DMRecordImplBase(T data) : mData(data) {}
-
-    RecordType type() const {
-#if defined USE_COLUMN_MAP
-// if we use columnMap, finding the type is slightly more tricky
-        if (IS_MV_RECORD)
-            return RecordType::MULTI_VERSION_RECORD;
-#endif
-        return crossbow::from_underlying<Type>(*mData);
+    InsertLogEntry(uint64_t key, uint64_t version)
+            : mKey(key),
+              mVersion(version),
+              mNewest(0x0u) {
     }
 
     uint64_t key() const {
-#if defined USE_COLUMN_MAP
-// if we use columnMap, the key is at a different offset
-        if (IS_MV_RECORD)
-            return *reinterpret_cast<const uint64_t*>(mData -2);
-#endif
-        return *reinterpret_cast<const uint64_t*>(mData + 8);
+        return mKey;
+    }
+
+    uint64_t version() const {
+        return mVersion;
+    }
+
+    uintptr_t newest() const {
+        return mNewest.load();
+    }
+
+    bool newest(uintptr_t& expected, uintptr_t value) {
+        return mNewest.compare_exchange_strong(expected, value);
+    }
+
+    void invalidate() {
+        mNewest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
+    }
+
+    bool tryInvalidate(uintptr_t& expected) {
+        return mNewest.compare_exchange_strong(expected, crossbow::to_underlying(NewestPointerTag::INVALID));
+    }
+
+    const char* data() const {
+        return reinterpret_cast<const char*>(this) + sizeof(InsertLogEntry);
+    }
+
+    char* data() {
+        return const_cast<char*>(const_cast<const InsertLogEntry*>(this)->data());
+    }
+
+private:
+    const uint64_t mKey;
+    const uint64_t mVersion;
+    std::atomic<uintptr_t> mNewest;
+};
+
+template <typename T>
+class InsertRecordImpl {
+public:
+    InsertRecordImpl(T record)
+            : mRecord(record),
+              mNewest(mRecord->newest()) {
+    }
+
+    T value() const {
+        return mRecord;
+    }
+
+    uint64_t key() const {
+        return mRecord->key();
+    }
+
+    bool valid() const {
+        return (mNewest & crossbow::to_underlying(NewestPointerTag::INVALID)) == 0;
+    }
+
+    uintptr_t newest() const {
+        return mNewest;
+    }
+
+    uint64_t baseVersion() const {
+        return mRecord->version();
+    }
+
+    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
+            uint64_t& version, bool& isNewest) const;
+
+    void collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const;
+
+protected:
+    T mRecord;
+    uintptr_t mNewest;
+};
+
+extern template class InsertRecordImpl<const InsertLogEntry*>;
+
+class ConstInsertRecord : public InsertRecordImpl<const InsertLogEntry*> {
+    using Base = InsertRecordImpl<const InsertLogEntry*>;
+public:
+    using Base::Base;
+
+    ConstInsertRecord(const void* record)
+            : Base(reinterpret_cast<const InsertLogEntry*>(record)) {
+    }
+};
+
+extern template class InsertRecordImpl<InsertLogEntry*>;
+
+class InsertRecord : public InsertRecordImpl<InsertLogEntry*> {
+    using Base = InsertRecordImpl<InsertLogEntry*>;
+public:
+    using Base::Base;
+
+    InsertRecord(void* record)
+            : Base(reinterpret_cast<InsertLogEntry*>(record)) {
+    }
+
+    bool tryUpdate(uintptr_t value) {
+        return mRecord->newest(mNewest, value);
+    }
+
+    bool tryInvalidate() {
+        return mRecord->tryInvalidate(mNewest);
+    }
+
+    int canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, RecordType type) const;
+
+    int canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const;
+};
+
+class alignas(8) UpdateLogEntry {
+public:
+    UpdateLogEntry(uint64_t key, uint64_t version, const UpdateLogEntry* previous)
+            : mKey(key),
+              mVersion(version),
+              mPrevious(reinterpret_cast<uintptr_t>(previous)) {
+    }
+
+    uint64_t key() const {
+        return mKey;
+    }
+
+    uint64_t version() const {
+        return mVersion;
+    }
+
+    const UpdateLogEntry* previous() const {
+        return reinterpret_cast<const UpdateLogEntry*>(mPrevious.load());
+    }
+
+    void invalidate() {
+        mPrevious.store(crossbow::to_underlying(NewestPointerTag::INVALID));
+    }
+
+    const char* data() const {
+        return reinterpret_cast<const char*>(this) + sizeof(UpdateLogEntry);
+    }
+
+    char* data() {
+        return const_cast<char*>(const_cast<const UpdateLogEntry*>(this)->data());
+    }
+
+private:
+    const uint64_t mKey;
+    const uint64_t mVersion;
+    std::atomic<uintptr_t> mPrevious;
+};
+
+class UpdateRecordIterator {
+public:
+    UpdateRecordIterator(const UpdateLogEntry* record, uint64_t baseVersion);
+
+    bool done() const {
+        return mCurrent == nullptr;
+    }
+
+    void next();
+
+    uint64_t lowestVersion() const {
+        return mLowestVersion;
     }
 
     /**
-     * This will return the newest version readable in snapshot
-     * or nullptr if no such version exists.
-     *
-     * If wasDeleted is provided, it will be set to true if there
-     * is a tuple in the read set but it got deleted.
-     *
-     * isValid will be set to false iff all versions accessible from
-     * this tuple got reverted.
+     * @brief The current element
      */
-    const char* data(
-            const commitmanager::SnapshotDescriptor& snapshot,
-            size_t& size,
-            uint64_t& version,
-            bool& isNewest,
-            bool& isValid,
-            bool* wasDeleted = nullptr,
-            const Table *table = nullptr,
-            bool copyData = true
-            ) const;
-
-
-    T dataPtr();
-
-    static size_t spaceOverhead(Type t);
-
-    RecordType typeOfNewestVersion(bool& isValid) const;
-    uint64_t size() const;
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const;
-
-    // traverses previous pointers of log record repeatedly and adds record versions
-    // to the version map in ascending version order
-    void collect(
-            impl::VersionMap& versions,
-            bool& newestIsDelete,
-            bool& allVersionsInvalid) const;
-
-    /**
-     * This method will GC the record to a new location. It will then return
-     * how much data it has written or 0 iff the new location is too small
-     */
-    uint64_t copyAndCompact(
-            uint64_t lowestActiveVersion,
-            InsertMap& insertMap,
-            char* newLocation,
-            uint64_t maxSize,
-            bool& success) const;
-
-    void revert(uint64_t version);
-    /**
-     * This function return true iff the underlying item is a log entry and it
-     * is not a tombstone or a reverted operation.
-     */
-    bool isValidDataRecord() const;
-
-    const RowStoreVersionIterator getVersionIterator(const Record *record) const;
-};
-
-template<class T>
-class DMRecordImpl : public DMRecordImplBase<T> {
-public:
-    DMRecordImpl(T data) : DMRecordImplBase<T>(data) {}
-};
-
-/**
- * This is a specialization of the DMRecord class that
- * contains all writing operations. Most of the functions
- * in this class will only work correctly for some
- * types of records. If it is called for the wrong type,
- * it will crash at runtime.
- */
-template<>
-class DMRecordImpl<char*> : public DMRecordImplBase<char*> {
-public:
-    DMRecordImpl(char* data) : DMRecordImplBase<char*>(data) {}
-public: // writing functinality
-    void setType(Type type) {
-        this->mData[0] = crossbow::to_underlying(type);
+    const UpdateLogEntry* value() const {
+        return mCurrent;
     }
-    /**
-     * This can be called on all types
-     */
-    void writeKey(uint64_t key);
-    /**
-     * This can only be called on log entries
-     */
-    void writeVersion(uint64_t version);
-    /**
-     * This can only be called on log entries
-     */
-    void writePrevious(const char* prev);
-    /**
-     * This can only be called on log entries
-     */
-    void writeData(size_t size, const char* data);
 
-    bool update(char* next,
-                bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                const Table *table = nullptr
-    );
+    const UpdateLogEntry& operator*() const {
+        return *operator->();
+    }
 
+    const UpdateLogEntry* operator->() const {
+        return mCurrent;
+    }
+
+private:
+    const UpdateLogEntry* mCurrent;
+    uint64_t mBaseVersion;
+    uint64_t mLowestVersion;
 };
-
-extern template class DMRecordImplBase<const char*>;
-extern template class DMRecordImplBase<char*>;
-extern template class DMRecordImpl<const char*>;
-extern template class DMRecordImpl<char*>;
-
-using CDMRecord = DMRecordImpl<const char*>;
-using DMRecord = DMRecordImpl<char*>;
 
 } // namespace deltamain
 } // namespace store

@@ -23,6 +23,9 @@
 
 #include "InsertHash.hpp"
 
+#include <util/Log.hpp>
+
+#include <crossbow/allocator.hpp>
 #include <crossbow/logger.hpp>
 
 namespace tell {
@@ -155,6 +158,119 @@ T InsertTable::execOnElement(uint64_t key, T notFound, F fun) {
             [&fun] (const AtomicEntry& entry, uintptr_t ptr) {
         return fun(const_cast<AtomicEntry&>(entry), ptr);
     });
+}
+
+InsertLogTable::InsertLogTable(size_t capacity)
+    : mHeadList(crossbow::allocator::construct<InsertLogTableEntry>(nullptr, capacity)) {
+}
+
+InsertLogTable::~InsertLogTable() {
+    auto headList = mHeadList.exchange(nullptr);
+    while (headList != nullptr) {
+        auto previousList = headList->nextList.load();
+        crossbow::allocator::destroy_now(headList);
+        headList = previousList;
+    }
+}
+
+const InsertLogEntry* InsertLogTable::get(uint64_t key, InsertLogTableEntry** headList) const {
+    auto insertList = mHeadList.load();
+    if (headList) *headList = insertList;
+    LOG_ASSERT(insertList != nullptr, "Head insert list must never be null");
+
+    for (auto currentList = insertList; currentList; currentList = currentList->nextList.load()) {
+        auto ptr = currentList->table.get(key);
+        if (!ptr) {
+            continue;
+        }
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
+
+        // Check if entry is unsealed or invalid: In this case it can not be in an older insert table
+        if (BOOST_UNLIKELY(!entry->sealed())) {
+            break;
+        }
+
+        return reinterpret_cast<const InsertLogEntry*>(ptr);
+    }
+
+    return nullptr;
+}
+
+bool InsertLogTable::insert(uint64_t key, InsertLogEntry* record, InsertLogTableEntry* headList) {
+    while (true) {
+        // Try to insert the element in the insert table
+        if (!headList->table.insert(key, record)) {
+            return false;
+        }
+
+        // Check if a new head table was allocated in the meantime
+        // The insert has to be repeated in the new head table
+        auto newHeadList = mHeadList.load();
+        if (newHeadList == headList) {
+            return true;
+        }
+
+        // Check if an insert took place that in the older tables (up to the previous insert table)
+        for (auto currentList = newHeadList->nextList.load(); currentList && currentList != headList;
+                currentList = currentList->nextList.load()) {
+            if (currentList->table.get(key)) {
+                // The element was found in a newer insert table: Abort the current insertion
+                return false;
+            }
+        }
+
+        // Restart the insert in the newest table
+        headList = newHeadList;
+    }
+}
+
+bool InsertLogTable::remove(uint64_t key, const InsertLogEntry* oldRecord, InsertLogTableEntry* tailList) {
+    auto insertList = mHeadList.load();
+    auto endList = tailList->nextList.load();
+    LOG_ASSERT(insertList != nullptr, "Head insert list must never be null");
+
+    for (auto currentList = insertList; currentList || currentList == endList;
+            currentList = currentList->nextList.load()) {
+        // Try to remove the element in the insert table
+        void* actualData = nullptr;
+        if (currentList->table.remove(key, oldRecord, &actualData)) {
+            return true;
+        }
+
+        // Check if the element does not exist in the current table, retry with the next
+        if (actualData == nullptr) {
+            continue;
+        }
+
+        // Element exists and changed in the meantime
+        return false;
+    }
+
+    // Element was not found
+    return false;
+}
+
+InsertLogTableEntry* InsertLogTable::allocateHead() {
+    auto headList = mHeadList.load();
+    auto newHeadList = crossbow::allocator::construct<InsertLogTableEntry>(headList, headList->table.capacity());
+
+    // Set the newly allocated table as new head table
+    // If this fails another hash table was allocated in the meantime by somebody else
+    if (!mHeadList.compare_exchange_strong(headList, newHeadList)) {
+        crossbow::allocator::destroy_now(newHeadList);
+        newHeadList = headList;
+    }
+    return newHeadList;
+}
+
+void InsertLogTable::truncate(InsertLogTableEntry* endList) {
+    // Truncate the insert hash table and free all tables using the epoch mechanism
+    auto oldList = endList->nextList.exchange(nullptr);
+    while (oldList != nullptr) {
+        auto previousList = oldList->nextList.load();
+        crossbow::allocator::destroy(oldList);
+        oldList = previousList;
+    }
 }
 
 } // namespace deltamain

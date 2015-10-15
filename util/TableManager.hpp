@@ -129,6 +129,10 @@ public:
     }
 
 public:
+    const StorageConfig& config() const {
+        return mConfig;
+    }
+
     template <typename... Args>
     bool createTable(const crossbow::string& name,
                      const Schema& schema,

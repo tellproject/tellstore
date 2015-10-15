@@ -20,149 +20,98 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
-#include "RowStorePage.hpp"
-#include "deltamain/InsertMap.hpp"
-#include "deltamain/Record.hpp"
 
-#include <util/CuckooHash.hpp>
+#include "RowStorePage.hpp"
+
+#include <util/PageManager.hpp>
+
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {
 namespace deltamain {
+namespace {
 
-auto RowStorePage::Iterator::operator++() -> Iterator&
-{
-    CDMRecord rec(current);
-    current += rec.size();
-    return *this;
-}
+constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE - sizeof(RowStoreMainPage);
 
-auto RowStorePage::Iterator::operator++(int) -> Iterator
-{
-    auto res = *this;
-    ++(*this);
-    return res;
-}
+} // anonymous namespace
 
-const char* RowStorePage::Iterator::operator*() const {
-    return current;
-}
-
-bool RowStorePage::Iterator::operator== (const Iterator& other) const {
-    return current == other.current;
-}
-
-auto RowStorePage::begin() const -> Iterator {
-    return Iterator(mData + 8);
-}
-
-auto RowStorePage::end() const -> Iterator {
-    return Iterator(mData + mSize);
-}
-
-char* RowStorePage::gc(uint64_t lowestActiveVersion,
-        InsertMap& insertMap,
-        bool& done,
-        Modifier& hashTable)
-{
-        // We iterate throgh our page
-        uint64_t offset = mStartOffset;
-        // in the first iteration we just decide wether we
-        // need to collect any garbage here
-        bool hasToClean = mStartOffset != 8;
-        while (offset < mSize && !hasToClean) {
-            CDMRecord rec(mData + offset);
-            if (rec.needsCleaning(lowestActiveVersion, insertMap)) {
-                hasToClean = true;
-                break;
-            }
-            offset += rec.size();
-        }
-        if (!hasToClean) {
-            // we are done - no cleaning needed for this page
-            done = true;
-            return mData;
-        }
-
-        // At this point we know that we will need to clean the page
-        // if its the first gc call to that page, we have to mark it for deletion
-        if (mStartOffset == 8)
-            markCurrentForDeletion();
-
-        // construct new fill page if needed
-        constructFillPage();
-
-        offset = mStartOffset;
-        while (offset < mSize) {
-            CDMRecord rec(mData + offset);
-            bool couldRelocate = false;
-            auto pos = mFillPage + mFillOffset;
-            mFillOffset += rec.copyAndCompact(lowestActiveVersion,
-                    insertMap,
-                    pos,
-                    TELL_PAGE_SIZE - mFillOffset,
-                    couldRelocate);
-            if (!couldRelocate) {
-                // The current fillPage is full
-                // In this case we set its used memory, return it and set mFillPage to null
-                *reinterpret_cast<uint64_t*>(mFillPage) = mFillOffset;
-                auto res = mFillPage;
-                mFillPage = nullptr;
-                done = false;
-                return res;
-            }
-            hashTable.insert(rec.key(), pos, true);
-            offset += rec.size();
-        }
-
-        // we are done, but the fillpage is (most probably) not full yet
-        done = true;
-        return nullptr;
-}
-
-char *RowStorePage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable)
-{
-    // construct new fill page if needed
-    constructFillPage();
-
-    // Create a dummy record to copy the inserts into the main page
-    // The dummy record has one version that is marked as delete so only inserts are processed. The newest pointer and
-    // the key have to be reset every time we use the dummy record.
-    char dummyRecord[40];
-    dummyRecord[0] = crossbow::to_underlying(RecordType::MULTI_VERSION_RECORD);
-    *reinterpret_cast<uint32_t*>(dummyRecord + 4) = 1; // Number of versions
-    *reinterpret_cast<uint64_t*>(dummyRecord + 24) = 0; // Version number
-    *reinterpret_cast<uint32_t*>(dummyRecord + 32) = 40; // Offset to first version (start of data region)
-    *reinterpret_cast<uint32_t*>(dummyRecord + 36) = 40; // Offset past the last version (end of data region)
-    DMRecord dummy(dummyRecord);
-    while (!insertMap.empty()) {
-        bool couldRelocate;
-        auto fst = insertMap.begin();
-        auto key = fst->first.key;
-
-        *reinterpret_cast<const char**>(dummyRecord + 16) = nullptr; // Newest pointer
-        dummy.writeKey(key);
-
-        auto pos = mFillPage + mFillOffset;
-        mFillOffset += dummy.copyAndCompact(lowestActiveVersion,
-                insertMap,
-                pos,
-                TELL_PAGE_SIZE - mFillOffset,
-                couldRelocate);
-        if (couldRelocate) {
-            hashTable.insert(key, pos);
-            insertMap.erase(fst);
-        } else {
-            break;
+bool RowStoreMainPage::needsCleaning(uint64_t minVersion) const {
+    for (auto& ptr : *this) {
+        ConstRowStoreRecord record(&ptr);
+        if (record.needsCleaning(minVersion)) {
+            return true;
         }
     }
-    *reinterpret_cast<uint64_t*>(mFillPage) = mFillOffset;
-    auto res = mFillPage;
-    mFillPage = nullptr;
-    return res;
+    return false;
+}
+
+RowStoreMainEntry* RowStoreMainPage::append(uint64_t key, const std::vector<RecordHolder>& elements) {
+    static_assert(std::is_standard_layout<RowStoreMainEntry>::value, "Record class must be a POD");
+
+    auto recordSize = RowStoreMainEntry::serializedSize(elements);
+    if (mOffset + recordSize > MAX_DATA_SIZE) {
+        return nullptr;
+    }
+
+    auto ptr = RowStoreMainEntry::serialize(data() + mOffset, key, elements);
+    mOffset += recordSize;
+    return ptr;
+}
+
+RowStoreMainEntry* RowStoreMainPage::append(const RowStoreMainEntry* record) {
+    static_assert(std::is_standard_layout<RowStoreMainEntry>::value, "Record class must be a POD");
+
+    auto recordSize = record->size();
+    if (mOffset + recordSize > MAX_DATA_SIZE) {
+        return nullptr;
+    }
+
+    auto ptr = RowStoreMainEntry::serialize(data() + mOffset, record, recordSize);
+    mOffset += recordSize;
+    return ptr;
+}
+
+void* RowStorePageModifier::append(const RowStoreMainEntry* record) {
+    return internalAppend([this, record] () {
+        return mFillPage->append(record);
+    });
+}
+
+RowStoreMainEntry* RowStorePageModifier::appendRecord(uint64_t key, const std::vector<RecordHolder>& elements) {
+    return internalAppend([this, key, elements] () {
+        return mFillPage->append(key, elements);
+    });
+}
+
+template <typename Fun>
+RowStoreMainEntry* RowStorePageModifier::internalAppend(Fun fun) {
+    if (!mFillPage) {
+        mFillPage = new (mPageManager.alloc()) RowStoreMainPage();
+        if (!mFillPage) {
+            return nullptr;
+        }
+        mPageList.emplace_back(mFillPage);
+    }
+
+    if (auto newRecord = fun()) {
+        return newRecord;
+    }
+
+    mFillPage = new (mPageManager.alloc()) RowStoreMainPage();
+    if (!mFillPage) {
+        return nullptr;
+    }
+    mPageList.emplace_back(mFillPage);
+
+    if (auto newRecord = fun()) {
+        return newRecord;
+    }
+
+    LOG_ASSERT(false, "Insert on new allocated page failed");
+    return nullptr;
 }
 
 } // namespace deltamain
 } // namespace store
 } // namespace tell
-

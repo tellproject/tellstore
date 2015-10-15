@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include "Table.hpp"
@@ -64,7 +65,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
                      const Schema& schema,
                      uint64_t& idx)
     {
-        return tableManager.createTable(name, schema, idx);
+        return tableManager.createTable(name, schema, idx, tableManager.config().hashMapCapacity);
     }
 
     const Table* getTable(uint64_t id) const
