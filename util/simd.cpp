@@ -12,6 +12,8 @@
  *   we have to know both, input-size and number of comparisons, at compile time.
  * - Otherwise, only some of the SIMD registers are used, and speedup is 0, compared to
  *   code optimized with 02.
+ * - Example compile command: g++ -std=c++11 -march=native -O3 simd.cpp -o simd
+ * - Command for getting assembly code: g++ -std=c++11 -march=native -O3 -S simd.cpp
  */
 
 typedef std::mt19937 Engine;
