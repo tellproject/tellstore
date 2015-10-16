@@ -4,6 +4,7 @@
 #include <chrono>
 #include <vector>
 #include <boost/dynamic_bitset.hpp>
+#include <numeric>
 
 /**
  * Lessons learned so far:
@@ -26,18 +27,30 @@ void smaller (const T *input, U outputs, const T *comparison_values, const unsig
     for (unsigned i = 0; i < array_size; ++i)
     {
         for (unsigned m = 0; m < comparisons; ++m) {
-            outputs[m*array_size+i] = input[i] < comparison_values[m];
+            outputs[m*array_size+i] = (float) (input[i] < comparison_values[m]);
         }
     }
 }
 
-//template <typename T>
-//void pretty_print (T *arr, unsigned size, std::string s = "Pretty Print") {
-//    std::cout << s << ":" << std::endl;
-//    for (auto r = arr; r < arr+size; ++r ) {
-//        std::cout << *r << std::endl;
-//    }
-//}
+template <typename T>
+void pretty_print (T *arr, unsigned size, std::string s = "Pretty Print") {
+    std::cout << s << ":" << std::endl;
+    for (auto r = arr; r < arr+size; ++r ) {
+        std::cout << *r << std::endl;
+    }
+}
+
+template <typename T>
+void compute_stats(const std::vector<T> stats, double &mean, double &stdev) {
+    double sum = std::accumulate(stats.begin(), stats.end(), 0.0);
+    mean = sum / stats.size();
+
+    std::vector<double> diff(stats.size());
+    std::transform(stats.begin(), stats.end(), diff.begin(),
+                   std::bind2nd(std::minus<double>(), mean));
+    double sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
+    stdev = std::sqrt(sq_sum / stats.size());
+}
 
 template <typename T>
 void fill (T *arr, unsigned size) {
@@ -49,23 +62,26 @@ void fill (T *arr, unsigned size) {
 }
 
 int main (int argc, char *argv[]) {
+    //**** PARAMS ****/
     typedef unsigned TestType;
-    static constexpr unsigned repetitions = 100;
+    static constexpr unsigned repetitions = 10000;
 
-    constexpr unsigned input_size = 1000000;
-    constexpr unsigned comparisons = 3;
+//    constexpr unsigned input_size = 500000;
+    constexpr unsigned comparisons = 1;
 
 //    if (argc != 3)
 //    {
 //        std::cout << "Usage: ./simd <input-size> <comparisons>" << std::endl;
 //        return -1;
 //    }
-//    unsigned long input_size = std::stoi(argv[1]);
+    unsigned long input_size = std::stoi(argv[1]);
 //    unsigned comparisons = std::stoi(argv[2]);
 
     std::cout << "input size: " << input_size << std::endl;
-    std::cout << "comparisons :" << comparisons<< std::endl;
+    std::cout << "comparisons: " << comparisons<< std::endl;
 
+
+    //**** INPUT ****/
     TestType test_input [input_size];
     fill(test_input, input_size);
 //    pretty_print(test_input, input_size, "Input");
@@ -76,18 +92,33 @@ int main (int argc, char *argv[]) {
     }
 //    pretty_print(comparison_values, comparisons, "Comparison values");
 
+
+    //**** COMPUTE ****/
+    std::vector<unsigned long> stats (repetitions);
     bool results [comparisons * input_size];
 //    std::vector<bool> results (comparisons * input_size);
 //    boost::dynamic_bitset<> results(comparisons * input_size);
 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (unsigned i = 0; i < repetitions; ++i)
+    for (unsigned i = 0; i < repetitions; ++i) {
+        auto start = std::chrono::high_resolution_clock::now();
         smaller(test_input, results, comparison_values, input_size, comparisons);
-    auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "Avg Time [microsecs]: "
-              << (std::chrono::duration_cast<std::chrono::microseconds>(end-start).count())
-                 /((double)repetitions)
+        auto end = std::chrono::high_resolution_clock::now();
+        stats [i] =
+            std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+    }
+
+    //**** REPORT ****/
+    double mean, stdev;
+    compute_stats(stats, mean, stdev);
+    std::cout
+//              << "Avg Time [microsecs]: "
+              << mean
+              << "\t"
+//              << "(+/- "
+              << stdev
+//              << ")"
               << std::endl;
+//    pretty_print(stats.data(), repetitions, "Stats");
 
 //    for (unsigned c = 0; c < comparisons; ++c) {
 //        pretty_print(&results[c*input_size], input_size, "Result");
