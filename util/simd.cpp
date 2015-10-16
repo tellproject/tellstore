@@ -66,7 +66,7 @@ int main (int argc, char *argv[]) {
     typedef unsigned TestType;
     static constexpr unsigned repetitions = 10000;
 
-//    constexpr unsigned input_size = 500000;
+    constexpr unsigned input_size = 500000;
     constexpr unsigned comparisons = 1;
 
 //    if (argc != 3)
@@ -75,7 +75,7 @@ int main (int argc, char *argv[]) {
 //        return -1;
 //    }
     unsigned long input_size = std::stoi(argv[1]);
-//    unsigned comparisons = std::stoi(argv[2]);
+    unsigned comparisons = std::stoi(argv[2]);
 
     std::cout << "input size: " << input_size << std::endl;
     std::cout << "comparisons: " << comparisons<< std::endl;
