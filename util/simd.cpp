@@ -4,6 +4,7 @@
 #include <chrono>
 #include <vector>
 #include <boost/dynamic_bitset.hpp>
+#include <bitset>
 #include <numeric>
 
 /**
@@ -66,8 +67,8 @@ int main (int argc, char *argv[]) {
     typedef unsigned TestType;
     static constexpr unsigned repetitions = 10000;
 
-    constexpr unsigned input_size = 500000;
-    constexpr unsigned comparisons = 1;
+    constexpr unsigned input_size = 2000000;
+    constexpr unsigned comparisons = 17;    // 17 seems to be a magic number...
 
 //    if (argc != 3)
 //    {
@@ -95,7 +96,8 @@ int main (int argc, char *argv[]) {
 
     //**** COMPUTE ****/
     std::vector<unsigned long> stats (repetitions);
-    bool results [comparisons * input_size];
+//    bool results [comparisons * input_size];
+    std::bitset<comparisons*input_size> results;
 //    std::vector<bool> results (comparisons * input_size);
 //    boost::dynamic_bitset<> results(comparisons * input_size);
 
