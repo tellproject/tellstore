@@ -6,6 +6,7 @@
 #include <boost/dynamic_bitset.hpp>
 #include <bitset>
 #include <numeric>
+#include <functional>
 
 /**
  * Lessons learned so far:
@@ -16,29 +17,71 @@
  *   code optimized with 02.
  * - Example compile command: g++ -std=c++11 -march=native -O3 simd.cpp -o simd
  * - Command for getting assembly code: g++ -std=c++11 -march=native -O3 -S simd.cpp
+ * - Function pointers (array of std::function) are very slow. On the other hand, templated functions seem promissing :-)
  */
 
 typedef std::mt19937 Engine;
 typedef std::uniform_int_distribution<unsigned> Intdistr;
 
-
+/**
+ * takes a bunch of comparison values and an input array and compares each array value
+ * with each comparison value (with smaller), outputting an array of booleans
+ */
 template <typename T, typename U>
-void smaller (const T *input, U outputs, const T *comparison_values, const unsigned array_size, const unsigned comparisons) {
-
+void smaller (const T *input, U &outputs, const T *comparison_values, const unsigned array_size, const unsigned comparisons) {
     for (unsigned i = 0; i < array_size; ++i)
     {
         for (unsigned m = 0; m < comparisons; ++m) {
-            outputs[m*array_size+i] = (float) (input[i] < comparison_values[m]);
+            outputs[m*array_size+i] = (input[i] < comparison_values[m]);
         }
     }
 }
 
-template <typename T>
-void pretty_print (T *arr, unsigned size, std::string s = "Pretty Print") {
-    std::cout << s << ":" << std::endl;
-    for (auto r = arr; r < arr+size; ++r ) {
-        std::cout << *r << std::endl;
+/**
+ * takes a bunch of comparison values and an input array and compares each array value
+ * with each comparison value (alternating smaller and larger), outputting an array of booleans
+ */
+template <typename T, typename U>
+void smaller_greater (const T *input, U &outputs, const T *comparison_values, const unsigned array_size, const unsigned comparisons) {
+    for (unsigned i = 0; i < array_size; ++i)
+    {
+        for (unsigned m = 0; m < comparisons; m+=2) {
+            outputs[m*array_size+i] = (input[i] < comparison_values[m]);
+            outputs[(m+1)*array_size+i] = (input[i] > comparison_values[m+1]);
+        }
     }
+}
+
+template <typename T, typename U>
+void general_compare (const T *input, U &outputs, const T *comparison_values,
+                      const unsigned array_size, const unsigned comparisons,
+                      std::function<bool(T,T)>* comparators) {
+    for (unsigned i = 0; i < array_size; ++i)
+    {
+        for (unsigned m = 0; m < comparisons; ++m) {
+            outputs[m*array_size+i] = comparators[m](input[i],comparison_values[m]);
+        }
+    }
+}
+
+template <typename T, typename U, typename Compare>
+void templated_compare (const T *input, U &outputs, const T *comparison_values, const unsigned array_size, const unsigned comparisons) {
+    Compare comp;
+    for (unsigned i = 0; i < array_size; ++i)
+    {
+        for (unsigned m = 0; m < comparisons; ++m) {
+            outputs[m*array_size+i] = comp (input[i],comparison_values[m]);
+        }
+    }
+}
+
+
+template <typename T>
+void pretty_print (T arr, unsigned size, std::string s = "Pretty Print", unsigned index = 0) {
+//    std::cout << s << ":" << std::endl;
+//    for (unsigned i = 0; i < size; ++i) {
+//        std::cout << arr[index*size + i] << std::endl;
+//    }
 }
 
 template <typename T>
@@ -62,13 +105,45 @@ void fill (T *arr, unsigned size) {
     }
 }
 
+template <typename T>
+void fillRandomComparators(std::function<bool(T,T)> *comparators, unsigned size)
+{
+    Engine engine (0);
+    Intdistr distr (0, 5);
+    unsigned comp;
+    for (unsigned i = 0; i < size; ++i) {
+        comp = distr(engine);
+        switch (comp) {
+            case 0:
+                comparators[i] = std::greater<T>();
+                break;
+            case 1:
+                comparators[i] = std::greater_equal<T>();
+                break;
+            case 2:
+                comparators[i] = std::equal_to<T>();
+                break;
+            case 3:
+                comparators[i] = std::not_equal_to<T>();
+                break;
+            case 4:
+                comparators[i] = std::less_equal<T>();
+                break;
+            case 5:
+                comparators[i] = std::less<T>();
+                break;
+        }
+//        std::cout << "Comparator: " << comp << std::endl;
+    }
+}
+
 int main (int argc, char *argv[]) {
     //**** PARAMS ****/
     typedef unsigned TestType;
     static constexpr unsigned repetitions = 10000;
 
-    constexpr unsigned input_size = 2000000;
-    constexpr unsigned comparisons = 17;    // 17 seems to be a magic number...
+    constexpr unsigned input_size = 500000;
+    constexpr unsigned comparisons = 1;    // 17 seems to be a magic number...
 
 //    if (argc != 3)
 //    {
@@ -85,13 +160,17 @@ int main (int argc, char *argv[]) {
     //**** INPUT ****/
     TestType test_input [input_size];
     fill(test_input, input_size);
-//    pretty_print(test_input, input_size, "Input");
+    pretty_print(test_input, input_size, "Input");
 
     TestType comparison_values [comparisons];
     for (unsigned c = 0; c < comparisons; ++c) {
         comparison_values[c] = test_input[c];
     }
-//    pretty_print(comparison_values, comparisons, "Comparison values");
+    pretty_print(comparison_values, comparisons, "Comparison values");
+
+    std::function<bool(TestType,TestType)> comparators [comparisons];
+    fillRandomComparators(comparators, comparisons);
+//    std::function<bool(TestType,TestType)> comparators [] = {std::less_equal<TestType>()};
 
 
     //**** COMPUTE ****/
@@ -103,7 +182,10 @@ int main (int argc, char *argv[]) {
 
     for (unsigned i = 0; i < repetitions; ++i) {
         auto start = std::chrono::high_resolution_clock::now();
-        smaller(test_input, results, comparison_values, input_size, comparisons);
+//        smaller(test_input, results, comparison_values, input_size, comparisons);
+//        smaller_greater(test_input, results, comparison_values, input_size, comparisons);
+//        general_compare(test_input, results, comparison_values, input_size, comparisons, comparators);
+        templated_compare<TestType, decltype(results), std::greater<TestType>>(test_input, results, comparison_values, input_size, comparisons);
         auto end = std::chrono::high_resolution_clock::now();
         stats [i] =
             std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
@@ -120,11 +202,12 @@ int main (int argc, char *argv[]) {
               << stdev
 //              << ")"
               << std::endl;
-//    pretty_print(stats.data(), repetitions, "Stats");
 
 //    for (unsigned c = 0; c < comparisons; ++c) {
-//        pretty_print(&results[c*input_size], input_size, "Result");
+//        pretty_print(results, input_size, std::string("Result"), c);
 //    }
+
+//    std::cout << "Result: " << results << std::endl;
 
     return 0;
 }
