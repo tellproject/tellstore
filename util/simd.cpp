@@ -74,8 +74,8 @@ int main (int argc, char *argv[]) {
 //        std::cout << "Usage: ./simd <input-size> <comparisons>" << std::endl;
 //        return -1;
 //    }
-    unsigned long input_size = std::stoi(argv[1]);
-    unsigned comparisons = std::stoi(argv[2]);
+//    unsigned long input_size = std::stoi(argv[1]);
+//    unsigned comparisons = std::stoi(argv[2]);
 
     std::cout << "input size: " << input_size << std::endl;
     std::cout << "comparisons: " << comparisons<< std::endl;
