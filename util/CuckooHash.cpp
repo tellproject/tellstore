@@ -117,7 +117,7 @@ bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
         size_t pageIdx;
         auto idx = h(key);
         auto& entry = at(cnt, idx, pageIdx);
-        if (entry.first == key) {
+        if (entry.first == key && entry.second != nullptr) {
             if (!replace) {
                 goto END;
             }
