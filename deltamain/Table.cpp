@@ -36,45 +36,6 @@
 namespace tell {
 namespace store {
 namespace deltamain {
-namespace {
-
-template <typename Rec>
-bool collectElements(Rec& rec, uint64_t minVersion, std::vector<RecordHolder>& elements) {
-    while (true) {
-        // Collect elements from update log
-        UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(rec.newest()), rec.baseVersion());
-        for (; !updateIter.done(); updateIter.next()) {
-            auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
-            elements.emplace_back(updateIter->version(), updateIter->data(), entry->size() - sizeof(UpdateLogEntry));
-
-            // Check if the element is already the oldest readable element
-            if (updateIter->version() <= minVersion) {
-                break;
-            }
-        }
-
-        // Collect elements from record
-        rec.collect(minVersion, updateIter.lowestVersion(), elements);
-
-        // Remove last element if it is a delete
-        if (!elements.empty() && elements.back().size == 0u) {
-            elements.pop_back();
-        }
-
-        // Invalidate record if the record has no valid elements
-        if (elements.empty()) {
-            if (!rec.tryInvalidate()) {
-                continue;
-            }
-            return false;
-        }
-
-        LOG_ASSERT(elements.back().size != 0, "Size of oldest element must not be 0");
-        return true;
-    }
-}
-
-} // anonymous namespace
 
 Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */, uint64_t insertTableCapacity)
     : mPageManager(pageManager)
@@ -169,7 +130,7 @@ int Table::insert(uint64_t key, size_t size, const char* data, const commitmanag
     // Try to insert the element in the insert table
     // If the element changed it could be invalidate in the meantime
     if (!mInsertTable.insert(key, insertEntry, insertList)) {
-        insertEntry->invalidate();
+        insertEntry->newest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
         logEntry->seal();
         return error::not_in_snapshot;
     }
@@ -182,7 +143,7 @@ int Table::insert(uint64_t key, size_t size, const char* data, const commitmanag
         // into the hash table.
         if (auto ptr = newMainTable->get(key)) {
             if (internalUpdate<MainRecord>(ptr, size, data, snapshot, RecordType::DELETE, RecordType::DATA, ec)) {
-                insertEntry->invalidate();
+                insertEntry->newest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
                 logEntry->seal();
                 mInsertTable.remove(key, insertEntry, insertList);
                 return ec;
@@ -300,42 +261,16 @@ void Table::runGC(uint64_t minVersion) {
     auto oldMainTable = mMainTable.load();
     auto mainTableModifier = oldMainTable->modifier();
 
-    PageModifier pageListModifier(mPageManager);
+    PageModifier pageListModifier(mPageManager, mainTableModifier, minVersion);
 
     auto pageList = crossbow::allocator::construct<PageList>();
     pageList->updateEnd = mUpdateLog.end();
 
     std::vector<void*> obsoletePages;
     auto oldPageList = mPages.load();
-    std::vector<RecordHolder> elements;
     for (auto oldPage: oldPageList->pages) {
-        if (!oldPage->needsCleaning(minVersion)) {
-            pageListModifier.append(oldPage);
-            continue;
-        }
-        obsoletePages.emplace_back(oldPage);
-
-        for (auto& ptr : *oldPage) {
-            MainRecord oldRecord(&ptr);
-            LOG_ASSERT(oldRecord.newest() % 8 == crossbow::to_underlying(NewestPointerTag::UPDATE),
-                    "Newest pointer must point to untagged update record");
-
-            void* newRecord;
-            if (!oldRecord.needsCleaning(minVersion)) {
-                newRecord = pageListModifier.append(oldRecord.value());
-            } else {
-                if (!collectElements(oldRecord, minVersion, elements)) {
-                    __attribute__((unused)) auto succeeded = mainTableModifier.remove(oldRecord.key());
-                    LOG_ASSERT(succeeded, "Removing key from hash table did not succeed");
-                    continue;
-                }
-
-                // Append to page
-                newRecord = pageListModifier.recycle(oldRecord, elements);
-                elements.clear();
-            }
-
-            mainTableModifier.insert(oldRecord.key(), newRecord, true);
+        if (pageListModifier.clean(oldPage)) {
+            obsoletePages.emplace_back(oldPage);
         }
     }
 
@@ -355,16 +290,9 @@ void Table::runGC(uint64_t minVersion) {
             continue;
         }
 
-        if (!collectElements(insertRecord, minVersion, elements)) {
+        if (!pageListModifier.append(insertRecord)) {
             mInsertTable.remove(insertRecord.key(), insertRecord.value(), insertHeadList);
-            continue;
         }
-
-        // Append to page
-        auto newRecord = pageListModifier.recycle(insertRecord, elements);
-        elements.clear();
-
-        mainTableModifier.insert(insertRecord.key(), newRecord, false);
     }
     pageList->pages = pageListModifier.done();
 
@@ -410,14 +338,14 @@ bool Table::internalGet(const void* ptr, size_t& size, const char*& data, uint64
     // Lookup in update history
     UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
     for (; !updateIter.done(); updateIter.next()) {
-        if (!snapshot.inReadSet(updateIter->version())) {
+        if (!snapshot.inReadSet(updateIter->version)) {
             isNewest = false;
             continue;
         }
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
 
         // The element was found: Set version
-        version = updateIter->version();
+        version = updateIter->version;
 
         // Check if the entry marks a deletion: Return element not found
         if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
@@ -471,7 +399,7 @@ bool Table::internalUpdate(void* ptr, size_t size, const char* data, const commi
 
     // Try to set the newest pointer of the base record to the newly written UpdateLogEntry
     if (!record.tryUpdate(reinterpret_cast<uintptr_t>(updateEntry))) {
-        updateEntry->invalidate();
+        updateEntry->previous.store(crossbow::to_underlying(NewestPointerTag::INVALID));
         logEntry->seal();
 
         // If the newest pointer points to a main record then the base was garbage collected in the meantime
@@ -494,7 +422,7 @@ template <typename Rec>
 int Table::canUpdate(const Rec& record, const commitmanager::SnapshotDescriptor& snapshot, RecordType expectedType) {
     UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
     if (!updateIter.done()) {
-        if (!snapshot.inReadSet(updateIter->version())) {
+        if (!snapshot.inReadSet(updateIter->version)) {
             return error::not_in_snapshot;
         }
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
@@ -523,18 +451,18 @@ bool Table::internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& s
 
     UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
     if (!updateIter.done()) {
-        if (updateIter->version() < snapshot.version()) {
+        if (updateIter->version < snapshot.version()) {
             ec = 0;
             return true;
         }
         // Check if version history has element
-        if (updateIter->version() > snapshot.version()) {
+        if (updateIter->version > snapshot.version()) {
             for (; !updateIter.done(); updateIter.next()) {
-                if (updateIter->version() < snapshot.version()) {
+                if (updateIter->version < snapshot.version()) {
                     ec = 0;
                     return true;
                 }
-                if (updateIter->version() == snapshot.version()) {
+                if (updateIter->version == snapshot.version()) {
                     ec = error::not_in_snapshot;
                     return true;
                 }
@@ -562,7 +490,7 @@ bool Table::internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& s
 
     // Try to set the newest pointer of the base record to the newly written UpdateLogEntry
     if (!record.tryUpdate(reinterpret_cast<uintptr_t>(updateEntry))) {
-        updateEntry->invalidate();
+        updateEntry->previous.store(crossbow::to_underlying(NewestPointerTag::INVALID));
         logEntry->seal();
 
         // If the newest pointer points to a main record then the base was garbage collected in the meantime

@@ -41,19 +41,19 @@ class SnapshotDescriptor;
 } // namespace commitmanager
 
 namespace store {
+
+class PageManager;
+class Record;
+
 namespace deltamain {
 
-class alignas(8) RowStoreMainEntry {
-public:
+struct alignas(8) RowStoreMainEntry {
     static uint32_t serializedHeaderSize(uint64_t versionCount) {
         // Size of header
         auto size = static_cast<uint32_t>(sizeof(RowStoreMainEntry));
 
-        // Size of version array
-        size += versionCount * sizeof(uint64_t);
-
-        // Size of offset array
-        size += (versionCount + 1) * sizeof(uint32_t);
+        // Size of version and offset array (including end offset)
+        size += versionCount * (sizeof(uint64_t) + sizeof(uint32_t)) + sizeof(uint32_t);
 
         // 8 byte alignment
         return crossbow::align(size, 8u);
@@ -72,44 +72,12 @@ public:
 
     static RowStoreMainEntry* serialize(void* ptr, uint64_t key, const std::vector<RecordHolder>& elements);
 
-    static RowStoreMainEntry* serialize(void* ptr, const RowStoreMainEntry* oldRecord, uint32_t oldSize);
+    static RowStoreMainEntry* serialize(void* ptr, const RowStoreMainEntry* oldEntry, uint32_t oldSize);
 
-    RowStoreMainEntry(uint64_t key, uint64_t versionCount)
-            : mKey(key),
-              mVersionCount(versionCount),
-              mNewest(0x0u) {
-    }
-
-    uint64_t key() const {
-        return mKey;
-    }
-
-    uint64_t numberOfVersions() const {
-        return mVersionCount;
-    }
-
-    uintptr_t newest() const {
-        return mNewest.load();
-    }
-
-    void newest(uintptr_t value) {
-        return mNewest.store(value);
-    }
-
-    bool newest(uintptr_t& expected, uintptr_t value) {
-        return mNewest.compare_exchange_strong(expected, value);
-    }
-
-    bool tryInvalidate(uintptr_t& expected) {
-        return mNewest.compare_exchange_strong(expected, crossbow::to_underlying(NewestPointerTag::INVALID));
-    }
-
-    uint64_t newestVersion() const {
-        return versionData()[0];
-    }
-
-    uint32_t size() const {
-        return offsetData()[mVersionCount];
+    RowStoreMainEntry(uint64_t k, uint64_t vc)
+            : key(k),
+              versionCount(vc),
+              newest(0x0u) {
     }
 
     const uint64_t* versionData() const {
@@ -121,12 +89,16 @@ public:
     }
 
     const uint32_t* offsetData() const {
-        return reinterpret_cast<const uint32_t*>(data() + mVersionCount * sizeof(uint64_t));
+        return reinterpret_cast<const uint32_t*>(data() + versionCount * sizeof(uint64_t));
     }
 
     uint32_t* offsetData() {
         return const_cast<uint32_t*>(const_cast<const RowStoreMainEntry*>(this)->offsetData());
     }
+
+    const uint64_t key;
+    const uint64_t versionCount;
+    std::atomic<uintptr_t> newest;
 
 private:
     const char* data() const {
@@ -136,22 +108,18 @@ private:
     char* data() {
         return const_cast<char*>(const_cast<const RowStoreMainEntry*>(this)->data());
     }
-
-    const uint64_t mKey;
-    const uint64_t mVersionCount;
-    std::atomic<uintptr_t> mNewest;
 };
 
 template <typename T>
 class RowStoreRecordImpl {
 public:
-    RowStoreRecordImpl(T record)
-            : mRecord(record),
-              mNewest(mRecord->newest()) {
+    RowStoreRecordImpl(T entry)
+            : mEntry(entry),
+              mNewest(mEntry->newest.load()) {
     }
 
     uint64_t key() const {
-        return mRecord->key();
+        return mEntry->key;
     }
 
     bool valid() const {
@@ -159,7 +127,7 @@ public:
     }
 
     T value() const {
-        return mRecord;
+        return mEntry;
     }
 
     uintptr_t newest() const {
@@ -167,7 +135,7 @@ public:
     }
 
     uint64_t baseVersion() const {
-        return mRecord->newestVersion();
+        return mEntry->versionData()[0];
     }
 
     int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
@@ -178,7 +146,7 @@ public:
     void collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const;
 
 protected:
-    T mRecord;
+    T mEntry;
     uintptr_t mNewest;
 };
 
@@ -189,8 +157,8 @@ class ConstRowStoreRecord : public RowStoreRecordImpl<const RowStoreMainEntry*> 
 public:
     using Base::Base;
 
-    ConstRowStoreRecord(const void* record)
-            : Base(reinterpret_cast<const RowStoreMainEntry*>(record)) {
+    ConstRowStoreRecord(const void* entry)
+            : Base(reinterpret_cast<const RowStoreMainEntry*>(entry)) {
     }
 };
 
@@ -201,16 +169,16 @@ class RowStoreRecord : public RowStoreRecordImpl<RowStoreMainEntry*> {
 public:
     using Base::Base;
 
-    RowStoreRecord(void* record)
-            : Base(reinterpret_cast<RowStoreMainEntry*>(record)) {
+    RowStoreRecord(void* entry)
+            : Base(reinterpret_cast<RowStoreMainEntry*>(entry)) {
     }
 
     bool tryUpdate(uintptr_t value) {
-        return mRecord->newest(mNewest, value);
+        return mEntry->newest.compare_exchange_strong(mNewest, value);
     }
 
     bool tryInvalidate() {
-        return mRecord->tryInvalidate(mNewest);
+        return mEntry->newest.compare_exchange_strong(mNewest, crossbow::to_underlying(NewestPointerTag::INVALID));
     }
 
     int canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, RecordType type) const;

@@ -29,61 +29,62 @@
 
 #include <crossbow/logger.hpp>
 
+#include <type_traits>
+
 namespace tell {
 namespace store {
 namespace deltamain {
 
 RowStoreMainEntry* RowStoreMainEntry::serialize(void* ptr, uint64_t key, const std::vector<RecordHolder>& elements) {
-    auto record = new (ptr) RowStoreMainEntry(key, elements.size());
+    auto entry = new (ptr) RowStoreMainEntry(key, elements.size());
 
-    auto versions = record->versionData();
-    auto offsets = record->offsetData();
+    auto versions = entry->versionData();
+    auto offsets = entry->offsetData();
     offsets[0] = serializedHeaderSize(elements.size());
     for (decltype(elements.size()) i = 0; i < elements.size(); ++i) {
         auto& element = elements[i];
         versions[i] = element.version;
         offsets[i + 1] = offsets[i] + element.size;
-        memcpy(reinterpret_cast<char*>(record) + offsets[i], element.data, element.size);
+        memcpy(reinterpret_cast<char*>(entry) + offsets[i], element.data, element.size);
     }
-    return record;
+    return entry;
 }
 
-RowStoreMainEntry* RowStoreMainEntry::serialize(void* ptr, const RowStoreMainEntry* oldRecord, uint32_t oldSize) {
-    LOG_ASSERT(oldSize == oldRecord->size(), "Calculated size does not match");
+RowStoreMainEntry* RowStoreMainEntry::serialize(void* ptr, const RowStoreMainEntry* oldEntry, uint32_t oldSize) {
+    LOG_ASSERT(oldSize == oldEntry->offsetData()[oldEntry->versionCount], "Calculated size does not match");
 
     // Can not copy the complete record at once as the next field can be modified in the meantime
     // First create a new header and then copy all immutable data fields.
-    auto record = new (ptr) RowStoreMainEntry(oldRecord->key(), oldRecord->numberOfVersions());
-    memcpy(record->data(), oldRecord->data(), oldRecord->size() - sizeof(RowStoreMainEntry));
-    return record;
+    auto offsets = oldEntry->offsetData();
+    auto entry = new (ptr) RowStoreMainEntry(oldEntry->key, oldEntry->versionCount);
+    memcpy(entry->data(), oldEntry->data(), offsets[oldEntry->versionCount] - sizeof(RowStoreMainEntry));
+    return entry;
 }
 
 template <typename T>
 int RowStoreRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
         size_t& size, const char*& data, uint64_t& version, bool& isNewest) const {
-    auto versionCount = mRecord->numberOfVersions();
-    auto versions = mRecord->versionData();
+    auto versions = mEntry->versionData();
 
-    // Skip elements already overridden by an element in the update log
-    decltype(versionCount) i = 0;
-    for (; i < versionCount && versions[i] >= highestVersion; ++i) {
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(mEntry->versionCount)>::type i = 0;
+    for (; i < mEntry->versionCount && versions[i] >= highestVersion; ++i) {
     }
-    for (; i < versionCount; ++i) {
+    for (; i < mEntry->versionCount; ++i) {
         if (!snapshot.inReadSet(versions[i])) {
             isNewest = false;
             continue;
         }
-        auto offsets = mRecord->offsetData();
 
         version = versions[i];
 
-        auto sz = offsets[i + 1] - offsets[i];
-        if (sz == 0) {
+        auto offsets = mEntry->offsetData();
+        size = offsets[i + 1] - offsets[i];
+        if (size == 0) {
             return (isNewest ? error::not_found : error::not_in_snapshot);
         }
 
         data = reinterpret_cast<const char*>(this) + offsets[i];
-        size = sz;
         return 0;
     }
     return (isNewest ? error::not_found : error::not_in_snapshot);
@@ -96,9 +97,8 @@ bool RowStoreRecordImpl<T>::needsCleaning(uint64_t minVersion) const {
         return true;
     }
     // The record needs cleaning if the last version can be purged
-    auto versionCount = mRecord->numberOfVersions();
-    auto versions = mRecord->versionData();
-    return (versions[versionCount - 1] < minVersion);
+    auto versions = mEntry->versionData();
+    return (versions[mEntry->versionCount - 1] < minVersion);
 }
 
 template <typename T>
@@ -109,62 +109,59 @@ void RowStoreRecordImpl<T>::collect(uint64_t minVersion, uint64_t highestVersion
         return;
     }
 
-    auto versionCount = mRecord->numberOfVersions();
-    auto versions = mRecord->versionData();
-    auto offsets = mRecord->offsetData();
+    auto versions = mEntry->versionData();
+    auto offsets = mEntry->offsetData();
 
-    // Skip elements already overridden by an element in the update log
-    decltype(versionCount) i = 0;
-    for (; i < versionCount && versions[i] >= highestVersion; ++i) {
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(mEntry->versionCount)>::type i = 0;
+    for (; i < mEntry->versionCount && versions[i] >= highestVersion; ++i) {
     }
 
     // Append all valid elements newer than the lowest active version (if they exist)
-    for (; i < versionCount && versions[i] > minVersion; ++i) {
-        elements.emplace_back(versions[i], reinterpret_cast<const char*>(mRecord) + offsets[i],
-                              offsets[i + 1] - offsets[i]);
+    for (; i < mEntry->versionCount && versions[i] > minVersion; ++i) {
+        elements.emplace_back(versions[i], reinterpret_cast<const char*>(mEntry) + offsets[i],
+                offsets[i + 1] - offsets[i]);
     }
 
     // Append the newest element that is older or equal the lowest active version (if it exists)
-    if (i < versionCount) {
-        elements.emplace_back(versions[i], reinterpret_cast<const char*>(mRecord) + offsets[i],
-                              offsets[i + 1] - offsets[i]);
+    if (i < mEntry->versionCount) {
+        elements.emplace_back(versions[i], reinterpret_cast<const char*>(mEntry) + offsets[i],
+                offsets[i + 1] - offsets[i]);
     }
 }
 
 int RowStoreRecord::canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
         RecordType type) const {
-    auto versionCount = mRecord->numberOfVersions();
-    auto versions = mRecord->versionData();
+    auto versions = mEntry->versionData();
 
-    // Skip elements already overridden by an element in the update log
-    decltype(versionCount) i = 0;
-    for (; i < versionCount && versions[i] >= highestVersion; ++i) {
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(mEntry->versionCount)>::type i = 0;
+    for (; i < mEntry->versionCount && versions[i] >= highestVersion; ++i) {
     }
 
-    // All elements were overridden by the update log, behave as if no element was written
-    if (i >= versionCount) {
+    // All elements were overwritten by the update log, behave as if no element was written
+    if (i >= mEntry->versionCount) {
         return (type == RecordType::DELETE ? 0 : error::invalid_write);
     }
     if (!snapshot.inReadSet(versions[i])) {
         return error::not_in_snapshot;
     }
 
-    auto offsets = mRecord->offsetData();
+    auto offsets = mEntry->offsetData();
     auto size = offsets[i + 1] - offsets[i];
     auto actualType = (size == 0 ? RecordType::DELETE : RecordType::DATA);
     return (type == actualType ? 0 : error::invalid_write);
 }
 
 int RowStoreRecord::canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const {
-    auto versionCount = mRecord->numberOfVersions();
-    auto versions = mRecord->versionData();
+    auto versions = mEntry->versionData();
 
-    // Skip elements already overridden by an element in the update log
-    decltype(versionCount) i = 0;
-    for (; i < versionCount && versions[i] >= highestVersion; ++i) {
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(mEntry->versionCount)>::type i = 0;
+    for (; i < mEntry->versionCount && versions[i] >= highestVersion; ++i) {
     }
 
-    if (i >= versionCount) {
+    if (i >= mEntry->versionCount) {
         needsRevert = false;
         return 0;
     }
@@ -176,7 +173,7 @@ int RowStoreRecord::canRevert(uint64_t highestVersion, const commitmanager::Snap
     // Check if version history has element
     if (versions[i] > snapshot.version()) {
         needsRevert = false;
-        for (; i < versionCount; ++i) {
+        for (; i < mEntry->versionCount; ++i) {
             if (versions[i] < snapshot.version()) {
                 return 0;
             }

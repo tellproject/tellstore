@@ -82,15 +82,14 @@ void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
     auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
             record.baseVersion(), validTo);
 
-    auto versionCount = ptr->numberOfVersions();
     auto versions = ptr->versionData();
     auto offsets = ptr->offsetData();
 
-    // Skip elements already overridden by an element in the update log
-    decltype(versionCount) i = 0;
-    for (; i < versionCount && versions[i] >= highestVersion; ++i) {
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(ptr->versionCount)>::type i = 0;
+    for (; i < ptr->versionCount && versions[i] >= highestVersion; ++i) {
     }
-    for (; i < versionCount; ++i) {
+    for (; i < ptr->versionCount; ++i) {
         auto sz = offsets[i + 1] - offsets[i];
 
         // Check if the entry marks a deletion: Skip element
@@ -100,7 +99,7 @@ void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
         }
 
         auto data = reinterpret_cast<const char*>(ptr) + offsets[i];
-        query.processRecord(mRecord, ptr->key(), data, sz, versions[i], validTo);
+        query.processRecord(mRecord, ptr->key, data, sz, versions[i], validTo);
         validTo = versions[i];
     }
 }
@@ -119,12 +118,11 @@ void RowStoreScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
     auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
             record.baseVersion(), validTo);
 
-    if (ptr->version() >= highestVersion) {
+    if (ptr->version >= highestVersion) {
         return;
     }
     auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
-    query.processRecord(mRecord, ptr->key(), ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version(),
-            validTo);
+    query.processRecord(mRecord, ptr->key, ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version, validTo);
 }
 
 uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo) {
@@ -134,13 +132,13 @@ uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, u
 
         // Check if the entry marks a deletion: Skip element
         if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
-            validTo = updateIter->version();
+            validTo = updateIter->version;
             continue;
         }
 
-        query.processRecord(mRecord, updateIter->key(), updateIter->data(), entry->size() - sizeof(UpdateLogEntry),
-                updateIter->version(), validTo);
-        validTo = updateIter->version();
+        query.processRecord(mRecord, updateIter->key, updateIter->data(), entry->size() - sizeof(UpdateLogEntry),
+                updateIter->version, validTo);
+        validTo = updateIter->version;
     }
     return updateIter.lowestVersion();
 }

@@ -25,20 +25,19 @@
 
 #include "RowStoreRecord.hpp"
 
-#include <config.h>
-
 #include <deltamain/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 
-#include <crossbow/alignment.hpp>
-
-#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 namespace tell {
 namespace store {
+
+class Modifier;
+
 namespace deltamain {
 
 class alignas(8) RowStoreMainPage {
@@ -55,7 +54,9 @@ public:
         }
 
         IteratorImpl<EntryType>& operator++() {
-            mCurrent += reinterpret_cast<EntryType*>(mCurrent)->size();
+            auto entry = reinterpret_cast<EntryType*>(mCurrent);
+            auto offsets = entry->offsetData();
+            mCurrent += offsets[entry->versionCount];
             return *this;
         }
 
@@ -137,45 +138,43 @@ private:
 
 class RowStorePageModifier {
 public:
-    RowStorePageModifier(PageManager& pageManager)
+    RowStorePageModifier(PageManager& pageManager, Modifier& mainTableModifier, uint64_t minVersion)
             : mPageManager(pageManager),
+              mMainTableModifier(mainTableModifier),
+              mMinVersion(minVersion),
               mFillPage(nullptr) {
     }
 
-    void append(RowStoreMainPage* page) {
-        mPageList.emplace_back(page);
-    }
+    bool clean(RowStoreMainPage* page);
 
-    void* append(const RowStoreMainEntry* record);
-
-    template <typename Rec>
-    void* recycle(Rec& oldRecord, const std::vector<RecordHolder>& elements);
+    bool append(InsertRecord& oldRecord);
 
     std::vector<RowStoreMainPage*> done() {
         return std::move(mPageList);
     }
 
 private:
-    RowStoreMainEntry* appendRecord(uint64_t key, const std::vector<RecordHolder>& elements);
+    template <typename Rec>
+    bool collectElements(Rec& rec);
+
+    template <typename Rec>
+    void recycleEntry(Rec& oldRecord, RowStoreMainEntry* newRecord, bool replace);
 
     template <typename Fun>
     RowStoreMainEntry* internalAppend(Fun fun);
 
     PageManager& mPageManager;
 
+    Modifier& mMainTableModifier;
+
+    uint64_t mMinVersion;
+
     std::vector<RowStoreMainPage*> mPageList;
 
     RowStoreMainPage* mFillPage;
-};
 
-template <typename Rec>
-void* RowStorePageModifier::recycle(Rec& oldRecord, const std::vector<RecordHolder>& elements) {
-    auto ptr = appendRecord(oldRecord.key(), elements);
-    while (!oldRecord.tryUpdate(reinterpret_cast<uintptr_t>(ptr) | crossbow::to_underlying(NewestPointerTag::MAIN))) {
-        ptr->newest(oldRecord.newest());
-    }
-    return ptr;
-}
+    std::vector<RecordHolder> mElements;
+};
 
 } // namespace deltamain
 } // namespace store

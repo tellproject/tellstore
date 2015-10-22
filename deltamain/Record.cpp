@@ -40,20 +40,20 @@ namespace deltamain {
 template <typename T>
 int InsertRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
         size_t& size, const char*& data, uint64_t& version, bool& isNewest) const {
-    // Check if the element was already overridden by an element in the update log
-    if (mRecord->version() >= highestVersion) {
+    // Check if the element was already overwritten by an element in the update log
+    if (mEntry->version >= highestVersion) {
         return error::not_found;
     }
-    if (!snapshot.inReadSet(mRecord->version())) {
+    if (!snapshot.inReadSet(mEntry->version)) {
         isNewest = false;
         return error::not_in_snapshot;
     }
 
-    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(mRecord));
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mEntry));
 
-    version = mRecord->version();
-    data = mRecord->data();
-    size = entry->size() - sizeof(InsertLogEntry);
+    version = mEntry->version;
+    data = mEntry->data();
+    size = logEntry->size() - sizeof(InsertLogEntry);
     return 0;
 }
 
@@ -64,18 +64,18 @@ void InsertRecordImpl<T>::collect(uint64_t minVersion, uint64_t highestVersion, 
         return;
     }
 
-    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(mRecord));
-    elements.emplace_back(mRecord->version(), mRecord->data(), entry->size() - sizeof(InsertLogEntry));
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mEntry));
+    elements.emplace_back(mEntry->version, mEntry->data(), logEntry->size() - sizeof(InsertLogEntry));
 }
 
 int InsertRecord::canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
         RecordType type) const {
-    // Check if the element was already overridden by an element in the update log
-    if (mRecord->version() >= highestVersion) {
+    // Check if the element was already overwritten by an element in the update log
+    if (mEntry->version >= highestVersion) {
         return (type == RecordType::DELETE ? 0 : error::invalid_write);
     }
 
-    if (!snapshot.inReadSet(mRecord->version())) {
+    if (!snapshot.inReadSet(mEntry->version)) {
         return error::not_in_snapshot;
     }
 
@@ -83,8 +83,8 @@ int InsertRecord::canUpdate(uint64_t highestVersion, const commitmanager::Snapsh
 }
 
 int InsertRecord::canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const {
-    // The element only needs a revert if it was not overridden by the update log and has the same version
-    needsRevert = !(mRecord->version() >= highestVersion || mRecord->version() != snapshot.version());
+    // The element only needs a revert if it was not overwritten by the update log and has the same version
+    needsRevert = !(mEntry->version >= highestVersion || mEntry->version != snapshot.version());
     return 0;
 }
 
@@ -95,23 +95,23 @@ UpdateRecordIterator::UpdateRecordIterator(const UpdateLogEntry* record, uint64_
     if (!mCurrent) {
         return;
     }
-    LOG_ASSERT(mCurrent->version() >= mBaseVersion, "Version of element in Update Log must never be lower than "
+    LOG_ASSERT(mCurrent->version >= mBaseVersion, "Version of element in Update Log must never be lower than "
             "base version");
 
     // Update lowest version
-    mLowestVersion = mCurrent->version();
+    mLowestVersion = mCurrent->version;
 
     // Forward version chain if the element was a revert
-    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(mCurrent));
-    if (entry->type() == crossbow::to_underlying(RecordType::REVERT)) {
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mCurrent));
+    if (logEntry->type() == crossbow::to_underlying(RecordType::REVERT)) {
         next();
     }
 }
 
 void UpdateRecordIterator::next() {
-    auto record = mCurrent;
+    auto entry = mCurrent;
     while (true) {
-        if (record->version() == mBaseVersion) {
+        if (entry->version == mBaseVersion) {
             mCurrent = nullptr;
             return;
         }
@@ -121,23 +121,23 @@ void UpdateRecordIterator::next() {
         // a newer version number can follow an older version number is when the newer version was reverted so it
         // can be ignored anyway.
         do {
-            record = record->previous();
-            if (!record || record->version() < mBaseVersion) {
+            entry = reinterpret_cast<const UpdateLogEntry*>(entry->previous.load());
+            if (!entry || entry->version < mBaseVersion) {
                 mCurrent = nullptr;
                 return;
             }
-        } while (record->version() >= mLowestVersion);
+        } while (entry->version >= mLowestVersion);
 
         // Update lowest version
-        mLowestVersion = record->version();
+        mLowestVersion = entry->version;
 
         // Forward version chain if the element was a revert
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(record));
-        if (entry->type() == crossbow::to_underlying(RecordType::REVERT)) {
+        auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(entry));
+        if (logEntry->type() == crossbow::to_underlying(RecordType::REVERT)) {
             continue;
         }
     }
-    mCurrent = record;
+    mCurrent = entry;
 }
 
 template class InsertRecordImpl<const InsertLogEntry*>;

@@ -40,6 +40,7 @@ class SnapshotDescriptor;
 namespace store {
 
 class PageManager;
+class Record;
 
 namespace deltamain {
 
@@ -79,36 +80,11 @@ inline void* newestMainRecord(uintptr_t newest) {
     return nullptr;
 }
 
-class alignas(8) InsertLogEntry {
-public:
-    InsertLogEntry(uint64_t key, uint64_t version)
-            : mKey(key),
-              mVersion(version),
-              mNewest(0x0u) {
-    }
-
-    uint64_t key() const {
-        return mKey;
-    }
-
-    uint64_t version() const {
-        return mVersion;
-    }
-
-    uintptr_t newest() const {
-        return mNewest.load();
-    }
-
-    bool newest(uintptr_t& expected, uintptr_t value) {
-        return mNewest.compare_exchange_strong(expected, value);
-    }
-
-    void invalidate() {
-        mNewest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
-    }
-
-    bool tryInvalidate(uintptr_t& expected) {
-        return mNewest.compare_exchange_strong(expected, crossbow::to_underlying(NewestPointerTag::INVALID));
+struct alignas(8) InsertLogEntry {
+    InsertLogEntry(uint64_t k, uint64_t v)
+            : key(k),
+              version(v),
+              newest(0x0u) {
     }
 
     const char* data() const {
@@ -119,26 +95,25 @@ public:
         return const_cast<char*>(const_cast<const InsertLogEntry*>(this)->data());
     }
 
-private:
-    const uint64_t mKey;
-    const uint64_t mVersion;
-    std::atomic<uintptr_t> mNewest;
+    const uint64_t key;
+    const uint64_t version;
+    std::atomic<uintptr_t> newest;
 };
 
 template <typename T>
 class InsertRecordImpl {
 public:
-    InsertRecordImpl(T record)
-            : mRecord(record),
-              mNewest(mRecord->newest()) {
+    InsertRecordImpl(T entry)
+            : mEntry(entry),
+              mNewest(mEntry->newest.load()) {
     }
 
     T value() const {
-        return mRecord;
+        return mEntry;
     }
 
     uint64_t key() const {
-        return mRecord->key();
+        return mEntry->key;
     }
 
     bool valid() const {
@@ -150,7 +125,7 @@ public:
     }
 
     uint64_t baseVersion() const {
-        return mRecord->version();
+        return mEntry->version;
     }
 
     int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
@@ -159,7 +134,7 @@ public:
     void collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const;
 
 protected:
-    T mRecord;
+    T mEntry;
     uintptr_t mNewest;
 };
 
@@ -187,11 +162,11 @@ public:
     }
 
     bool tryUpdate(uintptr_t value) {
-        return mRecord->newest(mNewest, value);
+        return mEntry->newest.compare_exchange_strong(mNewest, value);
     }
 
     bool tryInvalidate() {
-        return mRecord->tryInvalidate(mNewest);
+        return mEntry->newest.compare_exchange_strong(mNewest, crossbow::to_underlying(NewestPointerTag::INVALID));
     }
 
     int canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, RecordType type) const;
@@ -199,28 +174,11 @@ public:
     int canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const;
 };
 
-class alignas(8) UpdateLogEntry {
-public:
-    UpdateLogEntry(uint64_t key, uint64_t version, const UpdateLogEntry* previous)
-            : mKey(key),
-              mVersion(version),
-              mPrevious(reinterpret_cast<uintptr_t>(previous)) {
-    }
-
-    uint64_t key() const {
-        return mKey;
-    }
-
-    uint64_t version() const {
-        return mVersion;
-    }
-
-    const UpdateLogEntry* previous() const {
-        return reinterpret_cast<const UpdateLogEntry*>(mPrevious.load());
-    }
-
-    void invalidate() {
-        mPrevious.store(crossbow::to_underlying(NewestPointerTag::INVALID));
+struct alignas(8) UpdateLogEntry {
+    UpdateLogEntry(uint64_t k, uint64_t v, const UpdateLogEntry* p)
+            : key(k),
+              version(v),
+              previous(reinterpret_cast<uintptr_t>(p)) {
     }
 
     const char* data() const {
@@ -231,10 +189,9 @@ public:
         return const_cast<char*>(const_cast<const UpdateLogEntry*>(this)->data());
     }
 
-private:
-    const uint64_t mKey;
-    const uint64_t mVersion;
-    std::atomic<uintptr_t> mPrevious;
+    const uint64_t key;
+    const uint64_t version;
+    std::atomic<uintptr_t> previous;
 };
 
 class UpdateRecordIterator {
