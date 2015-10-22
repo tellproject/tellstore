@@ -144,10 +144,10 @@ size_t Schema::serializedLength() const
     }
     res += sizeof(uint16_t);
     for (auto& idx : mIndexes) {
-        res += 2 * sizeof(uint16_t);
+        res += 3 * sizeof(uint16_t);
         auto strLen = idx.first.size();
         res += strLen + (strLen % 2);
-        res += sizeof(id_t) * idx.second.size();
+        res += sizeof(id_t) * idx.second.second.size();
     }
     return res;
 }
@@ -174,10 +174,12 @@ void Schema::serialize(crossbow::buffer_writer& writer) const
     writer.write<uint16_t>(mIndexes.size());
     for (auto& idx : mIndexes) {
         auto strLen = idx.first.size();
-        writer.write<uint16_t>(idx.second.size());
+        writer.write<uint16_t>(idx.second.second.size());
+        writer.write<uint8_t>(idx.second.first);
+        writer.write<uint8_t>(0);
         writer.write<uint16_t>(strLen);
         writer.write(idx.first.data(), strLen + (strLen % 2));
-        for (auto id : idx.second) {
+        for (auto id : idx.second.second) {
             writer.write<decltype(id)>(id);
         }
     }
@@ -207,6 +209,8 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
     auto numIndexes = reader.read<uint16_t>();
     for (uint16_t i = 0; i < numIndexes; ++i) {
         uint16_t numFields = reader.read<uint16_t>();
+        bool isUnique = reader.read<uint8_t>();
+        reader.read<uint8_t>(); // padding
         uint16_t nameSize = reader.read<uint16_t>();
         const char* name = reader.data();
         reader.advance(nameSize + (nameSize % 2));
@@ -214,7 +218,7 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
         for (uint16_t j = 0; j < numFields; ++j) {
             fields.push_back(reader.read<uint16_t>());
         }
-        res.mIndexes.emplace(crossbow::string(name, nameSize), std::move(fields));
+        res.mIndexes.emplace(crossbow::string(name, nameSize), std::make_pair(isUnique, std::move(fields)));
     }
     return res;
 }

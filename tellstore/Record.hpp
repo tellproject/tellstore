@@ -390,18 +390,23 @@ public:
 * - 2 bytes: Number of indexes
 * - For each index:
 *   - 2 bytes: number of columns to index
+*   - 1 byte: boolean, set to true iff the UNIQUE constraint is set
+*   - 1 byte: padding
+*   - 2 bytes: length of name
+*   - string - aligned to 2
 *   - For each column:
 *       - 2 byte: column id
 */
 class Schema {
 public:
     using id_t = uint16_t;
+    using IndexMap = std::unordered_map<crossbow::string, std::pair<bool, std::vector<id_t>>>;
 private:
     TableType mType = TableType::UNKNOWN;
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
-    std::unordered_map<crossbow::string, std::vector<id_t>> mIndexes;
+    IndexMap mIndexes;
 public:
     Schema() = default;
 
@@ -441,7 +446,7 @@ public:
         return mVarSizeFields;
     }
 
-    const std::unordered_map<crossbow::string, std::vector<id_t>>& indexes() const {
+    const IndexMap& indexes() const {
         return mIndexes;
     }
 
