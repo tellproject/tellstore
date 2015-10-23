@@ -225,7 +225,7 @@ void Modifier::rehash() {
         return;
     }
     std::vector<PageT> oldPages = std::move(mPages);
-    mPages = std::vector<PageT>(mPages.size(), nullptr);
+    mPages = std::vector<PageT>(oldPages.size(), nullptr);
     for (auto& e : mPages) {
         e = crossbow::allocator::construct<PageWrapper>(mTable.mPageManager, mTable.mPageManager.alloc());
     }
