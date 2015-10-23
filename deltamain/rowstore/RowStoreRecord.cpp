@@ -84,7 +84,7 @@ int RowStoreRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sna
             return (isNewest ? error::not_found : error::not_in_snapshot);
         }
 
-        data = reinterpret_cast<const char*>(this) + offsets[i];
+        data = reinterpret_cast<const char*>(mEntry) + offsets[i];
         return 0;
     }
     return (isNewest ? error::not_found : error::not_in_snapshot);
