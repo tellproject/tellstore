@@ -96,6 +96,10 @@ bool RowStoreRecordImpl<T>::needsCleaning(uint64_t minVersion) const {
     if (mNewest != 0u) {
         return true;
     }
+    // If only one version is in the record it does not need cleaning
+    if (mEntry->versionCount == 1) {
+        return false;
+    }
     // The record needs cleaning if the last version can be purged
     auto versions = mEntry->versionData();
     return (versions[mEntry->versionCount - 1] < minVersion);
