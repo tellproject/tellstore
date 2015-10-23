@@ -104,7 +104,7 @@ bool RowStorePageModifier::clean(RowStoreMainPage* page) {
             });
             mElements.clear();
         }
-        recycleEntry(oldRecord, newEntry, false);
+        recycleEntry(oldRecord, newEntry, true);
     }
 
     return true;
