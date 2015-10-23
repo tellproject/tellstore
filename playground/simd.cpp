@@ -18,6 +18,7 @@
  * - Example compile command: g++ -std=c++11 -march=native -O3 simd.cpp -o simd
  * - Command for getting assembly code: g++ -std=c++11 -march=native -O3 -S simd.cpp
  * - Function pointers (array of std::function) are very slow. On the other hand, templated functions seem promissing :-)
+ * - In either case, byte arrays are blazingly fast
  */
 
 typedef std::mt19937 Engine;
@@ -71,6 +72,18 @@ void templated_compare (const T *input, U &outputs, const T *comparison_values, 
     {
         for (unsigned m = 0; m < comparisons; ++m) {
             outputs[m*array_size+i] = comp (input[i],comparison_values[m]);
+        }
+    }
+}
+
+// hand-unroll, only one comparison at the time
+template <typename T, typename U, typename Compare, int UNROLL>
+void templated_compare (const T *input, U &outputs, const T comparison_value, const unsigned array_size) {
+    Compare comp;
+    for (unsigned i = 0; i < array_size; i+= UNROLL)
+    {
+        for(unsigned j = 0; j < UNROLL; ++j) {
+            outputs[i+j] = comp (input[i+j],comparison_value);
         }
     }
 }
@@ -143,7 +156,7 @@ int main (int argc, char *argv[]) {
     static constexpr unsigned repetitions = 10000;
 
     constexpr unsigned input_size = 500000;
-    constexpr unsigned comparisons = 1;    // 17 seems to be a magic number...
+    constexpr unsigned comparisons = 17;    // 17 seems to be a magic number if you use std::bitset
 
 //    if (argc != 3)
 //    {
@@ -175,8 +188,8 @@ int main (int argc, char *argv[]) {
 
     //**** COMPUTE ****/
     std::vector<unsigned long> stats (repetitions);
-//    bool results [comparisons * input_size];
-    std::bitset<comparisons*input_size> results;
+    bool results [comparisons * input_size];
+//    std::bitset<comparisons*input_size> results;
 //    std::vector<bool> results (comparisons * input_size);
 //    boost::dynamic_bitset<> results(comparisons * input_size);
 
@@ -188,14 +201,14 @@ int main (int argc, char *argv[]) {
         templated_compare<TestType, decltype(results), std::greater<TestType>>(test_input, results, comparison_values, input_size, comparisons);
         auto end = std::chrono::high_resolution_clock::now();
         stats [i] =
-            std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
     }
 
     //**** REPORT ****/
     double mean, stdev;
     compute_stats(stats, mean, stdev);
     std::cout
-//              << "Avg Time [microsecs]: "
+//              << "Avg Time [nanosecs]: "
               << mean
               << "\t"
 //              << "(+/- "
