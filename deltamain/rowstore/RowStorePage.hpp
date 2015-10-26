@@ -37,6 +37,7 @@ namespace tell {
 namespace store {
 
 class Modifier;
+class PageManager;
 
 namespace deltamain {
 
@@ -138,7 +139,8 @@ private:
 
 class RowStorePageModifier {
 public:
-    RowStorePageModifier(PageManager& pageManager, Modifier& mainTableModifier, uint64_t minVersion)
+    RowStorePageModifier(const RowStoreContext& /* context */, PageManager& pageManager, Modifier& mainTableModifier,
+            uint64_t minVersion)
             : mPageManager(pageManager),
               mMainTableModifier(mainTableModifier),
               mMinVersion(minVersion),

@@ -25,9 +25,8 @@
 
 #include "InsertHash.hpp"
 #include "Record.hpp"
-#include "rowstore/RowStorePage.hpp"
-#include "rowstore/RowStoreRecord.hpp"
-#include "rowstore/RowStoreScanProcessor.hpp"
+#include "colstore/ColumnMapContext.hpp"
+#include "rowstore/RowStoreContext.hpp"
 
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
@@ -38,7 +37,6 @@
 
 #include <memory>
 #include <vector>
-#include <limits>
 #include <atomic>
 #include <functional>
 
@@ -54,18 +52,15 @@ class ScanQuery;
 
 namespace deltamain {
 
+template <typename Context>
 class Table {
 public:
-#if defined USE_ROW_STORE
-    using ScanProcessor = RowStoreScanProcessor;
-    using Page = RowStoreMainPage;
-    using PageModifier = RowStorePageModifier;
+    using ScanProcessor = typename Context::ScanProcessor;
+    using Page = typename Context::Page;
+    using PageModifier = typename Context::PageModifier;
 
-    using MainRecord = RowStoreRecord;
-    using ConstMainRecord = ConstRowStoreRecord;
-#else
-#error "Unknown storage layout"
-#endif
+    using MainRecord = typename Context::MainRecord;
+    using ConstMainRecord = typename Context::ConstMainRecord;
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t idx, uint64_t insertTableCapacity);
 
@@ -150,12 +145,21 @@ private:
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<CuckooTable*> mMainTable;
     std::atomic<PageList*> mPages;
+
+    Context mContext;
 };
 
+template <typename Context>
 class GarbageCollector {
 public:
-    void run(const std::vector<Table*>& tables, uint64_t minVersion);
+    void run(const std::vector<Table<Context>*>& tables, uint64_t minVersion);
 };
+
+extern template class Table<RowStoreContext>;
+extern template class GarbageCollector<RowStoreContext>;
+
+extern template class Table<ColumnMapContext>;
+extern template class GarbageCollector<ColumnMapContext>;
 
 } // namespace deltamain
 } // namespace store

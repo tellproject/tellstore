@@ -37,7 +37,8 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */, uint64_t insertTableCapacity)
+template <typename Context>
+Table<Context>::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */, uint64_t insertTableCapacity)
     : mPageManager(pageManager)
     , mRecord(std::move(schema))
     , mInsertTable(insertTableCapacity)
@@ -45,9 +46,11 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */,
     , mUpdateLog(pageManager)
     , mMainTable(crossbow::allocator::construct<CuckooTable>(pageManager))
     , mPages(crossbow::allocator::construct<PageList>(mInsertLog.begin(), mUpdateLog.begin()))
+    , mContext(mPageManager, mRecord)
 {}
 
-Table::~Table() {
+template <typename Context>
+Table<Context>::~Table() {
     auto pageList = mPages.load();
     for (auto page : pageList->pages) {
         mPageManager.free(page);
@@ -59,8 +62,9 @@ Table::~Table() {
     crossbow::allocator::destroy_now(ht);
 }
 
-int Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
-        uint64_t& version, bool& isNewest) const {
+template <typename Context>
+int Table<Context>::get(uint64_t key, size_t& size, const char*& data,
+        const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) const {
     int ec;
     isNewest = true;
 
@@ -96,7 +100,9 @@ int Table::get(uint64_t key, size_t& size, const char*& data, const commitmanage
     return error::not_found;
 }
 
-int Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
+template <typename Context>
+int Table<Context>::insert(uint64_t key, size_t size, const char* data,
+        const commitmanager::SnapshotDescriptor& snapshot) {
     int ec;
 
     // Check main
@@ -155,15 +161,19 @@ int Table::insert(uint64_t key, size_t size, const char* data, const commitmanag
     return 0;
 }
 
-int Table::update(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
+template <typename Context>
+int Table<Context>::update(uint64_t key, size_t size, const char* data,
+        const commitmanager::SnapshotDescriptor& snapshot) {
     return genericUpdate(key, size, data, snapshot, RecordType::DATA);
 }
 
-int Table::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+template <typename Context>
+int Table<Context>::remove(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     return genericUpdate(key, 0, nullptr, snapshot, RecordType::DELETE);
 }
 
-int Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
+template <typename Context>
+int Table<Context>::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot) {
     int ec;
 
     // Check main
@@ -197,8 +207,9 @@ int Table::revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapsho
     return 0;
 }
 
-int Table::genericUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
-        RecordType newType) {
+template <typename Context>
+int Table<Context>::genericUpdate(uint64_t key, size_t size, const char* data,
+        const commitmanager::SnapshotDescriptor& snapshot, RecordType newType) {
     int ec;
 
     // Check main
@@ -232,9 +243,9 @@ int Table::genericUpdate(uint64_t key, size_t size, const char* data, const comm
     return error::invalid_write;
 }
 
-std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queries) const
-{
+template <typename Context>
+std::vector<typename Table<Context>::ScanProcessor> Table<Context>::Table::startScan(size_t numThreads,
+        const char* queryBuffer, const std::vector<ScanQuery*>& queries) const {
     auto alloc = std::make_shared<crossbow::allocator>();
     auto pageList = mPages.load();
     auto insEnd = mInsertLog.end();
@@ -254,14 +265,15 @@ std::vector<Table::ScanProcessor> Table::startScan(size_t numThreads, const char
     return result;
 }
 
-void Table::runGC(uint64_t minVersion) {
+template <typename Context>
+void Table<Context>::runGC(uint64_t minVersion) {
     LOG_TRACE("Starting garbage collection [minVersion = %1%]", minVersion);
 
     crossbow::allocator _;
     auto oldMainTable = mMainTable.load();
     auto mainTableModifier = oldMainTable->modifier();
 
-    PageModifier pageListModifier(mPageManager, mainTableModifier, minVersion);
+    PageModifier pageListModifier(mContext, mPageManager, mainTableModifier, minVersion);
 
     auto pageList = crossbow::allocator::construct<PageList>();
     pageList->updateEnd = mUpdateLog.end();
@@ -322,10 +334,11 @@ void Table::runGC(uint64_t minVersion) {
     LOG_TRACE("Completing garbage collection");
 }
 
+template <typename Context>
 template <typename Rec>
-bool Table::internalGet(const void* ptr, size_t& size, const char*& data, uint64_t& version, bool& isNewest,
+bool Table<Context>::internalGet(const void* ptr, size_t& size, const char*& data, uint64_t& version, bool& isNewest,
         const commitmanager::SnapshotDescriptor& snapshot, int& ec) const {
-    Rec record(ptr);
+    Rec record(ptr, mContext);
     if (!record.valid()) {
         return false;
     }
@@ -365,10 +378,11 @@ bool Table::internalGet(const void* ptr, size_t& size, const char*& data, uint64
     return true;
 }
 
+template <typename Context>
 template <typename Rec>
-bool Table::internalUpdate(void* ptr, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
-        RecordType expectedType, RecordType newType, int& ec) {
-    Rec record(ptr);
+bool Table<Context>::internalUpdate(void* ptr, size_t size, const char* data,
+        const commitmanager::SnapshotDescriptor& snapshot, RecordType expectedType, RecordType newType, int& ec) {
+    Rec record(ptr, mContext);
     if (!record.valid()) {
         return false;
     }
@@ -418,8 +432,10 @@ bool Table::internalUpdate(void* ptr, size_t size, const char* data, const commi
     return true;
 }
 
+template <typename Context>
 template <typename Rec>
-int Table::canUpdate(const Rec& record, const commitmanager::SnapshotDescriptor& snapshot, RecordType expectedType) {
+int Table<Context>::canUpdate(const Rec& record, const commitmanager::SnapshotDescriptor& snapshot,
+        RecordType expectedType) {
     UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
     if (!updateIter.done()) {
         if (!snapshot.inReadSet(updateIter->version)) {
@@ -434,9 +450,10 @@ int Table::canUpdate(const Rec& record, const commitmanager::SnapshotDescriptor&
     return record.canUpdate(updateIter.lowestVersion(), snapshot, expectedType);
 }
 
+template <typename Context>
 template <typename Rec>
-bool Table::internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& snapshot, int& ec) {
-    Rec record(ptr);
+bool Table<Context>::internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& snapshot, int& ec) {
+    Rec record(ptr, mContext);
     if (!record.valid()) {
         return false;
     }
@@ -509,7 +526,8 @@ bool Table::internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& s
     return true;
 }
 
-void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersion) {
+template <typename Context>
+void GarbageCollector<Context>::run(const std::vector<Table<Context>*>& tables, uint64_t minVersion) {
     for (auto table : tables) {
         if (table->type() == TableType::NON_TRANSACTIONAL) {
             table->runGC(std::numeric_limits<uint64_t>::max());
@@ -518,6 +536,12 @@ void GarbageCollector::run(const std::vector<Table*>& tables, uint64_t minVersio
         }
     }
 }
+
+template class Table<RowStoreContext>;
+template class GarbageCollector<RowStoreContext>;
+
+template class Table<ColumnMapContext>;
+template class GarbageCollector<ColumnMapContext>;
 
 } // namespace deltamain
 } // namespace store

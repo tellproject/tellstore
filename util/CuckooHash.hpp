@@ -90,7 +90,11 @@ private:
                 size_t size);
 
 public:
-    void* get(uint64_t key) const;
+    const void* get(uint64_t key) const;
+
+    void* get(uint64_t key) {
+        return const_cast<void*>(const_cast<const CuckooTable*>(this)->get(key));
+    }
 
     Modifier modifier();
 
@@ -137,7 +141,12 @@ public:
     * did exist before in the hash table
     */
     bool insert(uint64_t key, void* value, bool replace = false);
-    void* get(uint64_t key) const;
+
+    const void* get(uint64_t key) const;
+
+    void* get(uint64_t key) {
+        return const_cast<void*>(const_cast<const Modifier*>(this)->get(key));
+    }
 
     bool remove(uint64_t key);
 

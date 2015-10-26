@@ -23,12 +23,25 @@
 
 #pragma once
 
-#include "ColumnMapUtils.hpp"
+#include <deltamain/Record.hpp>
+
+#include <crossbow/enum_underlying.hpp>
+
+#include <atomic>
+#include <cstdint>
 
 namespace tell {
+namespace commitmanager {
+
+class SnapshotDescriptor;
+
+} // namespace commitmanager
+
 namespace store {
 namespace deltamain {
-namespace impl {
+
+class ColumnMapContext;
+class ColumnMapMainPage;
 
 /**
  * The memory layout of a column-map MV-DMRecord depends on the memory layout of a
@@ -70,303 +83,99 @@ namespace impl {
  * together and ordered by version DESC (which facilitates get-operations).
  */
 
-//TODO: check whether this loop does the correct thing... doesn't
-//this assume that the newestPtr is stored at the beginning of a
-//log record (which is actually not the case)?
 /**
- * The following macro is used to chare the common code in getNewest and casNewest.
+ * @brief Struct storing information about a single element in the column map page
  */
-#define GET_NEWEST auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(index, basePtr, recordCount))); \
-    auto p = ptr->load(); \
-    while (ptr->load() % 2) { \
-        ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1); \
-        p = ptr->load(); \
-    }
-
-template<class T>
-class ColMapMVRecordBase {
-protected:
-    T mData;
+struct alignas(8) ColumnMapMainEntry {
 public:
-    using Type = typename DMRecordImplBase<T>::Type;
-    ColMapMVRecordBase(T data) : mData(data) {}
-
-    T getNewest(const Table *table, const uint32_t index, const char * basePtr, const uint32_t recordCount) const {
-        LOG_ASSERT(table != nullptr, "table ptr must be set to a non-NULL value!");
-        GET_NEWEST
-        return reinterpret_cast<char*>(p);
+    ColumnMapMainEntry(uint64_t _key, uint64_t _version)
+            : key(_key),
+              version(_version),
+              newest(0x0u) {
     }
 
-    T dataPtr() {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    bool isValidDataRecord() const {
-    //    //TODO: once you need this function, you have to add Table *table as an argument
-    //    COMPUTE_BASE_KNOWLEDGE(mData, table)
-    //    size_t nullBitMapSize = getNullBitMapSize(table);
-    //    auto key = getKeyAt(index, basePtr);
-    //    auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
-    //    for (; ; index++, key += 2, varLength++) {
-    //        if (*varLength > 0) return true;
-    //        if (key[2] != key[0])  // loop exit condition
-    //            break;
-    //    }
-    //    return false;
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    void revert(uint64_t version) {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    bool casNewest(const char* expected, const char* desired, const Table *table) const {
-        COMPUTE_BASE_KNOWLEDGE(mData, table)
-        GET_NEWEST
-        uint64_t exp = reinterpret_cast<const uint64_t>(expected);
-        uint64_t des = reinterpret_cast<const uint64_t>(desired);
-        if (p != exp) return false;
-        return ptr->compare_exchange_strong(exp, des);
-    }
-
-    int32_t getNumberOfVersions() const {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    const uint64_t* versions() const {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    const int32_t* offsets() const {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    uint64_t size() const {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    bool needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord, call it directly on the page instead");
-        std::terminate();
-    }
-
-    /**
-     * BE CAREFUL: in contrast to the row-oriented variant, this call might actually
-     * allocate new data (in sequential row-format) if the copyData flag is set (which
-     * it is by default). In that case the ptr the newly allocated data is returned,
-     * otherwise a nullptr is returned.
-     */
-    const char *data(const commitmanager::SnapshotDescriptor& snapshot,
-                     size_t& size,
-                     uint64_t& version,
-                     bool& isNewest,
-                     bool& isValid,
-                     bool* wasDeleted,
-                     const Table *table,
-                     bool copyData
-    ) const {
-        COMPUTE_BASE_KNOWLEDGE(mData, table)
-        const size_t nullBitMapSize = ColumnMapUtils::getNullBitMapSize(table);
-
-        auto newest = getNewest(table, index, basePtr, recordCount);
-        if (newest) {
-            DMRecordImplBase<T> rec(newest);
-            bool b;
-            size_t s;
-            auto res = rec.data(snapshot, s, version, isNewest, isValid, &b);
-            if (isValid) {
-                if (b || res) {
-                    if (wasDeleted) *wasDeleted = b;
-                    size = s;
-                    return res;
-                }
-                isNewest = false;
-            }
-        }
-        isValid = false;
-
-        bool found = false;
-        auto key = ColumnMapUtils::getKeyAt(index, basePtr);
-        auto varLength = ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, nullBitMapSize);
-        for (; ; index++, key += 2, varLength++) {
-            if (*varLength < 0) continue;
-            isValid = true;
-            if (snapshot.inReadSet(key[1])) {   // key[0]: key, key[1]: version
-                version = key[1];
-                found = true;
-                break;
-            }
-            isNewest = false;
-            if (key[2] != key[0])  // loop exit condition
-                break;
-        }
-        // index, varLength and key should have the right values
-
-        if (!found) {
-            if (wasDeleted) *wasDeleted = false;
-            return nullptr;
-        }
-
-        if (*varLength != 0)
-        {
-            if (wasDeleted) *wasDeleted = false;
-            if (copyData) {
-
-                auto fixedSizeFields = table->getNumberOfFixedSizedFields();
-                uint32_t recordSize = table->getFieldOffset(table->getNumberOfFixedSizedFields())
-                        + *ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, ColumnMapUtils::getNullBitMapSize(table));
-                char *res = reinterpret_cast<char*>(crossbow::allocator::malloc(recordSize));
-                char *src;
-                char *dest = res;
-                // copy nullbitmap
-                src = const_cast<char *>(ColumnMapUtils::getNullBitMapAt(index, basePtr, recordCount, nullBitMapSize));
-                memcpy(dest, src, nullBitMapSize);
-                dest += nullBitMapSize;
-
-                // copy fixed-sized columns
-                for (uint i = 0; i < fixedSizeFields; i++)
-                {
-                    src = const_cast<char*>(ColumnMapUtils::getColumnNAt(table, i, index, basePtr, recordCount, nullBitMapSize));
-                    auto fieldSize = table->getFieldSize(i);
-                    memcpy(dest, src, fieldSize);
-                    dest += fieldSize;
-                }
-                // copy var-sized colums in a batch
-                src = const_cast<char *>(ColumnMapUtils::getColumnNAt(table, fixedSizeFields, index, basePtr, recordCount, nullBitMapSize));
-                src = const_cast<char *>(basePtr + *(reinterpret_cast<uint32_t *>(src)));   // pointer to first field in var-sized heap
-                memcpy(dest, src, *varLength);
-
-                // release buffer (which is ensure by the epoch-mechanism of crossbow-alloctor to not be garbage-collected too early)
-                crossbow::allocator::free(res);
-                return res;
-            }
-            return nullptr;
-        }
-        if (wasDeleted)
-            *wasDeleted = true;
-        return nullptr;
-    }
-
-    Type typeOfNewestVersion(bool& isValid) const {
-    //    //TODO: once you need this function, you have to add Table *table as an argument
-    //    COMPUTE_BASE_KNOWLEDGE(mData, table)
-    //    size_t nullBitMapSize = getNullBitMapSize(table);
-    //    auto newest = getNewest();
-    //    if (newest) {
-    //        DMRecordImplBase<T> rec(newest);
-    //        auto res = rec.typeOfNewestVersion(isValid);
-    //        if (isValid) return res;
-    //    }
-    //    isValid = true;
-    //    auto key = getKeyAt(index, basePtr);
-    //    auto varLength = getVarsizedLenghtAt(index, basePtr, capacity, nullBitMapSize);
-    //    for (; ; index++, key += 2, varLength++) {
-    //        if (*varLength > 0) return Type::MULTI_VERSION_RECORD;
-    //        if (key[2] != key[0])  // loop exit condition
-    //            break;
-    //    }
-    //    isValid = false;
-    //    return Type::MULTI_VERSION_RECORD;
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord");
-        std::terminate();
-    }
-
-    uint64_t copyAndCompact(
-            uint64_t lowestActiveVersion,
-            InsertMap& insertMap,
-            char* dest,
-            uint64_t maxSize,
-            bool& success) const
-    {
-        LOG_ERROR("You are not supposed to call this on a ColMapMVRecord, call it directly on the page instead");
-        std::terminate();
-    }
-
-    void collect(impl::VersionMap&, bool&, bool&) const {
-        LOG_ASSERT(false, "should never call collect on MVRecord");
-        std::cerr << "Fatal error!" << std::endl;
-        std::terminate();
-    }
-
+    const uint64_t key;
+    const uint64_t version;
+    std::atomic<uintptr_t> newest;
 };
 
-template<class T>
-struct ColMapMVRecord : ColMapMVRecordBase<T> {
-    ColMapMVRecord(T data) : ColMapMVRecordBase<T>(data) {}
+template <typename T>
+class ColumnMapRecordImpl {
+public:
+    ColumnMapRecordImpl(T entry, const ColumnMapContext& context)
+            : mEntry(entry),
+              mNewest(mEntry->newest.load()),
+              mContext(context) {
+    }
+
+    uint64_t key() const {
+        return mEntry->key;
+    }
+
+    bool valid() const {
+        return (mNewest & crossbow::to_underlying(NewestPointerTag::INVALID)) == 0;
+    }
+
+    T value() const {
+        return mEntry;
+    }
+
+    uintptr_t newest() const {
+        return mNewest;
+    }
+
+    uint64_t baseVersion() const {
+        return mEntry->version;
+    }
+
+    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
+            uint64_t& version, bool& isNewest) const;
+
+protected:
+    T mEntry;
+    uintptr_t mNewest;
+    const ColumnMapContext& mContext;
+
+private:
+    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* data, size_t size) const;
 };
 
-template<>
-struct ColMapMVRecord<char*> : GeneralUpdates<ColMapMVRecordBase<char*>> {
-    ColMapMVRecord(char* data) : GeneralUpdates<ColMapMVRecordBase<char*>>(data) {}
-    void writeVersion(uint64_t) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
-    void writePrevious(const char*) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
-    void writeData(size_t, const char*) {
-        LOG_ERROR("You are not supposed to call this on a MVRecord");
-        std::terminate();
-    }
+extern template class ColumnMapRecordImpl<const ColumnMapMainEntry*>;
 
-    uint64_t *versions() {
-        LOG_ERROR("You are not supposed to call this on MVRecord");
-        std::terminate();
-    }
+class ConstColumnMapRecord : public ColumnMapRecordImpl<const ColumnMapMainEntry*> {
+    using Base = ColumnMapRecordImpl<const ColumnMapMainEntry*>;
+public:
+    using Base::Base;
 
-    int32_t *offsets() {
-        LOG_ERROR("You are not supposed to call this on MVRecord");
-        std::terminate();
-    }
-
-    char *dataPtr() {
-        LOG_ERROR("You are not supposed to call this on MVRecord");
-        std::terminate();
-    }
-
-    bool update(char* next,
-                bool& isValid,
-                const commitmanager::SnapshotDescriptor& snapshot,
-                const Table *table) {
-        COMPUTE_BASE_KNOWLEDGE(mData, table)
-        auto newest = getNewest(table, index, basePtr, recordCount);
-        if (newest) {
-            DMRecord rec(newest);
-            bool res = rec.update(next, isValid, snapshot, table);
-            if (!res && isValid) return false;
-            if (isValid) {
-                if (rec.type() == ColMapMVRecord::Type::MULTI_VERSION_RECORD) return res;
-                return casNewest(newest, next, table);
-            }
-        }
-
-        auto key = ColumnMapUtils::getKeyAt(index, basePtr);
-        auto varLength = ColumnMapUtils::getVarsizedLenghtAt(index, basePtr, recordCount, ColumnMapUtils::getNullBitMapSize(table));
-        for (; ; index++, key += 2, varLength++) {
-            if (*varLength >= 0) break;
-            if (key[2] != key[0])  // loop exit condition
-                isValid = false;
-                return false;
-        }
-        isValid = true;
-        if (snapshot.inReadSet(*ColumnMapUtils::getVersionAt(index, basePtr)))
-            return false;
-        DMRecord nextRec(next);
-        nextRec.writePrevious(this->mData);
-        return casNewest(newest, next, table);
+    ConstColumnMapRecord(const void* record, const ColumnMapContext& context)
+            : Base(reinterpret_cast<const ColumnMapMainEntry*>(record), context) {
     }
 };
 
-} // namespace impl
+extern template class ColumnMapRecordImpl<ColumnMapMainEntry*>;
+
+class ColumnMapRecord : public ColumnMapRecordImpl<ColumnMapMainEntry*> {
+    using Base = ColumnMapRecordImpl<ColumnMapMainEntry*>;
+public:
+    using Base::Base;
+
+    ColumnMapRecord(void* record, const ColumnMapContext& context)
+            : Base(reinterpret_cast<ColumnMapMainEntry*>(record), context) {
+    }
+
+    bool tryUpdate(uintptr_t value) {
+        return mEntry->newest.compare_exchange_strong(mNewest, value);
+    }
+
+    bool tryInvalidate() {
+        return mEntry->newest.compare_exchange_strong(mNewest, crossbow::to_underlying(NewestPointerTag::INVALID));
+    }
+
+    int canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, RecordType type) const;
+
+    int canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const;
+};
+
 } // namespace deltamain
 } // namespace store
 } // namespace tell

@@ -20,7 +20,10 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "CuckooHash.hpp"
+
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {
@@ -47,7 +50,7 @@ void CuckooTable::destroy() {
     }
 }
 
-void* CuckooTable::get(uint64_t key) const {
+const void* CuckooTable::get(uint64_t key) const {
     unsigned cnt = 0;
     for (auto& hasher : {hash1, hash2, hash3}) {
         auto idx = hasher(key);
@@ -92,7 +95,7 @@ CuckooTable* Modifier::done() const {
             mSize);
 }
 
-void* Modifier::get(uint64_t key) const
+const void* Modifier::get(uint64_t key) const
 {
     unsigned cnt = 0;
     for (auto& h : {hash1, hash2, hash3}) {
@@ -109,6 +112,8 @@ void* Modifier::get(uint64_t key) const
 }
 
 bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
+    LOG_ASSERT(value != nullptr, "Value must not be null");
+
     // we first check, whether the value exists
     bool res = false;
     bool increment = true;

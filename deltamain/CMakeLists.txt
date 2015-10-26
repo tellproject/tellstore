@@ -5,6 +5,10 @@ set(DELTAMAIN_SRCS
     InsertHash.cpp
     Record.cpp
     Table.cpp
+    colstore/ColumnMapContext.cpp
+    colstore/ColumnMapPage.cpp
+    colstore/ColumnMapRecord.cpp
+    colstore/ColumnMapScanProcessor.cpp
     rowstore/RowStorePage.cpp
     rowstore/RowStoreRecord.cpp
     rowstore/RowStoreScanProcessor.cpp
@@ -15,6 +19,11 @@ set(DELTAMAIN_PRIVATE_HDR
     InsertHash.hpp
     Record.hpp
     Table.hpp
+    colstore/ColumnMapContext.hpp
+    colstore/ColumnMapPage.hpp
+    colstore/ColumnMapRecord.hpp
+    colstore/ColumnMapScanProcessor.hpp
+    rowstore/RowStoreContext.hpp
     rowstore/RowStorePage.hpp
     rowstore/RowStoreRecord.hpp
     rowstore/RowStoreScanProcessor.hpp

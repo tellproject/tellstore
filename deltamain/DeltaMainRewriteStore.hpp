@@ -45,8 +45,15 @@ class ScanQuery;
 
 template<>
 struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, crossbow::non_movable {
-    using Table = deltamain::Table;
-    using GC = deltamain::GarbageCollector;
+#if defined USE_ROW_STORE
+    using Table = deltamain::Table<deltamain::RowStoreContext>;
+    using GC = deltamain::GarbageCollector<deltamain::RowStoreContext>;
+#elif defined USE_COLUMN_MAP
+    using Table = deltamain::Table<deltamain::ColumnMapContext>;
+    using GC = deltamain::GarbageCollector<deltamain::ColumnMapContext>;
+#else
+#error "Unknown storage layout"
+#endif
 
     StoreImpl(const StorageConfig& config)
         : mPageManager(PageManager::construct(config.totalMemory))

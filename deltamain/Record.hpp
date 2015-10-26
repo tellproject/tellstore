@@ -38,10 +38,6 @@ class SnapshotDescriptor;
 } // namespace commitmanager
 
 namespace store {
-
-class PageManager;
-class Record;
-
 namespace deltamain {
 
 struct RecordHolder {
@@ -145,7 +141,8 @@ class ConstInsertRecord : public InsertRecordImpl<const InsertLogEntry*> {
 public:
     using Base::Base;
 
-    ConstInsertRecord(const void* record)
+    template <typename Context>
+    ConstInsertRecord(const void* record, const Context& /* context */)
             : Base(reinterpret_cast<const InsertLogEntry*>(record)) {
     }
 };
@@ -157,7 +154,8 @@ class InsertRecord : public InsertRecordImpl<InsertLogEntry*> {
 public:
     using Base::Base;
 
-    InsertRecord(void* record)
+    template <typename Context>
+    InsertRecord(void* record, const Context& /* context */)
             : Base(reinterpret_cast<InsertLogEntry*>(record)) {
     }
 

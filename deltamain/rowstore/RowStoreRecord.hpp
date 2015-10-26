@@ -41,11 +41,9 @@ class SnapshotDescriptor;
 } // namespace commitmanager
 
 namespace store {
-
-class PageManager;
-class Record;
-
 namespace deltamain {
+
+class RowStoreContext;
 
 struct alignas(8) RowStoreMainEntry {
     static uint32_t serializedHeaderSize(uint64_t versionCount) {
@@ -157,7 +155,7 @@ class ConstRowStoreRecord : public RowStoreRecordImpl<const RowStoreMainEntry*> 
 public:
     using Base::Base;
 
-    ConstRowStoreRecord(const void* entry)
+    ConstRowStoreRecord(const void* entry, const RowStoreContext& /* context */)
             : Base(reinterpret_cast<const RowStoreMainEntry*>(entry)) {
     }
 };
@@ -169,7 +167,7 @@ class RowStoreRecord : public RowStoreRecordImpl<RowStoreMainEntry*> {
 public:
     using Base::Base;
 
-    RowStoreRecord(void* entry)
+    RowStoreRecord(void* entry, const RowStoreContext& /* context */)
             : Base(reinterpret_cast<RowStoreMainEntry*>(entry)) {
     }
 

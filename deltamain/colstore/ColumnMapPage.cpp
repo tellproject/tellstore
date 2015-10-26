@@ -20,471 +20,591 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
-#include "ColumnMapPage.hpp"
-#include "ColumnMapUtils.hpp"
 
-#include <deltamain/InsertMap.hpp>
+#include "ColumnMapPage.hpp"
+
+#include "ColumnMapContext.hpp"
+
 #include <deltamain/Record.hpp>
 #include <deltamain/Table.hpp>
-
 #include <util/CuckooHash.hpp>
+#include <util/PageManager.hpp>
+
+#include <cstring>
+#include <type_traits>
 
 namespace tell {
 namespace store {
 namespace deltamain {
 
-inline uint roundToMultiple(uint value, uint multiple) {
-    return multiple*((value + (multiple-1))/multiple);
+ColumnMapHeapEntry::ColumnMapHeapEntry(uint32_t _offset, const char* data)
+        : offset(_offset) {
+    memcpy(prefix, data, sizeof(prefix));
 }
 
-ColumnMapPage::ColumnMapPage(PageManager& pageManager, char* data, Table *table)
-    : mPageManager(pageManager)
-    , mTable(table)
-    , mNullBitmapSize(ColumnMapUtils::getNullBitMapSize(table))
-    , mNumFixedSized(table->getNumberOfFixedSizedFields())
-    , mNumVarSized(table->getNumberOfVarSizedFields())
-    , mNumColumns(mNumFixedSized + mNumVarSized)
-    , mFixedValuesSize(table->getFieldOffset(table->getNumberOfFixedSizedFields()) - table->getFieldOffset(0))
-    , mData(data)
-    , mRecordCount(0)
-    , mFillPageRecordCount(0)
-    , mFillPageVarOffset(TELL_PAGE_SIZE)
-    , mPageCleaningSummaries() {}
+ColumnMapHeapEntry::ColumnMapHeapEntry(uint32_t _offset, uint32_t size, const char* data)
+        : offset(_offset) {
+    memcpy(prefix, data, size < sizeof(prefix) ? size : sizeof(prefix));
+}
 
-void ColumnMapPage::collectInserts(impl::VersionMap &versionMap,
-                                   std::deque<const char*> &insertQueue,
-                                   bool &newestIsDelete,
-                                   bool &allVersionsInvalid) {
-    for (auto queueIter = insertQueue.begin(); queueIter != insertQueue.end(); ++queueIter) {
-        if (!newestIsDelete)
-        {
-            LOG_ERROR("if there is a newer insert, prior insert must point to a delete!");
-            std::terminate();
+ColumnMapPageModifier::ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager,
+        Modifier& mainTableModifier, uint64_t minVersion)
+        : mContext(context),
+          mPageManager(pageManager),
+          mMainTableModifier(mainTableModifier),
+          mMinVersion(minVersion),
+          mUpdatePage(new (mPageManager.alloc()) ColumnMapMainPage(mContext.fixedSizeCapacity())),
+          mUpdateStartIdx(0u),
+          mUpdateEndIdx(0u),
+          mUpdateIdx(0u),
+          mFillPage(new (mPageManager.alloc()) ColumnMapMainPage()),
+          mFillHeap(mFillPage->heapData()),
+          mFillEndIdx(0u),
+          mFillIdx(0u),
+          mFillSize(0u) {
+}
+
+bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
+    if (!needsCleaning(page)) {
+        mPageList.emplace_back(page);
+        return false;
+    }
+
+    auto entries = page->entryData();
+    auto sizes = page->sizeData();
+
+    uint32_t mainStartIdx = 0;
+    uint32_t mainEndIdx = 0;
+
+    typename std::remove_const<decltype(page->count)>::type i = 0;
+    while (i < page->count) {
+START:
+        auto baseIdx = i;
+        auto newest = entries[baseIdx].newest.load();
+        bool wasDelete = false;
+        if (newest != 0u) {
+            uint64_t lowestVersion;
+
+            // Write all updates into the update page
+            if (!processUpdates(reinterpret_cast<const UpdateLogEntry*>(newest), entries[baseIdx].version,
+                    lowestVersion, wasDelete)) {
+                // The page is full, flush any pending clean actions and repeat
+                if (mainStartIdx != mainEndIdx) {
+                    LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                    addCleanAction(page, mainStartIdx, mainEndIdx);
+                    mainStartIdx = 0;
+                    mainEndIdx = 0;
+                }
+                flush();
+                continue;
+            }
+
+            // If all elements were overwritten by updates the main page does not need to be processed
+            if (lowestVersion <= mMinVersion) {
+                if (mUpdateIdx == mUpdateEndIdx) {
+                    // Invalidate the element and remove it from the hash table - Retry from beginning if the
+                    // invalidation fails
+                    if (!entries[baseIdx].newest.compare_exchange_strong(newest,
+                            crossbow::to_underlying(NewestPointerTag::INVALID))) {
+                        LOG_ASSERT(i == baseIdx, "Changed base index without iterating");
+                        continue;
+                    }
+
+                    __attribute__((unused)) auto res = mMainTableModifier.remove(entries[baseIdx].key);
+                    LOG_ASSERT(res, "Removing key from hash table did not succeed");
+                } else {
+                    // Flush the changes to the current element
+                    auto fillEntry = mFillPage->entryData() + mFillEndIdx;
+                    mPointerActions.emplace_back(&entries[baseIdx].newest, newest, fillEntry);
+
+                    __attribute__((unused)) auto res = mMainTableModifier.insert(entries[baseIdx].key, fillEntry, true);
+                    LOG_ASSERT(res, "Inserting key into hash table did not succeed");
+
+                    if (mainStartIdx != mainEndIdx) {
+                        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                        addCleanAction(page, mainStartIdx, mainEndIdx);
+                        mainStartIdx = 0;
+                        mainEndIdx = 0;
+                    }
+                    mUpdateEndIdx = mUpdateIdx;
+                    mFillEndIdx = mFillIdx;
+                }
+
+                // Skip to next key and start from the beginning
+                for (++i; i < page->count && entries[i].key == entries[baseIdx].key; ++i) {
+                }
+                continue;
+            }
+
+            // Skip elements with version above lowest version
+            for (; i < page->count && entries[i].key == entries[baseIdx].key && entries[i].version >= lowestVersion;
+                    ++i) {
+            }
         }
-        CDMRecord rec (*queueIter);
-        rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
+
+        // Process all main entries up to the first element that can be discarded
+        auto copyStartIdx = i;
+        auto copyEndIdx = i;
+        for (; i < page->count && entries[i].key == entries[baseIdx].key; ++i) {
+            auto size = mContext.entryOverhead();
+
+            if (wasDelete) {
+                LOG_ASSERT(sizes[i] != 0u, "Only data entry can follow a delete");
+                if (entries[i].version < mMinVersion) {
+                    --mFillIdx;
+                    mFillSize -= size + mContext.fixedSize();
+                    if (copyStartIdx == copyEndIdx) { // The delete must come from an update entry
+                        LOG_ASSERT(mUpdateIdx > mUpdateEndIdx, "No element written before the delete");
+                        --mUpdateIdx;
+                    } else { // The delete must come from the previous main entry
+                        --copyEndIdx;
+                    }
+                    wasDelete = false;
+                    break;
+                }
+            }
+            if (sizes[i] == 0u) {
+                if (entries[i].version <= mMinVersion) {
+                    break;
+                }
+                size += mContext.fixedSize();
+                wasDelete = true;
+            } else {
+                size += sizes[i];
+                wasDelete = false;
+            }
+
+            mFillSize += size;
+            if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
+                if (mainStartIdx != mainEndIdx) {
+                    LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                    addCleanAction(page, mainStartIdx, mainEndIdx);
+                    mainStartIdx = 0;
+                    mainEndIdx = 0;
+                }
+                flush();
+                goto START;
+            }
+
+            new (mFillPage->entryData() + mFillIdx) ColumnMapMainEntry(entries[baseIdx].key, entries[i].version);
+            ++mFillIdx;
+            ++copyEndIdx;
+
+            // Check if the element is already the oldest readable element
+            if (entries[i].version <= mMinVersion) {
+                break;
+            }
+        }
+
+        LOG_ASSERT(!wasDelete, "Last element must not be a delete");
+        LOG_ASSERT(mFillIdx - mFillEndIdx == (copyEndIdx - copyStartIdx) + (mUpdateIdx - mUpdateEndIdx),
+                "Fill count does not match actual number of written elements")
+
+        // Invalidate the element if it can be removed completely otherwise enqueue modification of the newest pointer
+        // Retry from beginning if the invalidation fails
+        if (mFillIdx == mFillEndIdx) {
+            if (!entries[baseIdx].newest.compare_exchange_strong(newest,
+                    crossbow::to_underlying(NewestPointerTag::INVALID))) {
+                i = baseIdx;
+                continue;
+            }
+            __attribute__((unused)) auto res = mMainTableModifier.remove(entries[baseIdx].key);
+            LOG_ASSERT(res, "Removing key from hash table did not succeed");
+        } else {
+            auto fillEntry = mFillPage->entryData() + mFillEndIdx;
+            mPointerActions.emplace_back(&entries[baseIdx].newest, newest, fillEntry);
+
+            __attribute__((unused)) auto res = mMainTableModifier.insert(entries[baseIdx].key, fillEntry, true);
+            LOG_ASSERT(res, "Inserting key into hash table did not succeed");
+
+            // No updates and copy region starts at end from previous - simply extend copy region from main
+            if (mainEndIdx == copyStartIdx && mUpdateIdx == mUpdateEndIdx) {
+                mainEndIdx = copyEndIdx;
+            } else {
+                // Enqueue updates
+                if (mUpdateIdx != mUpdateEndIdx) {
+                    if (mainStartIdx != mainEndIdx) {
+                        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                        addCleanAction(page, mainStartIdx, mainEndIdx);
+                        mainStartIdx = 0;
+                        mainEndIdx = 0;
+                    }
+                    mUpdateEndIdx = mUpdateIdx;
+                }
+                // Enqueue main
+                if (copyStartIdx != copyEndIdx) {
+                    if (mUpdateStartIdx != mUpdateEndIdx) {
+                        LOG_ASSERT(mainStartIdx == mainEndIdx, "Main and update copy at the same time");
+                        mCleanActions.emplace_back(mUpdatePage, mUpdateStartIdx, mUpdateEndIdx, 0);
+                        mUpdateStartIdx = mUpdateEndIdx;
+                    }
+                    LOG_ASSERT(mainEndIdx != copyStartIdx, "This case was handled earlier");
+                    mainStartIdx = copyStartIdx;
+                    mainEndIdx = copyEndIdx;
+                }
+            }
+            mFillEndIdx = mFillIdx;
+        }
+
+        // Skip to next key
+        for (; i < page->count && entries[i].key == entries[baseIdx].key; ++i) {
+        }
     }
+
+    LOG_ASSERT(i == page->count, "Not at end of page");
+
+    // Append last pending clean action
+    if (mainStartIdx != mainEndIdx) {
+        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+        addCleanAction(page, mainStartIdx, mainEndIdx);
+    }
+
+    return true;
 }
 
-void ColumnMapPage::pruneAndCount(uint64_t lowestActiveVersion,
-                                  std::deque<RecordCleaningInfo> &pageCleaningSummary,
-                                  RecordCleaningInfo &recInfo,
-                                  impl::VersionMap &versionMap) {
-    // prune no longer used versions of versionMap
-    auto firstValidVersion = versionMap.lower_bound(lowestActiveVersion);
-    if (firstValidVersion == versionMap.end()) {
-        --firstValidVersion;
-    }
-    versionMap.erase(versionMap.begin(), firstValidVersion);
+bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
+    while (true) {
+        bool wasDelete = false;
+        if (oldRecord.newest() != 0u) {
+            uint64_t lowestVersion;
+            if (!processUpdates(reinterpret_cast<const UpdateLogEntry*>(oldRecord.newest()), oldRecord.baseVersion(),
+                    lowestVersion, wasDelete)) {
+                flush();
+                continue;
+            }
 
-    // add information from versionMap to recordInfo
-    auto highestVersionRecord = versionMap.rbegin();
-    if (highestVersionRecord != versionMap.rend())
-        recInfo.hasValidUpdatesOrInserts = (highestVersionRecord->second.type != RecordType::MULTI_VERSION_RECORD);
-    for (auto iter = versionMap.begin(); iter != versionMap.end(); ++iter)
-    {
-        recInfo.tupleCount++;
-        if (iter->second.type != RecordType::LOG_DELETE && iter->second.size != 0)  // size is 0 for deletes in MVRecord
-            recInfo.totalVarSizedCount += roundToMultiple((iter->second.size - mFixedValuesSize), 4);
-    }
+            auto size = mContext.entryOverhead();
 
-    // prune recInfo if it is empty
-    if (!recInfo.tupleCount)
-        pageCleaningSummary.pop_back();
-}
+            // Check if all elements were overwritten by the update log
+            if (wasDelete && oldRecord.baseVersion() < mMinVersion) {
+                --mFillIdx;
+                mFillSize -= size + mContext.fixedSize();
+                LOG_ASSERT(mUpdateIdx > mUpdateEndIdx, "No element written before the delete");
+                --mUpdateIdx;
+            } else if (lowestVersion > std::max(mMinVersion, oldRecord.baseVersion())) {
+                auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(oldRecord.value()));
+                auto size = mContext.entryOverhead() + logEntry->size() - sizeof(InsertLogEntry);
 
-bool ColumnMapPage::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) {
+                mFillSize += size;
+                if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
+                    flush();
+                    continue;
+                }
 
-    // if there is already an entry in cleaning data, we have done the work already
-    if (mPageCleaningSummaries.back().first == mData)
+                writeInsert(oldRecord.value());
+            }
+
+            // Invalidate the element if it can be removed completely
+            // Retry from beginning if the invalidation fails
+            if (mUpdateIdx == mUpdateEndIdx) {
+                if (!oldRecord.tryInvalidate()) {
+                    continue;
+                }
+                return false;
+            }
+        } else {
+            auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(oldRecord.value()));
+            auto size = mContext.entryOverhead() + logEntry->size() - sizeof(InsertLogEntry);
+
+            mFillSize += size;
+            if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
+                flush();
+                continue;
+            }
+
+            writeInsert(oldRecord.value());
+        }
+
+        auto fillEntry = mFillPage->entryData() + mFillEndIdx;
+        mPointerActions.emplace_back(&oldRecord.value()->newest, oldRecord.newest(), fillEntry);
+
+        __attribute__((unused)) auto res = mMainTableModifier.insert(oldRecord.key(), fillEntry, false);
+        LOG_ASSERT(res, "Inserting key into hash table did not succeed");
+
+        mUpdateEndIdx = mUpdateIdx;
+        mFillEndIdx = mFillIdx;
         return true;
-
-    // do first quick path to detect whether the page needs cleaning at all
-    bool needsCleaning = false;
-    auto keyVersionPtr = ColumnMapUtils::getKeyAt(0, mData);        // this ptr gets always advance by 2 such that ptr[0] refers to key and ptr[1] to version
-    auto newestPtr = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(0, mData, mRecordCount)));
-    auto varLengthPtr = ColumnMapUtils::getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
-    auto keyVersionPtrEnd = keyVersionPtr + 2*mRecordCount;
-    for (; !needsCleaning && keyVersionPtr < keyVersionPtrEnd; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
-        if (keyVersionPtr[1] < lowestActiveVersion                              // version below base version
-                || *newestPtr                                                   // updates on this record
-                || *varLengthPtr < 0                                            // reverts
-                || (*varLengthPtr == 0 && insertMap.count(keyVersionPtr[0])))   // deletes need cleaning if they have consequent inserts (or if they have versions below base version which will be checked in the next loop iteration)
-            needsCleaning = true;
     }
+}
 
-    if (!needsCleaning)
-        return false;
+std::vector<ColumnMapMainPage*> ColumnMapPageModifier::done() {
+    if (mFillEndIdx != 0u) {
+        flushFillPage();
+    } else {
+        mPageManager.free(mFillPage);
+    }
+    mPageManager.free(mUpdatePage);
 
-    // page needs cleaning, now let us gather the cleaning summary
-    mPageCleaningSummaries.emplace_back();
-    mPageCleaningSummaries.back().first = mData;
-    std::deque<RecordCleaningInfo> &pageCleaningSummary = mPageCleaningSummaries.back().second;
+    return std::move(mPageList);
+}
 
-    keyVersionPtr = ColumnMapUtils::getKeyAt(0, mData);
-    newestPtr = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(0, mData, mRecordCount)));
-    varLengthPtr = ColumnMapUtils::getVarsizedLenghtAt(0, mData, mRecordCount, mNullBitmapSize);
-    for (; keyVersionPtr < keyVersionPtrEnd; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
-        pageCleaningSummary.emplace_back();
-        RecordCleaningInfo &recInfo = pageCleaningSummary.back();
-        recInfo.key = keyVersionPtr[0];
-        auto &newest = recInfo.oldNewestPtr;
-        auto &versionMap = recInfo.versionMap;
-        newest = *newestPtr;
-        bool safelyDiscard = (newest != nullptr);    // if safe is true, I can discard all versions below base version (if not, I have to keep the youngest)
-        // iterate over all versions of this record and gather info
-        for (; ; keyVersionPtr +=2, ++newestPtr, ++varLengthPtr) {
-            if (!safelyDiscard || keyVersionPtr[1] >= lowestActiveVersion) {  //if version no longer valid, skip it
-                if (*varLengthPtr == 0) {
-                    // we have a delete record which means that we can delete the whole record
-                    // iff everything else is below base version, otherwise we have to keep it
-                    if (keyVersionPtr[0] == keyVersionPtr[2] && keyVersionPtr[3] >= lowestActiveVersion) {
-                        // there are tuples above base version --> need to keep delete record and probe insertmap
-                        versionMap.insert(std::make_pair(keyVersionPtr[1], impl::VersionHolder
-                                {reinterpret_cast<char*>(const_cast<uint64_t*>(keyVersionPtr))+2,       // pointers for Col-MVRecords are semantically different from all others!
-                                RecordType::MULTI_VERSION_RECORD,
-                                0,
-                                nullptr}));
-                    }
-                    safelyDiscard = true;
-                }
-                else if (*varLengthPtr > 0) {
-                    versionMap.insert(std::make_pair(keyVersionPtr[1], impl::VersionHolder
-                            {reinterpret_cast<char*>(const_cast<uint64_t*>(keyVersionPtr))+2,           // pointers for Col-MVRecords are semantically different from all others!
-                            RecordType::MULTI_VERSION_RECORD,
-                            (*varLengthPtr) + mFixedValuesSize,
-                            nullptr}));
-                    safelyDiscard = true;
-                }
-                // else: we have a revert entry which we can simply ignore
+bool ColumnMapPageModifier::needsCleaning(const ColumnMapMainPage* page) {
+    auto entries = page->entryData();
+    typename std::remove_const<decltype(page->count)>::type i = 0;
+    while (i < page->count) {
+        // In case the record has pending updates it needs to be cleaned
+        if (entries[i].newest.load() != 0x0u) {
+            return true;
+        }
+
+        // If only one version is in the record it does not need cleaning
+        if (i + 1 == page->count || entries[i].key != entries[i + 1].key) {
+            return false;
+        }
+
+        // Skip to next key
+        // The record needs cleaning if one but the first version can be purged
+        auto key = entries[i].key;
+        for (++i; i < page->count && entries[i].key == key; ++i) {
+            if (entries[i].version < mMinVersion) {
+                return true;
             }
-            if (keyVersionPtr[0] != keyVersionPtr[2]) break;  //loop exit condition when there are no more records with the same key
+        }
+    }
+    return false;
+}
+
+void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t startIdx, uint32_t endIdx) {
+    LOG_ASSERT(endIdx > startIdx, "End index must be larger than start index");
+
+    // Determine begin and end offset of the variable size heap
+    auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(page->recordData()
+            + page->count * mContext.fixedSize());
+    auto beginOffset = heapEntries[endIdx - 1].offset;
+    auto endOffset = (startIdx == 0 ? 0 : heapEntries[startIdx - 1].offset);
+    LOG_ASSERT(beginOffset >= endOffset, "End offset larger than begin offset");
+
+    auto length = beginOffset - endOffset;
+
+    // Copy varsize heap into the fill page
+    mFillHeap -= length;
+    memcpy(mFillHeap, page->heapData() - beginOffset, length);
+
+    // Add clean action with varsize heap offset correct
+    auto offsetCorrect = static_cast<int32_t>(mFillPage->heapData() - mFillHeap) - static_cast<int32_t>(beginOffset);
+    mCleanActions.emplace_back(page, startIdx, endIdx, offsetCorrect);
+}
+
+bool ColumnMapPageModifier::processUpdates(const UpdateLogEntry* newest, uint64_t baseVersion, uint64_t& lowestVersion,
+        bool& wasDelete) {
+    UpdateRecordIterator updateIter(newest, baseVersion);
+
+    // Loop over update log
+    for (; !updateIter.done(); updateIter.next()) {
+        auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
+        auto size = mContext.entryOverhead();
+
+        // If the previous update was a delete and the element is below the lowest active version then the
+        // delete can be discarded. In this case the update index counter can simply be decremented by one as a
+        // delete only writes the header entry in the fill page.
+        if (wasDelete) {
+            LOG_ASSERT(logEntry->type() == crossbow::to_underlying(RecordType::DATA),
+                    "Only data entry can follow a delete");
+            LOG_ASSERT(mUpdateIdx > mUpdateEndIdx, "Was delete but no element written");
+            if (updateIter->version < mMinVersion) {
+                --mUpdateIdx;
+                --mFillIdx;
+                mFillSize -= size + mContext.fixedSize();
+                wasDelete = false;
+                break;
+            }
         }
 
-        // if this record has updates or inserts add them as needed and adjust newestptr and newestptr location
-        bool newestIsDelete = true, allVersionsInvalid;
-        if (newest)
-        {
-            CDMRecord rec (newest);
-            rec.collect(versionMap, newestIsDelete, allVersionsInvalid);
-            recInfo.oldNewestPtrLocation = reinterpret_cast<std::atomic<const char*>*>(newestPtr);
-        }
-        if (insertMap.count(keyVersionPtr[0])) {
-            auto insertMapIter = insertMap.find(keyVersionPtr[0]);
-            auto &queue = insertMapIter->second;
-            collectInserts(versionMap, queue, newestIsDelete, allVersionsInvalid);
-            insertMap.erase(insertMapIter); // insertionmap entry was consumed, delete it
+        if (logEntry->type() == crossbow::to_underlying(RecordType::DELETE)) {
+            // The entry this entry marks as deleted can not be read, skip deletion and break
+            if (updateIter->version <= mMinVersion) {
+                break;
+            }
+            size += mContext.fixedSize();
+            wasDelete = true;
+        } else {
+            size += (logEntry->size() - sizeof(UpdateLogEntry));
+            wasDelete = false;
         }
 
-        // save newest pointer location
-        for (auto iter = versionMap.begin(); iter != versionMap.end(); ++iter) {
-            if (iter->second.type == RecordType::LOG_INSERT)
-                recInfo.oldNewestPtrLocation = iter->second.newestPtrLocation;
+        mFillSize += size;
+        if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
+            return false;
         }
 
-        // save newest pointer to the value that youngest insert pointed to
-        // (which is equal to the address of the highest valid version or NULL if that's an insert)
-        auto highestVersionRecord = versionMap.rbegin();
-        if (highestVersionRecord != versionMap.rend())
-            newest = (highestVersionRecord->second.type == RecordType::LOG_INSERT ?
-                    nullptr :
-                    const_cast<char *>(highestVersionRecord->second.record));
+        writeUpdate(updateIter.value());
 
-        // prune and count tuples and total consumption of var-sized values
-        pruneAndCount(lowestActiveVersion, pageCleaningSummary, recInfo, versionMap);
+        // Check if the element is already the oldest readable element
+        if (updateIter->version <= mMinVersion) {
+            break;
+        }
     }
 
+    lowestVersion = updateIter.lowestVersion();
     return true;
 }
 
-void ColumnMapPage::copyLogRecord(uint64_t key,
-                                  uint64_t version,
-                                  impl::VersionHolder &logRecordVersionHolder,
-                                  char *destBasePtr,
-                                  uint32_t destIndex) {
-    // copy key-version column
-    auto keyVersionPtr = const_cast<uint64_t *>(ColumnMapUtils::getKeyAt(destIndex, destBasePtr));
-    keyVersionPtr[0] = key;
-    keyVersionPtr[1] = version;
-    // newest ptr will be copied later
-    // if this is a delete record, we are already done
-    if (logRecordVersionHolder.type == RecordType::LOG_DELETE)
-        return;
-    char *srcPtr = const_cast<char *>(logRecordVersionHolder.record);
-    // copy null bitmap
-    memcpy(
-        const_cast<char *>(ColumnMapUtils::getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
-        srcPtr,
-        mNullBitmapSize);
-    srcPtr += mNullBitmapSize;
-    // copy var-size column
-    auto totalVarSize = logRecordVersionHolder.size - mFixedValuesSize;
-    *(const_cast<int32_t *>(ColumnMapUtils::getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)))
-            = totalVarSize;
+void ColumnMapPageModifier::writeUpdate(const UpdateLogEntry* entry) {
+    // Write entries into the fill page
+    new (mFillPage->entryData() + mFillIdx) ColumnMapMainEntry(entry->key, entry->version);
 
-    // copy fixed-sized column data
-    for (uint col = 0; col < mNumFixedSized; ++col) {
-        auto fieldSize = mTable->getFieldSize((col));
-        memcpy(
-            ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
-            srcPtr,
-            fieldSize);
-        srcPtr += fieldSize;
-    }
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(entry));
 
-    // copy var heap
-    memcpy(
-        const_cast<char *>(destBasePtr + mFillPageVarOffset),
-        srcPtr,
-        totalVarSize);
+    // Everything stays zero initialized when the entry marks a deletion
+    if (logEntry->type() != crossbow::to_underlying(RecordType::DELETE)) {
+        // Write data into update page
+        writeData(entry->data(), logEntry->size() - sizeof(UpdateLogEntry));
+    } else if (mUpdateIdx != 0u && mContext.varSizeFieldCount() != 0u) {
+        // Deletes do not have any data on the var size heap but the offsets must be correct nonetheless
+        // Copy the current offset of the heap
+        auto heapData = mUpdatePage->recordData() + mUpdatePage->count * mContext.fixedSize();
+        auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(heapData);
+        auto heapOffset = heapEntries[mUpdateIdx - 1].offset;
 
-    // copy var-sized column data
-    for (uint col = mNumFixedSized; col < mNumColumns; ++col) {
-        auto fieldSize = *(reinterpret_cast<uint32_t*>(srcPtr));    // field size including 4-byte size prefix
-        auto destPtr = ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize);
-        *(reinterpret_cast<uint32_t*>(destPtr)) = mFillPageVarOffset;
-        memcpy(
-            &destPtr[4],
-            &srcPtr[4],
-            std::min(4u, (fieldSize-4)));     // copy 4-byte prefix (or less)
-        mFillPageVarOffset += roundToMultiple(fieldSize, 4);
-        srcPtr += roundToMultiple(fieldSize, 4);    // we know that var-values are also 4-byte aligned
-    }
-}
+        heapData += mUpdateIdx * sizeof(ColumnMapHeapEntry);
+        for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
+            new (heapData) ColumnMapHeapEntry(heapOffset, 0u, nullptr);
 
-void ColumnMapPage::copyColumnRecords(char *srcBasePtr,
-                                      uint32_t srcIndex,
-                                      uint32_t srcRecordCount,
-                                      uint32_t totalVarLenghtSize,
-                                      char *destBasePtr,
-                                      uint32_t destIndex,
-                                      uint32_t numElements)
-{
-    // copy key-version column
-    memcpy(const_cast<char *>(ColumnMapUtils::getKeyVersionPtrAt(destIndex, destBasePtr)), ColumnMapUtils::getKeyVersionPtrAt(srcIndex, srcBasePtr), 16*numElements);
-    // newest ptrs will be copied later
-    // copy null bitmpas
-    mempcpy(
-        const_cast<char *>(ColumnMapUtils::getNullBitMapAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
-        ColumnMapUtils::getNullBitMapAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
-        numElements * mNullBitmapSize);
-    // var-size-length column
-    memcpy(
-        const_cast<int32_t *>(ColumnMapUtils::getVarsizedLenghtAt(destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize)),
-        ColumnMapUtils::getVarsizedLenghtAt(srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
-        numElements * 4);
-
-    // copy fixed-sized and var-sized column data
-    for (uint col = 0; col < mNumColumns; ++col) {
-        memcpy(
-            ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize),
-            ColumnMapUtils::getColumnNAt(mTable, col, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize),
-            numElements * mTable->getFieldSize(col));
-    }
-
-    // copy var-sized heap data
-    memcpy(
-        const_cast<char *>(destBasePtr + mFillPageVarOffset),
-        srcBasePtr + *(reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, mNumFixedSized, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize))),
-        totalVarLenghtSize);
-
-    // adjust var-sized offsets
-    uint32_t srcVarHeapOffset = *reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, 0, srcIndex, srcBasePtr, srcRecordCount, mNullBitmapSize));
-    int32_t diff = int32_t(mFillPageVarOffset) - int32_t(srcVarHeapOffset);
-
-    for (uint col = mNumFixedSized; col < mNumColumns; ++col) {
-        auto destVarLenghtPtr = reinterpret_cast<uint32_t*>(ColumnMapUtils::getColumnNAt(mTable, col, destIndex, destBasePtr, mFillPageRecordCount, mNullBitmapSize));
-        for (uint i = destIndex; i < numElements; ++i, destVarLenghtPtr += 2) {
-            (*destVarLenghtPtr) = (int32_t(*destVarLenghtPtr) + diff);
+            // Advance pointer to offset entry of next field
+            heapData += mUpdatePage->count * sizeof(ColumnMapHeapEntry);
         }
     }
 
-    // adjust mFillPageVarOffset
-    mFillPageVarOffset += totalVarLenghtSize;
+    ++mFillIdx;
+    ++mUpdateIdx;
 }
 
-//TODO: check whether this loop does the correct thing... doesn't
-//this assume that the newestPtr is stored at the beginning of a
-//log record (which is actually not the case)?
-inline bool casNewest (std::atomic<const char*>* &ptrLocation, const char *expected, const char *desired) {
-    auto ptr = reinterpret_cast<std::atomic<uint64_t>*>(ptrLocation);
-    auto p = ptr->load();
-    while (ptr->load() % 2) {
-        ptr = reinterpret_cast<std::atomic<uint64_t>*>(p - 1);
-        p = ptr->load();
+void ColumnMapPageModifier::writeInsert(const InsertLogEntry* entry) {
+    // Write entries into the fill page
+    new (mFillPage->entryData() + mFillIdx) ColumnMapMainEntry(entry->key, entry->version);
+
+    // Write data into update page
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(entry));
+    writeData(entry->data(), logEntry->size() - sizeof(InsertLogEntry));
+
+    ++mFillIdx;
+    ++mUpdateIdx;
+}
+
+void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
+    // Write size into the update page
+    LOG_ASSERT(size != 0, "Size must be larger than 0");
+    mUpdatePage->sizeData()[mUpdateIdx] = size;
+
+    // Copy all fixed size fields including the header (null bitmap) if the record has one into the update page
+    auto srcData = data;
+    auto destData = mUpdatePage->recordData();
+    for (auto fieldLength : mContext.fieldLengths()) {
+        memcpy(destData + mUpdateIdx * fieldLength, srcData, fieldLength);
+        destData += mUpdatePage->count * fieldLength;
+        srcData += fieldLength;
     }
-    uint64_t exp = reinterpret_cast<const uint64_t>(expected);
-    uint64_t des = reinterpret_cast<const uint64_t>(desired);
-    if (p != exp) return false;
-    return ptr->compare_exchange_strong(exp, des);
+
+    // Copy all variable sized fields into the fill page
+    if (mContext.varSizeFieldCount() != 0) {
+        auto length = static_cast<size_t>((data + size) - srcData);
+        mFillHeap -= length;
+        memcpy(mFillHeap, srcData, length);
+
+        destData += mUpdateIdx * sizeof(ColumnMapHeapEntry);
+        auto heapOffset = static_cast<uint32_t>(mFillPage->heapData() - mFillHeap);
+        for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
+            // Write heap entry and advance to next field
+            auto varSize = *reinterpret_cast<const uint32_t*>(srcData);
+            srcData += sizeof(uint32_t);
+            new (destData) ColumnMapHeapEntry(heapOffset, varSize, srcData);
+            srcData += varSize;
+
+            // Advance pointer to offset entry of next field
+            destData += mUpdatePage->count * sizeof(ColumnMapHeapEntry);
+
+            // Advance offset into the heap
+            heapOffset -= sizeof(uint32_t) + varSize;
+        }
+    }
 }
 
-char *ColumnMapPage::fillPage(Modifier& hashTable, RecordQueueIterator &end) {
-    // construct fill page
-    auto fillPage = reinterpret_cast<char*>(mPageManager.alloc());
-    *(reinterpret_cast<uint32_t*>(fillPage)) = mFillPageRecordCount;
+void ColumnMapPageModifier::flush() {
+    flushFillPage();
 
-    // use this offset for constructing the new page
-    mFillPageVarOffset = ColumnMapUtils::getSpaceConsumptionExeptHeap(mFillPageRecordCount, mNullBitmapSize, mFixedValuesSize);
+    if (mUpdateIdx != 0u) {
+        memset(mUpdatePage, 0, TELL_PAGE_SIZE);
+        new (mUpdatePage) ColumnMapMainPage(mContext.fixedSizeCapacity());
+        mUpdateStartIdx = 0u;
+        mUpdateEndIdx = 0u;
+        mUpdateIdx = 0u;
+    }
 
-    // copy data and adjust hash map (TODO: optimize copying of contiguous tuples accross record boundaries
-    uint32_t destIndex = 0;
-    for (auto pageSummaryIter = mPageCleaningSummaries.begin(); pageSummaryIter != mPageCleaningSummaries.end(); ++pageSummaryIter) {
-        auto srcBasePtr = const_cast<char *>(pageSummaryIter->first);
-        auto srcRecordCount = srcBasePtr ? *(reinterpret_cast<uint32_t*>(srcBasePtr)) : 0u;    // on "fill with inserts", baseptr is nullptr
-        auto recordIterEnd = pageSummaryIter->second.end();
-        for (auto recordIter = pageSummaryIter->second.begin(); recordIter != recordIterEnd && recordIter != end; ++recordIter) {
-            recordIter->newNewestPtrLocation = reinterpret_cast<char**>(const_cast<char*>(ColumnMapUtils::getNewestPtrAt(destIndex, fillPage, mFillPageRecordCount)));
-            auto key = recordIter->key;
-            hashTable.insert(key, const_cast<char*>(ColumnMapUtils::getKeyVersionPtrAt(destIndex, fillPage))+2);
-            auto versionIter = recordIter->versionMap.begin();
-            auto versionIterEnd = recordIter->versionMap.end();
-            while (versionIter != versionIterEnd) {
-                if (versionIter->second.type == RecordType::MULTI_VERSION_RECORD) {
-                    // copy ALL contiguous records
-                    auto oldRecord = versionIter->second.record;
-                    auto srcIndex = ColumnMapUtils::getIndex(srcBasePtr, oldRecord);
-                    uint32_t numElements = 1;
-                    uint32_t totalVarLenghtSize = roundToMultiple((versionIter->second.size - mFixedValuesSize), 4);
-                    while ((++versionIter) != versionIterEnd) {
-                        if (versionIter->second.type == RecordType::MULTI_VERSION_RECORD &&
-                                (reinterpret_cast<const uint64_t>(versionIter->second.record) - reinterpret_cast<const uint64_t>(oldRecord)) != 16)
-                            break;  // elements are not contiguous
-                        numElements++;
-                        totalVarLenghtSize += roundToMultiple((versionIter->second.size - mFixedValuesSize), 4);
-                        oldRecord = versionIter->second.record;
-                    }
-                    copyColumnRecords(srcBasePtr, srcIndex, srcRecordCount, totalVarLenghtSize, fillPage, destIndex, numElements);
-                    destIndex += numElements;
-                }
-                else {
-                    // for log records, copy one at the time
-                    copyLogRecord(key, versionIter->first, versionIter->second, fillPage, destIndex++);
-                    ++versionIter;
+    mFillPage = new (mPageManager.alloc()) ColumnMapMainPage();
+    mFillHeap = mFillPage->heapData();
+    mFillEndIdx = 0u;
+    mFillIdx = 0u;
+    mFillSize = 0u;
+}
+
+void ColumnMapPageModifier::flushFillPage() {
+    LOG_ASSERT(mFillEndIdx > 0, "Trying to flush empty page");
+
+    // Enqueue any pending update actions
+    if (mUpdateStartIdx != mUpdateEndIdx) {
+        mCleanActions.emplace_back(mUpdatePage, mUpdateStartIdx, mUpdateEndIdx, 0);
+        mUpdateStartIdx = mUpdateEndIdx;
+    }
+
+    // Set correct count
+    new (mFillPage) ColumnMapMainPage(mFillEndIdx);
+    mPageList.emplace_back(mFillPage);
+
+    // Copy sizes
+    auto sizes = mFillPage->sizeData();
+    for (auto& action : mCleanActions) {
+        auto srcData = action.page->sizeData() + action.startIdx;
+        auto count = action.endIdx - action.startIdx;
+        memcpy(sizes, srcData, count * sizeof(uint32_t));
+        sizes += count;
+    }
+
+    auto recordData = mFillPage->recordData();
+    size_t startOffset = 0;
+
+    // Copy all fixed size fields including the header (null bitmap) if the record has one into the fill page
+    for (auto fieldLength : mContext.fieldLengths()) {
+        for (const auto& action : mCleanActions) {
+            auto srcData = action.page->recordData() + action.page->count * startOffset + action.startIdx * fieldLength;
+            auto length = (action.endIdx - action.startIdx) * fieldLength;
+            memcpy(recordData, srcData, length);
+            recordData += length;
+        }
+        startOffset += fieldLength;
+    }
+
+    // Copy all variable size field heap entries
+    // If the offset correction is 0 we can do a single memory copy otherwise we have to adjust the offset for every
+    // element.
+    for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
+        for (const auto& action : mCleanActions) {
+            auto srcData = reinterpret_cast<const ColumnMapHeapEntry*>(action.page->recordData()
+                    + action.page->count * startOffset + action.startIdx * sizeof(ColumnMapHeapEntry));
+            if (action.offsetCorrection == 0) {
+                auto length = (action.endIdx - action.startIdx) * sizeof(ColumnMapHeapEntry);
+                memcpy(recordData, srcData, length);
+                recordData += length;
+            } else {
+                for (auto endData = srcData + (action.endIdx - action.startIdx); srcData != endData; ++srcData) {
+                    auto newOffset = static_cast<int32_t>(srcData->offset) + action.offsetCorrection;
+                    LOG_ASSERT(newOffset > 0, "Corrected offset must be larger than 0");
+                    new (recordData) ColumnMapHeapEntry(newOffset, srcData->prefix);
+                    recordData += sizeof(ColumnMapHeapEntry);
                 }
             }
         }
+        startOffset += sizeof(ColumnMapHeapEntry);
     }
+    mCleanActions.clear();
 
-    // adjust newest ptrs
-    for (auto pageSummaryIter = mPageCleaningSummaries.begin(); pageSummaryIter != mPageCleaningSummaries.end(); ++pageSummaryIter) {
-        auto recordIterEnd = pageSummaryIter->second.end();
-        for (auto recordIter = pageSummaryIter->second.begin(); recordIter != recordIterEnd && recordIter != end; ++recordIter) {
-            if (recordIter->oldNewestPtrLocation) {     // pure inserts (without prior values) we do not have to do this chasing
-                auto expected = recordIter->oldNewestPtr;
-                auto desired = reinterpret_cast<const char*>((recordIter->newNewestPtrLocation)) + 1;
-                *(recordIter->newNewestPtrLocation) = expected;
-                while(!(casNewest(recordIter->oldNewestPtrLocation, expected, desired)))
-                    *(recordIter->newNewestPtrLocation) = (expected = const_cast<char*>(recordIter->oldNewestPtrLocation->load()));
-            }
+    // Adjust newest pointer
+    for (auto& action : mPointerActions) {
+        auto desired = reinterpret_cast<uintptr_t>(action.desired) | crossbow::to_underlying(NewestPointerTag::MAIN);
+        while (!action.ptr->compare_exchange_strong(action.expected, desired)) {
+            action.desired->newest.store(action.expected);
         }
     }
-
-    // remove all page summaries and page summary entries that were consumed
-    while (mPageCleaningSummaries.size() > 1)
-        mPageCleaningSummaries.pop_front();
-    auto summary = mPageCleaningSummaries.front().second;
-    summary.erase(summary.begin(), end);
-
-    //reset stats
-    mFillPageRecordCount = 0;
-    mFillPageVarOffset = TELL_PAGE_SIZE;
-    return fillPage;
-}
-
-bool ColumnMapPage::checkRecordFits(RecordCleaningInfo &recInfo) {
-    if (recInfo.totalVarSizedCount > mFillPageVarOffset)    // in that case surely no space left!
-        return false;
-
-    // new fillpage stats if we would apply record
-    auto hypotheticalCount = mFillPageRecordCount + recInfo.tupleCount;
-    auto hypotheticalVarOffset = mFillPageVarOffset - recInfo.totalVarSizedCount;
-
-    // compute space requirements and check
-    if (ColumnMapUtils::getSpaceConsumptionExeptHeap(hypotheticalCount, mNullBitmapSize, mFixedValuesSize) > hypotheticalVarOffset)
-        return false;
-
-    // otherwise we know that the record fits and will adjust the fillpage stats
-    mFillPageRecordCount = hypotheticalCount;
-    mFillPageVarOffset = hypotheticalVarOffset;
-    return true;
-}
-
-char *ColumnMapPage::gcPass(Modifier& hashTable) {
-    // mFillPageRecordCount and mFillPageVarOffsetPtr are set in accordance with all the
-    // elements in mPageCleaningSummaries (except for the last entry about the current page) and
-    // that all these records fit in a new page. We now have to analyze whether the entries of
-    // the current page do as well
-    auto &currentPageSummary = mPageCleaningSummaries.back().second;
-    if (currentPageSummary.empty())
-    {
-        // the current page has no valid records at all -> mFillPage stats are the same
-        // as before --> we are done with this page and should gc the next one
-        mPageCleaningSummaries.pop_back();
-        return nullptr;
-    }
-
-    for (auto iter = currentPageSummary.begin(); iter != currentPageSummary.end(); ++iter) {
-        if (!checkRecordFits(*iter))
-            return fillPage(hashTable, iter);
-    }
-    return nullptr;
-}
-
-char* ColumnMapPage::gc(uint64_t lowestActiveVersion, InsertMap& insertMap, bool& done, Modifier& hashTable) {
-    // check whether we see this page for the first time in gc
-    bool firstTime = (!mRecordCount);
-    if(!mRecordCount)
-        mRecordCount = *reinterpret_cast<uint32_t*>(mData);
-
-    if (!needsCleaning(lowestActiveVersion, insertMap)) {
-        // we are done - no cleaning needed for this page
-        done = true;
-        return mData;
-    }
-
-    // marke the page for deletion if we see it for the first time
-    if(firstTime)
-        markCurrentForDeletion();
-
-    // do a gcPass over the data
-    auto fillPage = gcPass(hashTable);
-    done = (fillPage == nullptr);
-
-    return fillPage;
-}
-
-char *ColumnMapPage::fillWithInserts(uint64_t lowestActiveVersion, InsertMap& insertMap, Modifier& hashTable) {
-    // On the first call to fillWithInserts, we potentially have a set of page summaries and
-    // want to generate a page summary for all inserts.
-    // Subsequent calls will just consume from these summaries and the last call must clear the
-    // insertmap (because this signals that filling has finished).
-
-    if (mPageCleaningSummaries.front().first != nullptr) {
-        // this is the first call, process insertMap
-        mPageCleaningSummaries.emplace_back();
-        mPageCleaningSummaries.back().first = nullptr;
-        std::deque<RecordCleaningInfo> &pageCleaningSummary = mPageCleaningSummaries.back().second;
-        for (auto insertMapIter = insertMap.begin(); insertMapIter != insertMap.end(); ++insertMapIter) {
-            pageCleaningSummary.emplace_back();
-            RecordCleaningInfo &recInfo = pageCleaningSummary.back();
-            recInfo.key = insertMapIter->first.key;
-            bool newestIsDelete = true, allVersionsInvalid;
-            collectInserts(recInfo.versionMap, insertMapIter->second, newestIsDelete, allVersionsInvalid);
-            pruneAndCount(lowestActiveVersion, pageCleaningSummary, recInfo, recInfo.versionMap);
-        }
-    }
-
-    // fill page as soon as we have enough stuff to do so
-    char *res = gcPass(hashTable);
-
-    // If res is still nullptr, this means, that this is the last call and we can clear the insertMap in order to signal this.
-    if (res == nullptr) {
-        auto iter = mPageCleaningSummaries.back().second.end();
-        res = fillPage(hashTable, iter);
-    }
-
-    return res;
+    mPointerActions.clear();
 }
 
 } // namespace deltamain
