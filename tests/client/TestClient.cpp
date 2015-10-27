@@ -348,7 +348,7 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
     auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-    auto scanTupleSize = scanDataSize / scanCount;
+    auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
@@ -439,7 +439,7 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
     auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-    auto scanTupleSize = scanDataSize / scanCount;
+    auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
@@ -526,7 +526,7 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     auto scanTotalDataSize = double(scanDataSize) / double(1024 * 1024 * 1024);
     auto scanBandwidth = double(scanDataSize * 8) / double(1000 * 1000 * 1000 *
             std::chrono::duration_cast<std::chrono::duration<float>>(scanEndTime - scanStartTime).count());
-    auto scanTupleSize = scanDataSize / scanCount;
+    auto scanTupleSize = (scanCount == 0u ? 0u : scanDataSize / scanCount);
     LOG_INFO("TID %1%] Scan took %2%ms [%3% tuples of average size %4% (%5%GiB total, %6%Gbps bandwidth)]",
             transaction.version(), scanDuration.count(), scanCount, scanTupleSize, scanTotalDataSize, scanBandwidth);
 }
