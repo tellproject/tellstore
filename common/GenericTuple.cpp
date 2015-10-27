@@ -21,36 +21,30 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 
-#pragma once
+#include <tellstore/GenericTuple.hpp>
 
-#include <tellstore/AbstractTuple.hpp>
-
-#include <crossbow/string.hpp>
-
-#include <boost/any.hpp>
-
-#include <unordered_map>
+#include <tellstore/Record.hpp>
 
 namespace tell {
 namespace store {
 
-class Record;
+AbstractTuple::~AbstractTuple() = default;
 
-using GenericTuple = std::unordered_map<crossbow::string, boost::any>;
+GenericTupleSerializer::GenericTupleSerializer(const Record& record, GenericTuple tuple)
+    : mRecord(record)
+    , mTuple(std::move(tuple))
+    , mSize(mRecord.sizeOfTuple(mTuple))
+{}
 
-class GenericTupleSerializer : public AbstractTuple {
-    const Record& mRecord;
-    GenericTuple mTuple;
-    size_t mSize;
-public:
-    GenericTupleSerializer(const Record& record, GenericTuple tuple);
+GenericTupleSerializer::~GenericTupleSerializer() = default;
 
-    virtual ~GenericTupleSerializer();
+size_t GenericTupleSerializer::size() const {
+    return mSize;
+}
 
-    virtual size_t size() const override;
-
-    virtual void serialize(char* dest) const override;
-};
+void GenericTupleSerializer::serialize(char* dest) const {
+    mRecord.create(dest, mTuple, mSize);
+}
 
 } // namespace store
 } // namespace tell
