@@ -78,6 +78,7 @@ RowStoreMainEntry* RowStoreMainPage::append(const RowStoreMainEntry* record) {
 
 bool RowStorePageModifier::clean(RowStoreMainPage* page) {
     if (!page->needsCleaning(mMinVersion)) {
+        mPageList.emplace_back(page);
         return false;
     }
 
