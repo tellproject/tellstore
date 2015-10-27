@@ -10,7 +10,6 @@ set(UTIL_SRCS
 )
 
 set(UTIL_PRIVATE_HDR
-    chunk_allocator.hpp
     CuckooHash.hpp
     functional.hpp
     Log.hpp
