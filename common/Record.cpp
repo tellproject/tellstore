@@ -61,26 +61,6 @@ Field& Field::operator=(const Field& other)
     return *this;
 }
 
-
-size_t Field::defaultSize() const {
-    if (isFixedSized()) return staticSize();
-    switch (mType) {
-        case FieldType::NULLTYPE:
-            LOG_ASSERT(false, "NULLTYPE is not appropriate to use in a schema");
-            return 0;
-        case FieldType::TEXT:
-            return sizeof(uint32_t);
-        case FieldType::BLOB:
-            return sizeof(uint32_t);
-        case FieldType::NOTYPE:
-            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
-            return std::numeric_limits<size_t>::max();
-        default:
-            LOG_ASSERT(false, "Unknown type");
-            return 0;
-    }
-}
-
 size_t Field::sizeOf(const boost::any& value) const {
     if (isFixedSized()) return staticSize();
     switch (mType) {
