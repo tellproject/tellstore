@@ -50,11 +50,13 @@ class Modifier;
 */
 class CuckooTable {
 private:
-    static constexpr size_t ENTRIES_PER_PAGE = PageWrapper::ENTRIES_PER_PAGE;
-    using PageT = PageWrapper*;
-    using EntryT = typename PageWrapper::EntryT;
+    using EntryT = std::pair<uint64_t, void*>;
+
+    static constexpr size_t ENTRIES_PER_PAGE = TELL_PAGE_SIZE / sizeof(EntryT);
+    static_assert(isPowerOf2(ENTRIES_PER_PAGE), "Entries per page needs to be a power of two");
+
     PageManager& mPageManager;
-    std::vector<PageT> mPages;
+    std::vector<EntryT*> mPages;
     cuckoo_hash_function hash1;
     cuckoo_hash_function hash2;
     cuckoo_hash_function hash3;
@@ -83,7 +85,7 @@ public:
 
 private:
     CuckooTable(PageManager& pageManager,
-                std::vector<PageT>&& pages,
+                std::vector<EntryT*>&& pages,
                 cuckoo_hash_function hash1,
                 cuckoo_hash_function hash2,
                 cuckoo_hash_function hash3,
@@ -108,18 +110,17 @@ class Modifier {
     friend class CuckooTable;
     friend class crossbow::allocator;
 
-    using PageT = typename CuckooTable::PageT;
     using EntryT = typename CuckooTable::EntryT;
     static constexpr size_t ENTRIES_PER_PAGE = CuckooTable::ENTRIES_PER_PAGE;
 private:
     CuckooTable& mTable;
     std::vector<bool> pageWasModified;
-    mutable std::vector<PageT> mPages;
+    mutable std::vector<EntryT*> mPages;
     cuckoo_hash_function hash1;
     cuckoo_hash_function hash2;
     cuckoo_hash_function hash3;
     size_t mSize;
-    std::vector<PageT> mToDelete;
+    std::vector<void*> mToDelete;
 private:
     Modifier(CuckooTable& table)
         : mTable(table),
@@ -161,6 +162,9 @@ public:
     void rehash();
 
     void resize();
+
+private:
+    void rehash(size_t capacity, size_t numPages);
 };
 
 } // namespace store
