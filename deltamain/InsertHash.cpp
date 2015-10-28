@@ -39,7 +39,6 @@ namespace {
  * Taken from https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
  */
 size_t nextPowerOf2(size_t v) {
-    LOG_ASSERT(v > 0, "Value must be larger than 0");
     v |= v >> 1;
     v |= v >> 2;
     v |= v >> 4;
