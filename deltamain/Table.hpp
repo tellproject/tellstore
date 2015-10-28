@@ -26,12 +26,16 @@
 #include "InsertHash.hpp"
 #include "Record.hpp"
 #include "colstore/ColumnMapContext.hpp"
+#include "colstore/ColumnMapRecord.hpp"
 #include "rowstore/RowStoreContext.hpp"
 
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
 
+#include <tellstore/ErrorCode.hpp>
 #include <tellstore/Record.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/allocator.hpp>
 
@@ -78,8 +82,8 @@ public:
         return mRecord.schema().type();
     }
 
-    int get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
-            uint64_t& version, bool& isNewest) const;
+    template <typename Fun>
+    int get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) const;
 
     int insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -124,9 +128,8 @@ private:
     int genericUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             RecordType type);
 
-    template <typename Rec>
-    bool internalGet(const void* ptr, size_t& size, const char*& data, uint64_t& version, bool& isNewest,
-            const commitmanager::SnapshotDescriptor& snapshot, int& ec) const;
+    template <typename Rec, typename Fun>
+    bool internalGet(const void* ptr, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, int& ec) const;
 
     template <typename Rec>
     bool internalUpdate(void* ptr, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
@@ -148,6 +151,86 @@ private:
 
     Context mContext;
 };
+
+template <typename Context>
+template <typename Fun>
+int Table<Context>::get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) const {
+    int ec;
+
+    // Check main first
+    auto mainTable = mMainTable.load();
+    if (auto ptr = mainTable->get(key)) {
+        if (internalGet<ConstMainRecord>(ptr, snapshot, fun, ec)) {
+            return ec;
+        }
+    }
+
+    // Lookup in the insert hash table
+    if (auto ptr = mInsertTable.get(key)) {
+        if (internalGet<ConstInsertRecord>(ptr, snapshot, fun, ec)) {
+            return ec;
+        }
+    }
+
+    // Check if the hash table pointer changed
+    // This is required as a concurrent running garbage collection might have transferred inserts from the insert log
+    // into the (new) main.
+    auto newMainTable = mMainTable.load();
+    if (newMainTable != mainTable) {
+        // Lookup in the new hash table
+        if (auto ptr = newMainTable->get(key)) {
+            if (internalGet<ConstMainRecord>(ptr, snapshot, fun, ec)) {
+                return ec;
+            }
+        }
+    }
+
+    // The element was really not found
+    return error::not_found;
+}
+
+template <typename Context>
+template <typename Rec, typename Fun>
+bool Table<Context>::internalGet(const void* ptr, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, int& ec)
+        const {
+    Rec record(ptr, mContext);
+    if (!record.valid()) {
+        return false;
+    }
+
+    // Follow the recycled record in case the current record was garbage collected in the meantime
+    if (auto main = newestMainRecord(record.newest())) {
+        return internalGet<ConstMainRecord>(main, snapshot, std::move(fun), ec);
+    }
+
+    // Lookup in update history
+    bool isNewest = true;
+    UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
+    for (; !updateIter.done(); updateIter.next()) {
+        if (!snapshot.inReadSet(updateIter->version)) {
+            isNewest = false;
+            continue;
+        }
+
+        // Check if the entry marks a deletion: Return element not found
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
+        if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
+            ec = (isNewest ? error::not_found : error::not_in_snapshot);
+            return true;
+        }
+
+        auto size = entry->size() - sizeof(UpdateLogEntry);
+        auto dest = fun(size, updateIter->version, isNewest);
+        memcpy(dest, updateIter->data(), size);
+
+        ec = 0;
+        return true;
+    }
+
+    // Lookup in base
+    ec = record.get(updateIter.lowestVersion(), snapshot, std::move(fun), isNewest);
+    return true;
+}
 
 template <typename Context>
 class GarbageCollector {

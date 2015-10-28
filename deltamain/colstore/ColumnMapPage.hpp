@@ -23,11 +23,10 @@
 
 #pragma once
 
-#include "ColumnMapRecord.hpp"
-
 #include <config.h>
 #include <deltamain/Record.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -41,6 +40,22 @@ class PageManager;
 namespace deltamain {
 
 class ColumnMapContext;
+
+/**
+ * @brief Struct storing information about a single element in the column map page
+ */
+struct alignas(8) ColumnMapMainEntry {
+public:
+    ColumnMapMainEntry(uint64_t _key, uint64_t _version)
+            : key(_key),
+              version(_version),
+              newest(0x0u) {
+    }
+
+    const uint64_t key;
+    const uint64_t version;
+    std::atomic<uintptr_t> newest;
+};
 
 /**
  * @brief Struct storing the header of a column map page

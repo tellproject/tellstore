@@ -23,7 +23,14 @@
 
 #pragma once
 
+#include "ColumnMapContext.hpp"
+#include "ColumnMapPage.hpp"
+
 #include <deltamain/Record.hpp>
+
+#include <tellstore/ErrorCode.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/enum_underlying.hpp>
 
@@ -31,33 +38,8 @@
 #include <cstdint>
 
 namespace tell {
-namespace commitmanager {
-
-class SnapshotDescriptor;
-
-} // namespace commitmanager
-
 namespace store {
 namespace deltamain {
-
-class ColumnMapContext;
-class ColumnMapMainPage;
-
-/**
- * @brief Struct storing information about a single element in the column map page
- */
-struct alignas(8) ColumnMapMainEntry {
-public:
-    ColumnMapMainEntry(uint64_t _key, uint64_t _version)
-            : key(_key),
-              version(_version),
-              newest(0x0u) {
-    }
-
-    const uint64_t key;
-    const uint64_t version;
-    std::atomic<uintptr_t> newest;
-};
 
 template <typename T>
 class ColumnMapRecordImpl {
@@ -88,8 +70,8 @@ public:
         return mEntry->version;
     }
 
-    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
-            uint64_t& version, bool& isNewest) const;
+    template <typename Fun>
+    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, bool isNewest) const;
 
 protected:
     T mEntry;
@@ -97,8 +79,40 @@ protected:
     const ColumnMapContext& mContext;
 
 private:
-    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* data, size_t size) const;
+    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const;
 };
+
+template <typename T>
+template <typename Fun>
+int ColumnMapRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, Fun fun,
+        bool isNewest) const {
+    auto page = mContext.pageFromEntry(mEntry);
+    auto entries = page->entryData();
+    for (auto i = ColumnMapContext::pageIndex(page, mEntry); i < page->count && entries[i].key == mEntry->key; ++i) {
+        // Skip elements already overwritten by an element in the update log
+        if (entries[i].version >= highestVersion) {
+            continue;
+        }
+
+        // Check if the element is readable by the snapshot
+        if (!snapshot.inReadSet(entries[i].version)) {
+            isNewest = false;
+            continue;
+        }
+
+
+        auto recordSizes = page->sizeData();
+        if (recordSizes[i] == 0) {
+            return (isNewest ? error::not_found : error::not_in_snapshot);
+        }
+
+        auto dest = fun(recordSizes[i], entries[i].version, isNewest);
+        materialize(page, i, dest, recordSizes[i]);
+        return 0;
+    }
+
+    return (isNewest ? error::not_found : error::not_in_snapshot);
+}
 
 extern template class ColumnMapRecordImpl<const ColumnMapMainEntry*>;
 

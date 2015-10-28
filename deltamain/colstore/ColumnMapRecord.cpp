@@ -23,73 +23,27 @@
 
 #include "ColumnMapRecord.hpp"
 
-#include "ColumnMapContext.hpp"
-
-#include <tellstore/ErrorCode.hpp>
-
-#include <commitmanager/SnapshotDescriptor.hpp>
-
 namespace tell {
 namespace store {
 namespace deltamain {
 
 template <typename T>
-int ColumnMapRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
-        size_t& size, const char*& data, uint64_t& version, bool& isNewest) const {
-    auto page = mContext.pageFromEntry(mEntry);
-    auto entries = page->entryData();
-    for (auto i = ColumnMapContext::pageIndex(page, mEntry); i < page->count && entries[i].key == mEntry->key; ++i) {
-        // Skip elements already overwritten by an element in the update log
-        if (entries[i].version >= highestVersion) {
-            continue;
-        }
-
-        // Check if the element is readable by the snapshot
-        if (!snapshot.inReadSet(entries[i].version)) {
-            isNewest = false;
-            continue;
-        }
-
-        version = entries[i].version;
-
-        auto recordSizes = page->sizeData();
-        if (recordSizes[i] == 0) {
-            return (isNewest ? error::not_found : error::not_in_snapshot);
-        }
-        size = recordSizes[i];
-
-        // Deserialize
-        // Acquire and release buffer through epoch mechanism so it will be freed after this epoch
-        auto res = reinterpret_cast<char*>(crossbow::allocator::malloc(size));
-        materialize(page, i, res, size);
-        crossbow::allocator::free(res);
-        data = res;
-
-        return 0;
-    }
-
-    return (isNewest ? error::not_found : error::not_in_snapshot);
-}
-
-template <typename T>
-void ColumnMapRecordImpl<T>::materialize(const ColumnMapMainPage* page, uint64_t idx, char* data, size_t size) const {
+void ColumnMapRecordImpl<T>::materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
     LOG_ASSERT(size > 0, "Tuple must not be of size 0");
 
-    auto destData = data;
     auto recordData = page->recordData();
 
     // Copy all fixed size fields including the header (null bitmap) if the record has one into the fill page
     for (auto fieldLength : mContext.fieldLengths()) {
-        memcpy(destData, recordData + idx * fieldLength, fieldLength);
-        destData += fieldLength;
+        memcpy(dest, recordData + idx * fieldLength, fieldLength);
+        dest += fieldLength;
         recordData += page->count * fieldLength;
     }
 
     // Copy all variable size fields in one batch
     if (mContext.varSizeFieldCount() != 0) {
         auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(recordData);
-        auto length = static_cast<size_t>(data + size - destData);
-        memcpy(destData, page->heapData() - heapEntries[idx].offset, length);
+        memcpy(dest, page->heapData() - heapEntries[idx].offset, size - mContext.fixedSize());
     }
 }
 

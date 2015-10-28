@@ -24,7 +24,6 @@
 #pragma once
 
 #include "ColumnMapPage.hpp"
-#include "ColumnMapRecord.hpp"
 #include "ColumnMapScanProcessor.hpp"
 
 #include <config.h>
@@ -39,6 +38,9 @@ class PageManager;
 class Record;
 
 namespace deltamain {
+
+class ColumnMapRecord;
+class ConstColumnMapRecord;
 
 /**
  * @brief Context containing approach-specific information for the column map implementation

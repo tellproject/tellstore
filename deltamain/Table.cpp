@@ -22,16 +22,10 @@
  */
 
 #include "Table.hpp"
-#include "Record.hpp"
 
-#include <tellstore/ErrorCode.hpp>
 #include <config.h>
 
-#include <commitmanager/SnapshotDescriptor.hpp>
-
 #include <boost/config.hpp>
-
-#include <memory>
 
 namespace tell {
 namespace store {
@@ -60,44 +54,6 @@ Table<Context>::~Table() {
     auto ht = mMainTable.load();
     ht->destroy();
     crossbow::allocator::destroy_now(ht);
-}
-
-template <typename Context>
-int Table<Context>::get(uint64_t key, size_t& size, const char*& data,
-        const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) const {
-    int ec;
-    isNewest = true;
-
-    // Check main first
-    auto mainTable = mMainTable.load();
-    if (auto ptr = mainTable->get(key)) {
-        if (internalGet<ConstMainRecord>(ptr, size, data, version, isNewest, snapshot, ec)) {
-            return ec;
-        }
-    }
-
-    // Lookup in the insert hash table
-    if (auto ptr = mInsertTable.get(key)) {
-        if (internalGet<ConstInsertRecord>(ptr, size, data, version, isNewest, snapshot, ec)) {
-            return ec;
-        }
-    }
-
-    // Check if the hash table pointer changed
-    // This is required as a concurrent running garbage collection might have transferred inserts from the insert log
-    // into the (new) main.
-    auto newMainTable = mMainTable.load();
-    if (newMainTable != mainTable) {
-        // Lookup in the new hash table
-        if (auto ptr = newMainTable->get(key)) {
-            if (internalGet<ConstMainRecord>(ptr, size, data, version, isNewest, snapshot, ec)) {
-                return ec;
-            }
-        }
-    }
-
-    // The element was really not found
-    return error::not_found;
 }
 
 template <typename Context>
@@ -332,50 +288,6 @@ void Table<Context>::runGC(uint64_t minVersion) {
     mInsertTable.truncate(insertHeadList);
 
     LOG_TRACE("Completing garbage collection");
-}
-
-template <typename Context>
-template <typename Rec>
-bool Table<Context>::internalGet(const void* ptr, size_t& size, const char*& data, uint64_t& version, bool& isNewest,
-        const commitmanager::SnapshotDescriptor& snapshot, int& ec) const {
-    Rec record(ptr, mContext);
-    if (!record.valid()) {
-        return false;
-    }
-
-    // Follow the recycled record in case the current record was garbage collected in the meantime
-    if (auto main = newestMainRecord(record.newest())) {
-        return internalGet<ConstMainRecord>(main, size, data, version, isNewest, snapshot, ec);
-    }
-
-    // Lookup in update history
-    UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
-    for (; !updateIter.done(); updateIter.next()) {
-        if (!snapshot.inReadSet(updateIter->version)) {
-            isNewest = false;
-            continue;
-        }
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
-
-        // The element was found: Set version
-        version = updateIter->version;
-
-        // Check if the entry marks a deletion: Return element not found
-        if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
-            return (isNewest ? error::not_found : error::not_in_snapshot);
-        }
-
-        // Set the data pointer and size field
-        data = updateIter->data();
-        size = entry->size() - sizeof(UpdateLogEntry);
-
-        ec = 0;
-        return true;
-    }
-
-    // Lookup in base
-    ec = record.get(updateIter.lowestVersion(), snapshot, size, data, version, isNewest);
-    return true;
 }
 
 template <typename Context>

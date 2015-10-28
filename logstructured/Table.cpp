@@ -23,16 +23,8 @@
 
 #include "Table.hpp"
 
-#include <tellstore/ErrorCode.hpp>
-
-#include "ChainedVersionRecord.hpp"
-#include "VersionRecordIterator.hpp"
-
 #include <util/VersionManager.hpp>
 
-#include <commitmanager/SnapshotDescriptor.hpp>
-
-#include <crossbow/enum_underlying.hpp>
 #include <crossbow/logger.hpp>
 
 #include <boost/config.hpp>
@@ -130,35 +122,6 @@ Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, V
           mRecord(schema),
           mTableId(tableId),
           mLog(pageManager) {
-}
-
-int Table::get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
-        uint64_t& version, bool& isNewest) {
-    VersionRecordIterator recIter(*this, key);
-    for (; !recIter.done(); recIter.next()) {
-        if (!snapshot.inReadSet(recIter->validFrom())) {
-            continue;
-        }
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
-
-        // Set the version and isNewest field
-        version = recIter->validFrom();
-        isNewest = recIter.isNewest();
-
-        // Check if the entry marks a deletion
-        if (crossbow::from_underlying<VersionRecordType>(entry->type()) == VersionRecordType::DELETION) {
-            return (isNewest ? error::not_found : error::not_in_snapshot);
-        }
-
-        // Set the data pointer and size field
-        data = recIter->data();
-        size = entry->size() - sizeof(ChainedVersionRecord);
-        return 0;
-    }
-
-    // Element not found
-    isNewest = recIter.isNewest();
-    return (isNewest ? error::not_found : error::not_in_snapshot);
 }
 
 int Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {

@@ -23,6 +23,12 @@
 
 #pragma once
 
+#include <util/Log.hpp>
+
+#include <tellstore/ErrorCode.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 #include <crossbow/enum_underlying.hpp>
 
 #include <atomic>
@@ -31,12 +37,6 @@
 #include <vector>
 
 namespace tell {
-namespace commitmanager {
-
-class SnapshotDescriptor;
-
-} // namespace commitmanager
-
 namespace store {
 namespace deltamain {
 
@@ -124,8 +124,8 @@ public:
         return mEntry->version;
     }
 
-    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, size_t& size, const char*& data,
-            uint64_t& version, bool& isNewest) const;
+    template <typename Fun>
+    int get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, bool isNewest) const;
 
     void collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const;
 
@@ -133,6 +133,25 @@ protected:
     T mEntry;
     uintptr_t mNewest;
 };
+
+template <typename T>
+template <typename Fun>
+int InsertRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, Fun fun,
+        bool isNewest) const {
+    // Check if the element was already overwritten by an element in the update log
+    if (mEntry->version >= highestVersion) {
+        return (isNewest ? error::not_found : error::not_in_snapshot);
+    }
+    if (!snapshot.inReadSet(mEntry->version)) {
+        return error::not_in_snapshot;
+    }
+
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mEntry));
+    auto size = logEntry->size() - sizeof(InsertLogEntry);
+    auto dest = fun(size, mEntry->version, isNewest);
+    memcpy(dest, mEntry->data(), size);
+    return 0;
+}
 
 extern template class InsertRecordImpl<const InsertLogEntry*>;
 

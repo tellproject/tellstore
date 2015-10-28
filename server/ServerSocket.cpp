@@ -158,29 +158,26 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
     auto key = request.read<uint64_t>();
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        size_t size = 0;
-        const char* data = nullptr;
-        uint64_t version = 0x0u;
-        bool isNewest = false;
-        auto ec = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
+        auto ec = mStorage.get(tableId, key, snapshot, [this, messageId]
+                (size_t size, uint64_t version, bool isNewest) {
+            char* data = nullptr;
+            // Message size is 8 bytes version plus 8 bytes (isNewest, size) and data
+            uint32_t messageLength = 2 * sizeof(uint64_t) + size;
+            writeResponse(messageId, ResponseType::GET, messageLength, [size, version, isNewest, &data]
+                    (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+                message.write<uint64_t>(version);
+                message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
+                message.set(0, sizeof(uint32_t) - sizeof(uint8_t));
+                message.write<uint32_t>(size);
+                data = message.data();
+            });
+            return data;
+        });
 
         if (ec) {
             writeErrorResponse(messageId, static_cast<error::errors>(ec));
             return;
         }
-
-        // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
-        uint32_t messageLength = 2 * sizeof(uint64_t) + size;
-        writeResponse(messageId, ResponseType::GET, messageLength, [version, isNewest, size, data]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint64_t>(version);
-            message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
-            message.align(sizeof(uint32_t));
-            message.write<uint32_t>(size);
-            if (size > 0) {
-                message.write(data, size);
-            }
-        });
     });
 }
 

@@ -7,12 +7,13 @@
 - [ ] Cache SnapshotDescriptor in server
 - [ ] Move SnapshotDescriptor code from CommitManager to TellStore (do not link against CommitManager)
 - [ ] Profile and improve scan query evaluation
-- [ ] Materialize tuple directly into InfinIO buffer
+- [x] Materialize tuple directly into InfinIO buffer
 
 ### Delta-Main Rewrite
 
 - [ ] Truncate update log only up to the point where all entries are sealed
 - [ ] ColumnMap: Only write into update page when table has variable sized fields
+- [ ] ColumnMap: Grow insert hash table on demand
 
 ### Log-Structured Memory
 

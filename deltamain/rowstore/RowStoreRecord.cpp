@@ -23,13 +23,7 @@
 
 #include "RowStoreRecord.hpp"
 
-#include <tellstore/ErrorCode.hpp>
-
-#include <commitmanager/SnapshotDescriptor.hpp>
-
 #include <crossbow/logger.hpp>
-
-#include <type_traits>
 
 namespace tell {
 namespace store {
@@ -59,35 +53,6 @@ RowStoreMainEntry* RowStoreMainEntry::serialize(void* ptr, const RowStoreMainEnt
     auto entry = new (ptr) RowStoreMainEntry(oldEntry->key, oldEntry->versionCount);
     memcpy(entry->data(), oldEntry->data(), offsets[oldEntry->versionCount] - sizeof(RowStoreMainEntry));
     return entry;
-}
-
-template <typename T>
-int RowStoreRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
-        size_t& size, const char*& data, uint64_t& version, bool& isNewest) const {
-    auto versions = mEntry->versionData();
-
-    // Skip elements already overwritten by an element in the update log
-    typename std::remove_const<decltype(mEntry->versionCount)>::type i = 0;
-    for (; i < mEntry->versionCount && versions[i] >= highestVersion; ++i) {
-    }
-    for (; i < mEntry->versionCount; ++i) {
-        if (!snapshot.inReadSet(versions[i])) {
-            isNewest = false;
-            continue;
-        }
-
-        version = versions[i];
-
-        auto offsets = mEntry->offsetData();
-        size = offsets[i + 1] - offsets[i];
-        if (size == 0) {
-            return (isNewest ? error::not_found : error::not_in_snapshot);
-        }
-
-        data = reinterpret_cast<const char*>(mEntry) + offsets[i];
-        return 0;
-    }
-    return (isNewest ? error::not_found : error::not_in_snapshot);
 }
 
 template <typename T>

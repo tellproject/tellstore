@@ -23,12 +23,6 @@
 
 #include "Record.hpp"
 
-#include <tellstore/ErrorCode.hpp>
-
-#include <util/Log.hpp>
-
-#include <commitmanager/SnapshotDescriptor.hpp>
-
 #include <crossbow/logger.hpp>
 
 #include <limits>
@@ -36,26 +30,6 @@
 namespace tell {
 namespace store {
 namespace deltamain {
-
-template <typename T>
-int InsertRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
-        size_t& size, const char*& data, uint64_t& version, bool& isNewest) const {
-    // Check if the element was already overwritten by an element in the update log
-    if (mEntry->version >= highestVersion) {
-        return error::not_found;
-    }
-    if (!snapshot.inReadSet(mEntry->version)) {
-        isNewest = false;
-        return error::not_in_snapshot;
-    }
-
-    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mEntry));
-
-    version = mEntry->version;
-    data = mEntry->data();
-    size = logEntry->size() - sizeof(InsertLogEntry);
-    return 0;
-}
 
 template <typename T>
 void InsertRecordImpl<T>::collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const {

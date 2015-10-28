@@ -70,14 +70,15 @@ protected:
      */
     void assertElement(uint64_t key, const commitmanager::SnapshotDescriptor& tx, const std::string& expected,
             uint64_t expectedVersion, bool expectedNewest) {
-        std::size_t size = 0;
-        const char* ptr = nullptr;
-        uint64_t version = 0x0u;
-        bool isNewest = false;
-        EXPECT_EQ(0, mTable.get(key, size, ptr, tx, version, isNewest));
-        EXPECT_EQ(expected, std::string(ptr, size));
-        EXPECT_EQ(expectedVersion, version);
-        EXPECT_EQ(expectedNewest, isNewest);
+        std::string dest;
+        EXPECT_EQ(0, mTable.get(key, tx, [&dest, expectedVersion, expectedNewest]
+                (size_t size, uint64_t version, bool isNewest) {
+            EXPECT_EQ(expectedVersion, version);
+            EXPECT_EQ(expectedNewest, isNewest);
+            dest.resize(size);
+            return &dest[0];
+        }));
+        EXPECT_EQ(expected, dest);
     }
 
     void assertElement(uint64_t key, const commitmanager::SnapshotDescriptor& tx, const std::string& expected,
@@ -154,13 +155,12 @@ TEST_F(TableTest, insertRemoveGetSameTransaction) {
 
     EXPECT_EQ(0, mTable.remove(1, *mTx));
 
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    uint64_t version = 0x0u;
-    bool isNewest = false;
-    EXPECT_NE(0, mTable.get(1, size, ptr, *mTx, version, isNewest));
-    EXPECT_EQ(0x0u, version);
-    EXPECT_TRUE(isNewest);
+    std::unique_ptr<char[]> dest;
+    EXPECT_EQ(error::not_found, mTable.get(1, *mTx, [&dest] (size_t size, uint64_t version, bool isNewest) {
+        dest.reset(new char[size]);
+        return dest.get();
+    }));
+
     mTx.commit();
 }
 
@@ -180,13 +180,13 @@ TEST_F(TableTest, insertRemoveGet) {
     // Remove element
     EXPECT_EQ(0, mTable.remove(1, *tx2));
 
-    std::size_t size = 0;
-    const char* ptr = nullptr;
-    uint64_t version = 0x0u;
-    bool isNewest = false;
-    EXPECT_NE(0, mTable.get(1, size, ptr, *tx2, version, isNewest));
-    EXPECT_EQ(tx2->version(), version);
-    EXPECT_TRUE(isNewest);
+    // Try to retrieve deleted element
+    std::unique_ptr<char[]> dest;
+    EXPECT_EQ(error::not_found, mTable.get(1, *tx2, [&dest] (size_t size, uint64_t version, bool isNewest) {
+        dest.reset(new char[size]);
+        return dest.get();
+    }));
+
     tx2.commit();
 }
 

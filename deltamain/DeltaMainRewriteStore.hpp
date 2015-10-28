@@ -85,10 +85,10 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
         return tableManager.getTable(name, id);
     }
 
-    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest)
+    template <typename Fun>
+    int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun)
     {
-        return tableManager.get(tableId, key, size, data, snapshot, version, isNewest);
+        return tableManager.get(tableId, key, snapshot, std::move(fun));
     }
 
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,

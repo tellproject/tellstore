@@ -102,14 +102,15 @@ TYPED_TEST(StorageTest, insert_and_get) {
         ASSERT_TRUE(!res) << "This insert must not fail!";
     }
     {
-        bool isNewest = false;
-        uint64_t version = 0x0u;
-        const char* rec;
-        size_t s;
-        auto res = this->mStorage->get(this->mTableId, 1, s, rec, tx, version, isNewest);
+        std::unique_ptr<char[]> dest;
+        auto res = this->mStorage->get(this->mTableId, 1, tx, [&tx, &dest]
+                (size_t size, uint64_t version, bool isNewest) {
+            EXPECT_EQ(tx->version(), version) << "Tuple has not the version of the snapshot descriptor";
+            EXPECT_TRUE(isNewest) << "There should not be any versioning at this point";
+            dest.reset(new char[size]);
+            return dest.get();
+        });
         ASSERT_TRUE(!res) << "Tuple not found";
-        ASSERT_EQ(tx->version(), version) << "Tuple has not the version of the snapshot descriptor";
-        ASSERT_TRUE(isNewest) << "There should not be any versioning at this point";
     }
     tx.commit();
     this->mStorage->forceGC();
@@ -138,14 +139,12 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
     // Transaction 2 can not read the tuple written by transaction 1
     {
         crossbow::allocator _;
-        bool isNewest = true;
-        uint64_t version = 0x0u;
-        const char* rec;
-        size_t size;
-        auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx2, version, isNewest);
-        EXPECT_FALSE(!res) << "Tuple found for uncommited version";
-        EXPECT_EQ(0u, version) << "Version has to be 0 for tuples that were not found";
-        EXPECT_FALSE(isNewest) << "Tuple should not be the newest";
+        std::unique_ptr<char[]> dest;
+        auto res = this->mStorage->get(this->mTableId, 1, tx2, [&dest] (size_t size, uint64_t version, bool isNewest) {
+            dest.reset(new char[size]);
+            return dest.get();
+        });
+        EXPECT_EQ(error::not_in_snapshot, res) << "Tuple found for uncommited version";
     }
 
     // Transaction 2 can not insert a new tuple already written by transaction 1
@@ -179,14 +178,15 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
     // Transaction 3 can read the tuple written by transaction 1
     {
         crossbow::allocator _;
-        bool isNewest = false;
-        uint64_t version = 0x0u;
-        const char* rec;
-        size_t size;
-        auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx3, version, isNewest);
+        std::unique_ptr<char[]> dest;
+        auto res = this->mStorage->get(this->mTableId, 1, tx3, [&tx1, &dest]
+                (size_t size, uint64_t version, bool isNewest) {
+            EXPECT_EQ(tx1->version(), version) << "Version does not match the version of the first transaction";
+            EXPECT_TRUE(isNewest) << "Tuple should be the newest";
+            dest.reset(new char[size]);
+            return dest.get();
+        });
         EXPECT_TRUE(!res) << "Tuple not found for commited version";
-        EXPECT_EQ(tx1->version(), version) << "Version does not match the version of the first transaction";
-        EXPECT_TRUE(isNewest) << "Tuple should be the newest";
     }
 
     // Transaction 3 updates tuple written by transaction 1
@@ -203,14 +203,13 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
     // Transaction 2 should not be able to see all versions
     {
         crossbow::allocator _;
-        bool isNewest = true;
-        uint64_t version = 0x0u;
-        const char* rec;
-        size_t size;
-        auto res = this->mStorage->get(this->mTableId, 1, size, rec, tx2, version, isNewest);
-        EXPECT_FALSE(!res) << "Tuple found for uncommited version";
-        EXPECT_EQ(0u, version) << "Version has to be 0 for tuples that were not found";
-        EXPECT_FALSE(isNewest) << "Tuple should not be the newest";
+        std::unique_ptr<char[]> dest;
+        auto res = this->mStorage->get(this->mTableId, 1, tx2, [&tx1, &dest]
+                (size_t size, uint64_t version, bool isNewest) {
+            dest.reset(new char[size]);
+            return dest.get();
+        });
+        EXPECT_EQ(error::not_in_snapshot, res) << "Tuple found for uncommited version";
     }
 }
 
@@ -260,26 +259,27 @@ public:
             auto ec = mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(), transaction);
             ASSERT_FALSE(ec);
 
-            size_t getSize;
-            const char* getData;
-            uint64_t version = 0x0u;
-            bool isNewest = false;
-            ec = mStorage->get(mTableId, key, getSize, getData, transaction, version, isNewest);
+            std::unique_ptr<char[]> dest;
+            ec = mStorage->get(mTableId, key, transaction, [&transaction, &dest]
+                    (size_t size, uint64_t version, bool isNewest) {
+                EXPECT_EQ(version, transaction->version());
+                EXPECT_TRUE(isNewest);
+                dest.reset(new char[size]);
+                return dest.get();
+            });
             ASSERT_FALSE(ec);
-            EXPECT_EQ(version, transaction.descriptor().version());
-            EXPECT_TRUE(isNewest);
 
-            auto numberData = getTupleData(getData, record, "number");
+            auto numberData = getTupleData(dest.get(), record, "number");
             EXPECT_EQ(static_cast<int32_t>(key % mTuple.size()), *reinterpret_cast<const int32_t*>(numberData));
 
-            auto text1Data = getTupleData(getData, record, "text1");
+            auto text1Data = getTupleData(dest.get(), record, "text1");
             EXPECT_EQ(gTupleText1, crossbow::string(text1Data + sizeof(uint32_t),
                     *reinterpret_cast<const uint32_t*>(text1Data)));
 
-            auto largenumberData = getTupleData(getData, record, "largenumber");
+            auto largenumberData = getTupleData(dest.get(), record, "largenumber");
             EXPECT_EQ(gTupleLargenumber, *reinterpret_cast<const int64_t*>(largenumberData));
 
-            auto text2Data = getTupleData(getData, record, "text2");
+            auto text2Data = getTupleData(dest.get(), record, "text2");
             EXPECT_EQ(gTupleText2, crossbow::string(text2Data + sizeof(uint32_t),
                     *reinterpret_cast<const uint32_t*>(text2Data)));
         }
