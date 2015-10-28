@@ -292,7 +292,7 @@ void DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
 }
 
 DynamicInsertTableEntry* DynamicInsertTable::allocateHead(DynamicInsertTableEntry* headList, size_t headSize) {
-    auto capacity = std::min(mMinimumCapacity, nextPowerOf2(headSize));
+    auto capacity = std::max(mMinimumCapacity, nextPowerOf2(headSize));
     LOG_ASSERT(isPowerOf2(capacity), "Capacity must be power of 2");
     auto newHeadList = crossbow::allocator::construct<DynamicInsertTableEntry>(headList, capacity);
 
