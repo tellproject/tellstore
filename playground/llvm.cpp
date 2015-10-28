@@ -107,8 +107,8 @@ int main() {
     if (!exprSymbol)
         fprintf(stderr, "Didn't finde expression symbol!\n");
     int (*funcPtr) (int) = (int (*)(int))(intptr_t) exprSymbol.getAddress();
-    fprintf(stderr, "Evaluates 3 to: %u\n --> True?", funcPtr(3));
-    fprintf(stderr, "Evaluates 7 to: %u\n --> False?", funcPtr(7));
+    fprintf(stderr, "Evaluates 3 to: %u --> True?\n", funcPtr(3));
+    fprintf(stderr, "Evaluates 7 to: %u --> False?\n", funcPtr(7));
 
     jit->removeModule(H);
 
