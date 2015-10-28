@@ -11,9 +11,10 @@
 
 ### Delta-Main Rewrite
 
+- [ ] Fill nearly empty clean pages with inserts during garbage collection
 - [ ] Truncate update log only up to the point where all entries are sealed
 - [ ] ColumnMap: Only write into update page when table has variable sized fields
-- [ ] ColumnMap: Grow insert hash table on demand
+- [x] ColumnMap: Grow insert hash table on demand
 
 ### Log-Structured Memory
 

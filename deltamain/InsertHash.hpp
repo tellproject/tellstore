@@ -35,8 +35,6 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-class InsertLogEntry;
-
 /**
  * @brief Lock-Free Open-Addressing hash table for associating a pointer with a key
  *
@@ -193,40 +191,54 @@ private:
     cuckoo_hash_function mHash;
 };
 
-struct InsertLogTableEntry {
-    InsertLogTableEntry(InsertLogTableEntry* next, uint64_t capacity)
+struct DynamicInsertTableEntry {
+    DynamicInsertTableEntry(DynamicInsertTableEntry* next, uint64_t capacity)
             : nextList(next),
+              size(0u),
+              maximumSize((capacity * 3u) / 4u),
               table(capacity) {
     }
 
     /// Pointer to the last list or null if there is no more page
-    std::atomic<InsertLogTableEntry*> nextList;
+    std::atomic<DynamicInsertTableEntry*> nextList;
+
+    /// Number of elements in the table
+    std::atomic<size_t> size;
+
+    /// Number of elements after which the table is considered to be full (Set to 0.75 of the capacity)
+    const size_t maximumSize;
 
     InsertTable table;
 };
 
-class InsertLogTable {
+class DynamicInsertTable {
 public:
-    InsertLogTable(size_t capacity);
+    DynamicInsertTable(size_t minimumCapacity);
 
-    ~InsertLogTable();
+    ~DynamicInsertTable();
 
-    const InsertLogEntry* get(uint64_t key, InsertLogTableEntry** headList = nullptr) const;
+    const void* get(uint64_t key, DynamicInsertTableEntry** headList = nullptr) const;
 
-    InsertLogEntry* get(uint64_t key, InsertLogTableEntry** headList = nullptr) {
-        return const_cast<InsertLogEntry*>(const_cast<const InsertLogTable*>(this)->get(key, headList));
+    void* get(uint64_t key, DynamicInsertTableEntry** headList = nullptr) {
+        return const_cast<void*>(const_cast<const DynamicInsertTable*>(this)->get(key, headList));
     }
 
-    bool insert(uint64_t key, InsertLogEntry* record, InsertLogTableEntry* headList);
+    bool insert(uint64_t key, void* data);
 
-    bool remove(uint64_t key, const InsertLogEntry* oldRecord, InsertLogTableEntry* tailList);
+    bool insert(uint64_t key, void* data, DynamicInsertTableEntry* headList);
 
-    InsertLogTableEntry* allocateHead();
+    bool remove(uint64_t key, const void* oldData, DynamicInsertTableEntry* tailList);
 
-    void truncate(InsertLogTableEntry* endList);
+    DynamicInsertTableEntry* allocateHead();
+
+    void truncate(DynamicInsertTableEntry* endList);
 
 private:
-    std::atomic<InsertLogTableEntry*> mHeadList;
+    DynamicInsertTableEntry* allocateHead(DynamicInsertTableEntry* headList, size_t headSize);
+
+    const size_t mMinimumCapacity;
+
+    std::atomic<DynamicInsertTableEntry*> mHeadList;
 };
 
 } // namespace deltamain

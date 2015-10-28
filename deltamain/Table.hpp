@@ -125,6 +125,12 @@ private:
         Log<OrderedLogImpl>::LogIterator updateEnd;
     };
 
+    const InsertLogEntry* getFromInsert(uint64_t key, DynamicInsertTableEntry** headList = nullptr) const;
+
+    InsertLogEntry* getFromInsert(uint64_t key, DynamicInsertTableEntry** headList = nullptr) {
+        return const_cast<InsertLogEntry*>(const_cast<const Table<Context>*>(this)->getFromInsert(key, headList));
+    }
+
     int genericUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             RecordType type);
 
@@ -143,7 +149,7 @@ private:
 
     PageManager& mPageManager;
     Record mRecord;
-    InsertLogTable mInsertTable;
+    DynamicInsertTable mInsertTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;
     std::atomic<CuckooTable*> mMainTable;
@@ -166,7 +172,7 @@ int Table<Context>::get(uint64_t key, const commitmanager::SnapshotDescriptor& s
     }
 
     // Lookup in the insert hash table
-    if (auto ptr = mInsertTable.get(key)) {
+    if (auto ptr = getFromInsert(key)) {
         if (internalGet<ConstInsertRecord>(ptr, snapshot, fun, ec)) {
             return ec;
         }

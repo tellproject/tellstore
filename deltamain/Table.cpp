@@ -70,8 +70,8 @@ int Table<Context>::insert(uint64_t key, size_t size, const char* data,
     }
 
     // Check insert log
-    InsertLogTableEntry* insertList;
-    if (auto ptr = mInsertTable.get(key, &insertList)) {
+    DynamicInsertTableEntry* insertList;
+    if (auto ptr = getFromInsert(key, &insertList)) {
         if (internalUpdate<InsertRecord>(ptr, size, data, snapshot, RecordType::DELETE, RecordType::DATA, ec)) {
             return ec;
         }
@@ -141,7 +141,7 @@ int Table<Context>::revert(uint64_t key, const commitmanager::SnapshotDescriptor
     }
 
     // Lookup in the insert hash table
-    if (auto ptr = mInsertTable.get(key)) {
+    if (auto ptr = getFromInsert(key)) {
         if (internalRevert<MainRecord>(ptr, snapshot, ec)) {
             return ec;
         }
@@ -177,7 +177,7 @@ int Table<Context>::genericUpdate(uint64_t key, size_t size, const char* data,
     }
 
     // Lookup in the insert hash table
-    if (auto ptr = mInsertTable.get(key)) {
+    if (auto ptr = getFromInsert(key)) {
         if (internalUpdate<InsertRecord>(ptr, size, data, snapshot, RecordType::DATA, newType, ec)) {
             return ec;
         }
@@ -219,6 +219,21 @@ std::vector<typename Table<Context>::ScanProcessor> Table<Context>::Table::start
         beginIdx = endIdx;
     }
     return result;
+}
+
+template <typename Context>
+const InsertLogEntry* Table<Context>::getFromInsert(uint64_t key, DynamicInsertTableEntry** headList) const {
+    auto ptr = mInsertTable.get(key, headList);
+    if (!ptr) {
+        return nullptr;
+    }
+
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
+    if (BOOST_UNLIKELY(!logEntry->sealed())) {
+        return nullptr;
+    }
+
+    return reinterpret_cast<const InsertLogEntry*>(ptr);
 }
 
 template <typename Context>

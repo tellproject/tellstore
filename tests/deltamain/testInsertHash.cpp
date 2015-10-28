@@ -135,4 +135,32 @@ TEST_F(InsertTableTest, updateChanged) {
     EXPECT_EQ(&mElement1, mTable.get(10u));
 }
 
+/**
+ * @class DynamicInsertTable
+ * @test Check if resizing works correctly
+ */
+TEST(DynamicInsertTableTest, resize) {
+    DynamicInsertTable table(4u);
+    uint64_t element1 = 0x1u;
+    uint64_t element2 = 0x2u;
+    uint64_t element3 = 0x3u;
+    uint64_t element4 = 0x4u;
+    uint64_t element5 = 0x5u;
+
+    EXPECT_TRUE(table.insert(10u, &element1));
+    EXPECT_TRUE(table.insert(11u, &element2));
+    EXPECT_TRUE(table.insert(138u, &element3));
+    EXPECT_TRUE(table.insert(139u, &element4));
+    EXPECT_TRUE(table.insert(140u, &element5));
+
+    EXPECT_FALSE(table.insert(10u, &element2));
+    EXPECT_FALSE(table.insert(139u, &element2));
+
+    EXPECT_EQ(&element1, table.get(10u));
+    EXPECT_EQ(&element2, table.get(11u));
+    EXPECT_EQ(&element3, table.get(138u));
+    EXPECT_EQ(&element4, table.get(139u));
+    EXPECT_EQ(&element5, table.get(140u));
+}
+
 }

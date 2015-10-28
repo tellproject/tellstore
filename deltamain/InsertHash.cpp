@@ -31,6 +31,26 @@
 namespace tell {
 namespace store {
 namespace deltamain {
+namespace {
+
+/**
+ * @brief Round up to the next highest power of 2
+ *
+ * Taken from https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+ */
+size_t nextPowerOf2(size_t v) {
+    LOG_ASSERT(v > 0, "Value must be larger than 0");
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v |= v >> 32;
+    ++v;
+    return v;
+}
+
+} // anonymous namespace
 
 InsertTable::InsertTable(size_t capacity)
         : mCapacity(capacity),
@@ -160,11 +180,14 @@ T InsertTable::execOnElement(uint64_t key, T notFound, F fun) {
     });
 }
 
-InsertLogTable::InsertLogTable(size_t capacity)
-    : mHeadList(crossbow::allocator::construct<InsertLogTableEntry>(nullptr, capacity)) {
+DynamicInsertTable::DynamicInsertTable(size_t minimumCapacity)
+        : mMinimumCapacity(minimumCapacity),
+          mHeadList(crossbow::allocator::construct<DynamicInsertTableEntry>(nullptr, minimumCapacity)) {
+    LOG_ASSERT(minimumCapacity > 1, "Minimum capacity must be larger than 1");
+    LOG_ASSERT(isPowerOf2(minimumCapacity), "Minimum capacity must be power of 2");
 }
 
-InsertLogTable::~InsertLogTable() {
+DynamicInsertTable::~DynamicInsertTable() {
     auto headList = mHeadList.exchange(nullptr);
     while (headList != nullptr) {
         auto previousList = headList->nextList.load();
@@ -173,40 +196,44 @@ InsertLogTable::~InsertLogTable() {
     }
 }
 
-const InsertLogEntry* InsertLogTable::get(uint64_t key, InsertLogTableEntry** headList) const {
+const void* DynamicInsertTable::get(uint64_t key, DynamicInsertTableEntry** headList) const {
     auto insertList = mHeadList.load();
     if (headList) *headList = insertList;
     LOG_ASSERT(insertList != nullptr, "Head insert list must never be null");
 
     for (auto currentList = insertList; currentList; currentList = currentList->nextList.load()) {
-        auto ptr = currentList->table.get(key);
-        if (!ptr) {
-            continue;
+        if (auto ptr = currentList->table.get(key)) {
+            return ptr;
         }
-        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
-
-        // Check if entry is unsealed or invalid: In this case it can not be in an older insert table
-        if (BOOST_UNLIKELY(!entry->sealed())) {
-            break;
-        }
-
-        return reinterpret_cast<const InsertLogEntry*>(ptr);
     }
-
     return nullptr;
 }
 
-bool InsertLogTable::insert(uint64_t key, InsertLogEntry* record, InsertLogTableEntry* headList) {
+bool DynamicInsertTable::insert(uint64_t key, void* data) {
+    DynamicInsertTableEntry* headList = nullptr;
+    if (get(key, &headList)) {
+        return false;
+    }
+    return insert(key, data, headList);
+}
+
+bool DynamicInsertTable::insert(uint64_t key, void* data, DynamicInsertTableEntry* headList) {
     while (true) {
         // Try to insert the element in the insert table
-        if (!headList->table.insert(key, record)) {
+        if (!headList->table.insert(key, data)) {
             return false;
         }
+        auto currentSize = headList->size.fetch_add(1u) + 1;
 
         // Check if a new head table was allocated in the meantime
         // The insert has to be repeated in the new head table
         auto newHeadList = mHeadList.load();
         if (newHeadList == headList) {
+            // Allocate a new head table and repeat the insert if the current table reached its maximum size
+            if (currentSize >= headList->maximumSize) {
+                headList = allocateHead(headList, currentSize);
+                continue;
+            }
             return true;
         }
 
@@ -224,7 +251,7 @@ bool InsertLogTable::insert(uint64_t key, InsertLogEntry* record, InsertLogTable
     }
 }
 
-bool InsertLogTable::remove(uint64_t key, const InsertLogEntry* oldRecord, InsertLogTableEntry* tailList) {
+bool DynamicInsertTable::remove(uint64_t key, const void* oldData, DynamicInsertTableEntry* tailList) {
     auto insertList = mHeadList.load();
     auto endList = tailList->nextList.load();
     LOG_ASSERT(insertList != nullptr, "Head insert list must never be null");
@@ -233,7 +260,7 @@ bool InsertLogTable::remove(uint64_t key, const InsertLogEntry* oldRecord, Inser
             currentList = currentList->nextList.load()) {
         // Try to remove the element in the insert table
         void* actualData = nullptr;
-        if (currentList->table.remove(key, oldRecord, &actualData)) {
+        if (currentList->table.remove(key, oldData, &actualData)) {
             return true;
         }
 
@@ -250,9 +277,25 @@ bool InsertLogTable::remove(uint64_t key, const InsertLogEntry* oldRecord, Inser
     return false;
 }
 
-InsertLogTableEntry* InsertLogTable::allocateHead() {
+DynamicInsertTableEntry* DynamicInsertTable::allocateHead() {
     auto headList = mHeadList.load();
-    auto newHeadList = crossbow::allocator::construct<InsertLogTableEntry>(headList, headList->table.capacity());
+    return allocateHead(headList, headList->size.load());
+}
+
+void DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
+    // Truncate the insert hash table and free all tables using the epoch mechanism
+    auto oldList = endList->nextList.exchange(nullptr);
+    while (oldList != nullptr) {
+        auto previousList = oldList->nextList.load();
+        crossbow::allocator::destroy(oldList);
+        oldList = previousList;
+    }
+}
+
+DynamicInsertTableEntry* DynamicInsertTable::allocateHead(DynamicInsertTableEntry* headList, size_t headSize) {
+    auto capacity = std::min(mMinimumCapacity, nextPowerOf2(headSize));
+    LOG_ASSERT(isPowerOf2(capacity), "Capacity must be power of 2");
+    auto newHeadList = crossbow::allocator::construct<DynamicInsertTableEntry>(headList, capacity);
 
     // Set the newly allocated table as new head table
     // If this fails another hash table was allocated in the meantime by somebody else
@@ -261,16 +304,6 @@ InsertLogTableEntry* InsertLogTable::allocateHead() {
         newHeadList = headList;
     }
     return newHeadList;
-}
-
-void InsertLogTable::truncate(InsertLogTableEntry* endList) {
-    // Truncate the insert hash table and free all tables using the epoch mechanism
-    auto oldList = endList->nextList.exchange(nullptr);
-    while (oldList != nullptr) {
-        auto previousList = oldList->nextList.load();
-        crossbow::allocator::destroy(oldList);
-        oldList = previousList;
-    }
 }
 
 } // namespace deltamain
