@@ -27,7 +27,6 @@
 
 #include <config.h>
 #include <util/PageManager.hpp>
-#include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
 

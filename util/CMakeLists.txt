@@ -19,7 +19,6 @@ set(UTIL_PRIVATE_HDR
     Scan.hpp
     ScanQuery.hpp
     StorageConfig.hpp
-    StoreImpl.hpp
     TableManager.hpp
     UnsafeAtomic.hpp
     VersionManager.hpp
