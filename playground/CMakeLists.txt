@@ -38,6 +38,7 @@ set(USED_LLVM_LIBRARIES
     LLVMMC
     LLVMCore
     LLVMSupport
+    LLVMVectorize
 )
 
 # Executables

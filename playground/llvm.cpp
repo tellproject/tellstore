@@ -53,9 +53,9 @@ int main() {
     // Simplify the control flow graph (deleting unreachable blocks, etc).
     functionPassMgr->add(createCFGSimplificationPass());
     // add basic block vectorization
-//    functionPassMgr->add(createBBVectorizePass()); --> TODO: resolve linker problems
+    functionPassMgr->add(createBBVectorizePass()); // --> TODO: resolve linker problems
     // add loop vectorization
-//    functionPassMgr->add(createLoopVectorizePass()); --> TODO: resolve linker problems
+    functionPassMgr->add(createLoopVectorizePass()); // --> TODO: resolve linker problems
     // initialize function pass manager
     functionPassMgr->doInitialization();
 
