@@ -43,26 +43,23 @@ namespace store {
 
 class ScanQuery;
 
-template<>
-struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, crossbow::non_movable {
-#if defined USE_ROW_STORE
-    using Table = deltamain::Table<deltamain::RowStoreContext>;
-    using GC = deltamain::GarbageCollector<deltamain::RowStoreContext>;
-#elif defined USE_COLUMN_MAP
-    using Table = deltamain::Table<deltamain::ColumnMapContext>;
-    using GC = deltamain::GarbageCollector<deltamain::ColumnMapContext>;
-#else
-#error "Unknown storage layout"
-#endif
+template<typename Context>
+struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
+    using Table = deltamain::Table<Context>;
+    using GC = deltamain::GarbageCollector<Context>;
 
-    StoreImpl(const StorageConfig& config)
+    static const char* implementationName() {
+        return Context::implementationName();
+    }
+
+    DeltaMainRewriteStore(const StorageConfig& config)
         : mPageManager(PageManager::construct(config.totalMemory))
         , tableManager(*mPageManager, config, gc, mVersionManager)
     {
     }
 
 
-    StoreImpl(const StorageConfig& config, size_t totalMem)
+    DeltaMainRewriteStore(const StorageConfig& config, size_t totalMem)
         : mPageManager(PageManager::construct(totalMem))
         , tableManager(*mPageManager, config, gc, mVersionManager)
     {
@@ -133,8 +130,10 @@ private:
     GC gc;
     VersionManager mVersionManager;
     TableManager<Table, GC> tableManager;
-
 };
+
+using DeltaMainRewriteRowStore = DeltaMainRewriteStore<deltamain::RowStoreContext>;
+using DeltaMainRewriteColumnStore = DeltaMainRewriteStore<deltamain::ColumnMapContext>;
 
 } // namespace store
 } // namespace tell

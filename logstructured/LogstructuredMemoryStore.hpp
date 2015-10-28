@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include "Table.hpp"
@@ -47,13 +48,16 @@ class ScanQuery;
 /**
  * @brief A Storage implementation using a Log-Structured Memory approach as its data store
  */
-template<>
-struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : crossbow::non_copyable, crossbow::non_movable {
+struct LogstructuredMemoryStore : crossbow::non_copyable, crossbow::non_movable {
 public:
     using Table = logstructured::Table;
     using GC = Table::GarbageCollector;
 
-    StoreImpl(const StorageConfig& config)
+    static const char* implementationName() {
+        return "Delta-Main Rewrite (Column Map)";
+    }
+
+    LogstructuredMemoryStore(const StorageConfig& config)
             : mPageManager(PageManager::construct(config.totalMemory)),
               mGc(*this),
               mTableManager(*mPageManager, config, mGc, mVersionManager),

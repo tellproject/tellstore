@@ -30,6 +30,16 @@
 
 namespace tell {
 namespace store {
+
+template<class T>
+constexpr T log2Of(T x, T tmp = 0) {
+    return x == 1 ? tmp : log2Of(x/2, tmp+1);
+}
+
+constexpr bool isPowerOf2(size_t x) {
+    return x == 1 || (x % 2  == 0 && isPowerOf2(x/2));
+}
+
 class PageWrapper {
 public:
     static constexpr size_t ENTRIES_PER_PAGE = TELL_PAGE_SIZE / (sizeof(uint64_t) + sizeof(void*));

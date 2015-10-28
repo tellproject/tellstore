@@ -44,6 +44,10 @@ public:
     using MainRecord = RowStoreRecord;
     using ConstMainRecord = ConstRowStoreRecord;
 
+    static const char* implementationName() {
+        return "Delta-Main Rewrite (Row Store)";
+    }
+
     RowStoreContext(const PageManager& /* pageManager */, const Record& /* record */) {
     }
 };

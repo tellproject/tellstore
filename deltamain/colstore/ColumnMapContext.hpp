@@ -59,6 +59,10 @@ public:
      */
     static constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE - sizeof(ColumnMapMainPage);
 
+    static const char* implementationName() {
+        return "Delta-Main Rewrite (Column Map)";
+    }
+
     /**
      * @brief Calculate the index of the given entry on the page
      */

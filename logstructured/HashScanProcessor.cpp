@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "HashScanProcessor.hpp"
 
 #include "ChainedVersionRecord.hpp"

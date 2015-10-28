@@ -8,7 +8,6 @@ set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
 set(HASHMAP_CAPACITY "0x800000" CACHE STRING "Number of elements to allocate for the hashmap")
-set(VAR_SIZED_OVERHEAD "2.0" CACHE STRING "Expected overhead of var-sized characters (over 4 bytes). E.g. 2.0 means avg size of var-sized values is 8 bytes")
 
 # Set default install paths
 set(BIN_INSTALL_DIR bin CACHE PATH "Installation directory for binaries")

@@ -80,8 +80,8 @@ protected:
     uint64_t mTableId;
 };
 
-using StorageTestImplementations = ::testing::Types<StoreImpl<Implementation::DELTA_MAIN_REWRITE>,
-        StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>>;
+using StorageTestImplementations = ::testing::Types<DeltaMainRewriteRowStore, DeltaMainRewriteColumnStore,
+        LogstructuredMemoryStore>;
 TYPED_TEST_CASE(StorageTest, StorageTestImplementations);
 
 TYPED_TEST(StorageTest, insert_and_get) {
