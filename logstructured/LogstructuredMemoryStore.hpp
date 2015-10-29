@@ -53,7 +53,7 @@ public:
     using GC = Table::GarbageCollector;
 
     static const char* implementationName() {
-        return "Delta-Main Rewrite (Column Map)";
+        return "Log-Structured Memory";
     }
 
     LogstructuredMemoryStore(const StorageConfig& config)
