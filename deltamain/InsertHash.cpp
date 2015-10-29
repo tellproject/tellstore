@@ -230,7 +230,7 @@ bool DynamicInsertTable::insert(uint64_t key, void* data, DynamicInsertTableEntr
         if (newHeadList == headList) {
             // Allocate a new head table and repeat the insert if the current table reached its maximum size
             if (currentSize >= headList->maximumSize) {
-                headList = allocateHead(headList, currentSize);
+                headList = allocateHead(headList, headList->table.capacity() * 2u);
                 continue;
             }
             return true;
@@ -278,7 +278,14 @@ bool DynamicInsertTable::remove(uint64_t key, const void* oldData, DynamicInsert
 
 DynamicInsertTableEntry* DynamicInsertTable::allocateHead() {
     auto headList = mHeadList.load();
-    return allocateHead(headList, headList->size.load());
+    auto headSize = headList->size.load();
+
+    // If the new capacity is below the threshold multiply it by two
+    auto capacity = std::max(mMinimumCapacity, nextPowerOf2(headSize));
+    if (headSize * 4u >= capacity * 3u) {
+        capacity *= 2u;
+    }
+    return allocateHead(headList, capacity);
 }
 
 void DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
@@ -291,8 +298,7 @@ void DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
     }
 }
 
-DynamicInsertTableEntry* DynamicInsertTable::allocateHead(DynamicInsertTableEntry* headList, size_t headSize) {
-    auto capacity = std::max(mMinimumCapacity, nextPowerOf2(headSize));
+DynamicInsertTableEntry* DynamicInsertTable::allocateHead(DynamicInsertTableEntry* headList, size_t capacity) {
     LOG_ASSERT(isPowerOf2(capacity), "Capacity must be power of 2");
     auto newHeadList = crossbow::allocator::construct<DynamicInsertTableEntry>(headList, capacity);
 
