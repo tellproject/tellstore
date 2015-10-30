@@ -23,6 +23,8 @@
 
 #include "ColumnMapContext.hpp"
 
+#include "llvm/IR/IRBuilder.h"
+
 #include <tellstore/Record.hpp>
 
 #include <util/PageManager.hpp>
@@ -59,7 +61,8 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
           mEntryOverhead(calcEntryOverhead(record)),
           mFixedSizeCapacity(calcFixedSizeCapacity(record)),
           mFixedSize(record.fixedSize()),
-          mVarSizeFieldCount(record.varSizeFieldCount()) {
+          mVarSizeFieldCount(record.varSizeFieldCount()),
+          mLLVMJit(LLVMCodeGenerator::getJIT()) {
     mFieldLengths.reserve(record.fixedSizeFieldCount() + 1);
 
     uint32_t startOffset = record.headerSize();
@@ -80,7 +83,31 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
     if (record.fixedSizeFieldCount() != 0u) {
         mFieldLengths.emplace_back(static_cast<uint32_t>(record.fixedSize()) - startOffset);
     }
+
+    // Build LLVM
+    LLVMCodeGenerator::generate_colmap_materialize_function(mLLVMJit.get(), *this, "materialize");
 }
+
+/*
+void ColumnMapContext::materialize(const ColumnMapMainPage *page, uint64_t idx, char *dest, size_t size) const {
+    LOG_ASSERT(size > 0, "Tuple must not be of size 0");
+
+    auto recordData = page->recordData();
+
+    // Copy all fixed size fields including the header (null bitmap) if the record has one into the fill page
+    for (auto fieldLength : mFieldLengths) {
+        memcpy(dest, recordData + idx * fieldLength, fieldLength);
+        dest += fieldLength;
+        recordData += page->count * fieldLength;
+    }
+
+    // Copy all variable size fields in one batch
+    if (mVarSizeFieldCount != 0) {
+        auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(recordData);
+        memcpy(dest, page->heapData() - heapEntries[idx].offset, size - mFixedSize);
+    }
+}
+*/
 
 } // namespace deltamain
 } // namespace store

@@ -7,6 +7,7 @@ set(UTIL_SRCS
     OpenAddressingHash.cpp
     PageManager.cpp
     ScanQuery.cpp
+    LLVMCodeGenerator.cpp
 )
 
 set(UTIL_PRIVATE_HDR
@@ -90,4 +91,4 @@ set(USED_LLVM_LIBRARIES
     LLVMVectorize
 )
 
-target_include_directories(tellstore-util PUBLIC ${USED_LLVM_LIBRARIES})
+target_link_libraries(tellstore-util PUBLIC ${USED_LLVM_LIBRARIES})

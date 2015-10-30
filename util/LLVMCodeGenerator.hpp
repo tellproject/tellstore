@@ -22,27 +22,19 @@
  */
 #pragma once
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/Analysis/Passes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Vectorize.h"
-#include "llvm/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/Bitcode/BitcodeWriterPass.h"
-#include <cctype>
-#include <cstdio>
-#include <map>
-#include <string>
-#include <vector>
+
 #include "LLVMJIT.hpp"
 
-using namespace llvm;
-using namespace llvm::orc;
+namespace tell {
+namespace store {
+namespace deltamain {
+class ColumnMapContext;
+} // namespace deltamain
+
 
 /**
  * @brief The LLVMCodeGenerator class is used as a utility class to all LLVM-related
@@ -74,51 +66,34 @@ class LLVMCodeGenerator {
 
 public:
 
-static std::unique_ptr<LLVMJIT> getJIT() {
-    if (!mInitialized)
-        initialize();
-    return std::move(llvm::make_unique<LLVMJIT>());
-}
+    static std::unique_ptr<llvm::orc::LLVMJIT> getJIT();
 
-static std::unique_ptr<Module> getModule(LLVMJIT *jit, LLVMContext &context, std::string name) {
-    std::unique_ptr<Module> module = llvm::make_unique<Module>(name, context);
-    module->setDataLayout(jit->getTargetMachine().createDataLayout());
-    return std::move(module);
-}
+    static std::unique_ptr<llvm::Module> getModule(llvm::orc::LLVMJIT *jit, llvm::LLVMContext &context, std::string name);
 
-static std::unique_ptr<legacy::FunctionPassManager> getFunctionPassManger(Module *module) {
-    // create a function pass manager attached to the module with some optimizations
-    std::unique_ptr<legacy::FunctionPassManager> functionPassMgr = llvm::make_unique<legacy::FunctionPassManager>(module);
-    // Provide basic AliasAnalysis support for GVN.
-    functionPassMgr->add(createBasicAliasAnalysisPass());
-    // Do simple "peephole" optimizations and bit-twiddling optzns.
-    functionPassMgr->add(createInstructionCombiningPass());
-    // Reassociate expressions.
-    functionPassMgr->add(createReassociatePass());
-    // Eliminate Common SubExpressions.
-    functionPassMgr->add(createGVNPass());
-    // Simplify the control flow graph (deleting unreachable blocks, etc).
-    functionPassMgr->add(createCFGSimplificationPass());
-    // add basic block vectorization
-    functionPassMgr->add(createBBVectorizePass());
-    // add loop vectorization
-    functionPassMgr->add(createLoopVectorizePass());
-    // initialize function pass manager
-    functionPassMgr->doInitialization();
-    return std::move(functionPassMgr);
-}
+    static std::unique_ptr<llvm::legacy::FunctionPassManager> getFunctionPassManger(llvm::Module *module);
+
+    typedef void (*materializeFuncPtr) (
+            const char* /* page data*/,
+            uint64_t /* idx */,
+            char* /* dest */,
+            size_t /* size */,
+            uint32_t /* pageCount */,
+            const char* /* page record data*/
+            );
+
+    static materializeFuncPtr generate_colmap_materialize_function(
+            llvm::orc::LLVMJIT* jit,
+            deltamain::ColumnMapContext &colmapContext,
+            const std::string &functionName
+        );
 
 private:
 
-static void initialize() {
-    InitializeNativeTarget();
-    InitializeNativeTargetAsmPrinter();
-    InitializeNativeTargetAsmParser();
-    mInitialized = true;
-}
+    static void initialize();
 
-static bool mInitialized;
+    static bool mInitialized;
 
 };
 
-bool LLVMCodeGenerator::mInitialized = false;
+} // namespace store
+} // namespace tell

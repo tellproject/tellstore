@@ -77,9 +77,6 @@ protected:
     T mEntry;
     uintptr_t mNewest;
     const ColumnMapContext& mContext;
-
-private:
-    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const;
 };
 
 template <typename T>
@@ -107,7 +104,7 @@ int ColumnMapRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sn
         }
 
         auto dest = fun(recordSizes[i], entries[i].version, isNewest);
-        materialize(page, i, dest, recordSizes[i]);
+        mContext.materialize(page, i, dest, recordSizes[i]);
         return 0;
     }
 

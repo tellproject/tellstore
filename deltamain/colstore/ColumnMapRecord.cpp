@@ -27,26 +27,6 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-template <typename T>
-void ColumnMapRecordImpl<T>::materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-    LOG_ASSERT(size > 0, "Tuple must not be of size 0");
-
-    auto recordData = page->recordData();
-
-    // Copy all fixed size fields including the header (null bitmap) if the record has one into the fill page
-    for (auto fieldLength : mContext.fieldLengths()) {
-        memcpy(dest, recordData + idx * fieldLength, fieldLength);
-        dest += fieldLength;
-        recordData += page->count * fieldLength;
-    }
-
-    // Copy all variable size fields in one batch
-    if (mContext.varSizeFieldCount() != 0) {
-        auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(recordData);
-        memcpy(dest, page->heapData() - heapEntries[idx].offset, size - mContext.fixedSize());
-    }
-}
-
 int ColumnMapRecord::canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
         RecordType type) const {
     auto page = mContext.pageFromEntry(mEntry);

@@ -26,10 +26,13 @@
 #include "ColumnMapPage.hpp"
 #include "ColumnMapScanProcessor.hpp"
 
+#include <util/LLVMCodeGenerator.hpp>
+
 #include <config.h>
 
 #include <cstdint>
 #include <vector>
+
 
 namespace tell {
 namespace store {
@@ -115,6 +118,10 @@ public:
                 - ((reinterpret_cast<uintptr_t>(entry) - mPageData) % TELL_PAGE_SIZE));
     }
 
+    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
+        mMaterialize(page->data(), idx, dest, size, page->count, page->heapData());
+    }
+
 private:
     /// Pointer to the start of the page manager data region
     uintptr_t mPageData;
@@ -133,6 +140,11 @@ private:
 
     /// \copydoc ColumnMapContext::fieldLengths() const
     std::vector<uint32_t> mFieldLengths;
+
+    std::unique_ptr<llvm::orc::LLVMJIT>  mLLVMJit;
+
+    // Function pointer
+    void (*mMaterialize) (const char* /* page data*/, uint64_t /* idx */, char* /* dest */, size_t /* size */, uint32_t /* pageCount */, const char* /* page record data*/);
 };
 
 } // namespace deltamain
