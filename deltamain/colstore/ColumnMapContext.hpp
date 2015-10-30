@@ -119,7 +119,7 @@ public:
     }
 
     void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-        mMaterialize(page->data(), idx, dest, size, page->count, page->heapData());
+        mMaterialize(page->recordData(), idx, dest, size, page->count, page->heapData());
     }
 
 private:

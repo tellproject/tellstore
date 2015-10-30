@@ -85,7 +85,7 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
     }
 
     // Build LLVM
-    LLVMCodeGenerator::generate_colmap_materialize_function(mLLVMJit.get(), *this, "materialize");
+    mMaterialize = LLVMCodeGenerator::generate_colmap_materialize_function(mLLVMJit.get(), *this, "materialize");
 }
 
 /*

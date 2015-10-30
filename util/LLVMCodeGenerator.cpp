@@ -152,7 +152,7 @@ LLVMCodeGenerator::MaterializeFuncPtr LLVMCodeGenerator::generate_colmap_materia
         Type::getInt64Ty(llvmContext),    // idx
         Type::getInt8PtrTy(llvmContext),  // dest
         Type::getInt64Ty(llvmContext),    // size
-        Type::getInt64Ty(llvmContext),    // count
+        Type::getInt32Ty(llvmContext),    // count
         Type::getInt8PtrTy(llvmContext)   // page-heap-data
     }});
 
@@ -237,7 +237,9 @@ LLVMCodeGenerator::MaterializeFuncPtr LLVMCodeGenerator::generate_colmap_materia
 
     builder.CreateRetVoid();
     LOG_ASSERT(verifyFunction(*func), "LLVM Code Generation for ColumnMap materialize failed!");
+#ifndef NDEBUG
     module->dump();
+#endif
 
 //    // optimize
 //    auto optimizer = LLVMCodeGenerator::getFunctionPassManger(module.get());
