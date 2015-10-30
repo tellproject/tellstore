@@ -32,20 +32,23 @@
 #error "Unknown scan processor"
 #endif
 
+#include "ChainedVersionRecord.hpp"
+#include "VersionRecordIterator.hpp"
+
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
 
+#include <tellstore/ErrorCode.hpp>
 #include <tellstore/Record.hpp>
 
+#include <commitmanager/SnapshotDescriptor.hpp>
+
+#include <crossbow/enum_underlying.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
 
 namespace tell {
-namespace commitmanager {
-class SnapshotDescriptor;
-} // namespace commitmanager
-
 namespace store {
 
 class PageManager;
@@ -94,15 +97,13 @@ public:
      * @brief Reads a tuple from the table
      *
      * @param key Key of the tuple to retrieve
-     * @param size Reference to the tuple's size
-     * @param data Reference to the tuple's data pointer
      * @param snapshot Descriptor containing the versions allowed to read
-     * @param version Reference to the tuple's version
-     * @param isNewest Whether the returned tuple contains the newest version written
+     * @param fun The materilization function taking the size, version and whether the tuple is the newest one and
+     *   returning a pointer where the result will be written
      * @return Error code or 0 if the tuple was successfully retrieved
      */
-    int get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
-            uint64_t& version, bool& isNewest);
+    template <typename Fun>
+    int get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun);
 
     /**
      * @brief Inserts a tuple into the table
@@ -190,6 +191,30 @@ private:
 
     LogImpl mLog;
 };
+
+template <typename Fun>
+int Table::get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) {
+    VersionRecordIterator recIter(*this, key);
+    for (; !recIter.done(); recIter.next()) {
+        if (!snapshot.inReadSet(recIter->validFrom())) {
+            continue;
+        }
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(recIter.value()));
+
+        // Check if the entry marks a deletion
+        if (entry->type() == crossbow::to_underlying(VersionRecordType::DELETION)) {
+            return (recIter.isNewest() ? error::not_found : error::not_in_snapshot);
+        }
+
+        auto size = entry->size() - sizeof(ChainedVersionRecord);
+        auto dest = fun(size, recIter->validFrom(), recIter.isNewest());
+        memcpy(dest, recIter->data(), size);
+        return 0;
+    }
+
+    // Element not found
+    return (recIter.isNewest() ? error::not_found : error::not_in_snapshot);
+}
 
 } // namespace logstructured
 } // namespace store

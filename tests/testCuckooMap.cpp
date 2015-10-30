@@ -113,10 +113,11 @@ TEST_F(CuckooTestFilled, AllExist) {
 }
 
 TEST_F(CuckooTestFilled, DoesNotReplace) {
+    std::unique_ptr<int> value(new int(8713));
     crossbow::allocator alloc;
     Modifier m = table->modifier();
     for (auto e : entries) {
-        ASSERT_FALSE(m.insert(e, nullptr, false)) << "Replaced value for " << e;
+        ASSERT_FALSE(m.insert(e, value.get(), false)) << "Replaced value for " << e;
     }
 }
 

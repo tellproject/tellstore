@@ -22,29 +22,19 @@
  */
 #include "ColumnMapScanProcessor.hpp"
 
-
 namespace tell {
 namespace store {
 namespace deltamain {
 
-
-ColumnMapScanProcessor::ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-        const std::vector<char*>& pages,
-        size_t pageIdx,
-        size_t pageEndIdx,
-        const LogIterator& logIter,
-        const LogIterator& logEnd,
-        PageManager* pageManager,
-        const char* queryBuffer,
-        const std::vector<ScanQuery*>& queryData,
-        const Record* record)
+ColumnMapScanProcessor::ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc, const PageList& pages,
+        size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter, const LogIterator& logEnd,
+        const char* queryBuffer, const std::vector<ScanQuery*>& queryData, const Record& record)
     : mAllocator(alloc)
     , pages(pages)
     , pageIdx(pageIdx)
     , pageEndIdx(pageEndIdx)
     , logIter(logIter)
     , logEnd(logEnd)
-    , pageManager(pageManager)
     , query(queryBuffer, queryData)
     , record(record)
     , currKey(0u)

@@ -160,6 +160,32 @@ public:
         }
     }
 
+    size_t defaultSize() const {
+        switch (mType) {
+        case FieldType::NULLTYPE:
+            return 0;
+        case FieldType::SMALLINT:
+            return sizeof(int16_t);
+        case FieldType::INT:
+            return sizeof(int32_t);
+        case FieldType::BIGINT:
+            return sizeof(int64_t);
+        case FieldType::FLOAT:
+            return sizeof(float);
+        case FieldType::DOUBLE:
+            return sizeof(double);
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return sizeof(uint32_t);
+        case FieldType::NOTYPE:
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            LOG_ASSERT(false, "Unknown type");
+            return std::numeric_limits<size_t>::max();
+        }
+    }
+
     size_t sizeOf(const char* data) const
     {
         if (isFixedSized()) return staticSize();
@@ -357,7 +383,6 @@ public:
         return mType;
     }
 
-    size_t defaultSize() const;
     size_t sizeOf(const boost::any& value) const;
 
     bool isNotNull() const {
@@ -496,8 +521,9 @@ private:
     Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, int32_t>> mFieldMetaData;
+    size_t mFixedSize;
 public:
-    Record() = default;
+    Record();
 
     Record(Schema schema);
 
@@ -510,6 +536,15 @@ public:
     size_t sizeOfTuple(const char* ptr) const;
 
     size_t headerSize() const;
+
+    /**
+     * @brief The combined size of all fixed size fields (including the null bitmap)
+     *
+     * Can be used to get the offset to the first variable sized field.
+     */
+    size_t fixedSize() const {
+        return mFixedSize;
+    }
 
     size_t minimumSize() const;
 
@@ -543,6 +578,10 @@ public:
 
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
+
+    bool allNotNull() const {
+        return mSchema.allNotNull();
+    }
 
     bool isFieldNull(const char* ptr, id_t id) const;
 

@@ -20,22 +20,25 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "CuckooHash.hpp"
+
+#include <crossbow/logger.hpp>
 
 namespace tell {
 namespace store {
 
 CuckooTable::CuckooTable(PageManager& pageManager)
     : mPageManager(pageManager)
-      , mPages(3, nullptr)
       , hash1(ENTRIES_PER_PAGE)
       , hash2(ENTRIES_PER_PAGE)
       , hash3(ENTRIES_PER_PAGE)
       , mSize(0)
 {
-    mPages[0] = crossbow::allocator::construct<PageWrapper>(pageManager, pageManager.alloc());
-    mPages[1] = crossbow::allocator::construct<PageWrapper>(pageManager, pageManager.alloc());
-    mPages[2] = crossbow::allocator::construct<PageWrapper>(pageManager, pageManager.alloc());
+    mPages.reserve(3);
+    for (size_t i = 0; i < 3; ++i) {
+        mPages.emplace_back(reinterpret_cast<EntryT*>(pageManager.alloc()));
+    }
 }
 
 CuckooTable::~CuckooTable() {
@@ -43,11 +46,11 @@ CuckooTable::~CuckooTable() {
 
 void CuckooTable::destroy() {
     for (auto p : mPages) {
-        crossbow::allocator::destroy_now(p);
+        mPageManager.free(p);
     }
 }
 
-void* CuckooTable::get(uint64_t key) const {
+const void* CuckooTable::get(uint64_t key) const {
     unsigned cnt = 0;
     for (auto& hasher : {hash1, hash2, hash3}) {
         auto idx = hasher(key);
@@ -61,7 +64,7 @@ void* CuckooTable::get(uint64_t key) const {
 auto CuckooTable::at(unsigned h, size_t idx) const -> const EntryT& {
     auto tIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - tIdx * ENTRIES_PER_PAGE;
-    return (*mPages[3*tIdx+h])[pIdx];
+    return mPages[3*tIdx+h][pIdx];
 }
 
 Modifier CuckooTable::modifier() {
@@ -69,7 +72,7 @@ Modifier CuckooTable::modifier() {
 }
 
 CuckooTable::CuckooTable(PageManager& pageManager,
-                         std::vector<CuckooTable::PageT>&& pages,
+                         std::vector<EntryT*>&& pages,
                          cuckoo_hash_function hash1,
                          cuckoo_hash_function hash2,
                          cuckoo_hash_function hash3,
@@ -82,9 +85,17 @@ size_t CuckooTable::capacity() const {
 }
 
 Modifier::~Modifier() {
-    for (auto p : mToDelete) {
-        crossbow::allocator::destroy(p);
+    if (mToDelete.empty()) {
+        return;
     }
+
+    auto pages = std::move(mToDelete);
+    auto& pageManager = mTable.mPageManager;
+    crossbow::allocator::invoke([pages, &pageManager]() {
+        for (auto page : pages) {
+            pageManager.free(page);
+        }
+    });
 }
 
 CuckooTable* Modifier::done() const {
@@ -92,7 +103,7 @@ CuckooTable* Modifier::done() const {
             mSize);
 }
 
-void* Modifier::get(uint64_t key) const
+const void* Modifier::get(uint64_t key) const
 {
     unsigned cnt = 0;
     for (auto& h : {hash1, hash2, hash3}) {
@@ -109,6 +120,8 @@ void* Modifier::get(uint64_t key) const
 }
 
 bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
+    LOG_ASSERT(value != nullptr, "Value must not be null");
+
     // we first check, whether the value exists
     bool res = false;
     bool increment = true;
@@ -117,7 +130,7 @@ bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
         size_t pageIdx;
         auto idx = h(key);
         auto& entry = at(cnt, idx, pageIdx);
-        if (entry.first == key) {
+        if (entry.first == key && entry.second != nullptr) {
             if (!replace) {
                 goto END;
             }
@@ -200,7 +213,7 @@ END:
 Modifier::EntryT& Modifier::at(unsigned h, size_t idx, size_t& pageIdx) {
     pageIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - pageIdx * ENTRIES_PER_PAGE;
-    return (*mPages[3*pageIdx + h])[pIdx];
+    return mPages[3*pageIdx + h][pIdx];
 }
 
 auto Modifier::at(unsigned h, size_t idx, size_t& pageIdx) const -> const EntryT&
@@ -212,8 +225,9 @@ bool Modifier::cow(unsigned h, size_t idx) {
     if (pageWasModified[3*idx + h]) return false;
     pageWasModified[3*idx + h] = true;
     auto oldPage = mPages[3*idx + h];
-    auto newPage = crossbow::allocator::construct<PageWrapper>(*oldPage);
-    mToDelete.push_back(mPages[3*idx + h]);
+    auto newPage = reinterpret_cast<EntryT*>(mTable.mPageManager.alloc());
+    memcpy(newPage, oldPage, TELL_PAGE_SIZE);
+    mToDelete.push_back(oldPage);
     mPages[3*idx + h] = newPage;
     return true;
 }
@@ -224,28 +238,8 @@ void Modifier::rehash() {
         resize();
         return;
     }
-    std::vector<PageT> oldPages = std::move(mPages);
-    mPages = std::vector<PageT>(mPages.size(), nullptr);
-    for (auto& e : mPages) {
-        e = crossbow::allocator::construct<PageWrapper>(mTable.mPageManager, mTable.mPageManager.alloc());
-    }
-    hash1 = cuckoo_hash_function(capacity);
-    hash2 = cuckoo_hash_function(capacity);
-    hash3 = cuckoo_hash_function(capacity);
-    for (size_t i = 0; i < oldPages.size(); ++i) {
-        auto p = oldPages[i];
-        auto& page = *p;
-        for (size_t i = 0; i < ENTRIES_PER_PAGE; ++i) {
-            if (page[i].second != nullptr)
-                insert(page[i].first, page[i].second);
-        }
-        if (pageWasModified[i])
-            mToDelete.push_back(p);
-        else {
-            crossbow::allocator::destroy(p);
-            pageWasModified[i];
-        }
-    }
+
+    rehash(capacity, mPages.size());
 }
 
 void Modifier::resize() {
@@ -260,28 +254,35 @@ void Modifier::resize() {
     capacity = numPages/3 * ENTRIES_PER_PAGE;
     if (numPages == 0) numPages = 1;
     assert(isPowerOf2(numPages/3 * ENTRIES_PER_PAGE));
-    std::vector<PageT> oldPages = std::move(mPages);
-    mPages = std::vector<PageT>(numPages, nullptr);
-    for (auto& e : mPages) {
-        e = crossbow::allocator::construct<PageWrapper>(mTable.mPageManager, mTable.mPageManager.alloc());
+
+    rehash(capacity, numPages);
+}
+
+void Modifier::rehash(size_t capacity, size_t numPages) {
+    std::vector<EntryT*> oldPages;
+    oldPages.swap(mPages);
+    mPages.reserve(numPages);
+    for (decltype(numPages) i = 0; i < numPages; ++i) {
+        mPages.emplace_back(reinterpret_cast<EntryT*>(mTable.mPageManager.alloc()));
     }
     hash1 = cuckoo_hash_function(capacity);
     hash2 = cuckoo_hash_function(capacity);
     hash3 = cuckoo_hash_function(capacity);
-    for (size_t i = 0; i < oldPages.size(); ++i) {
-        auto p = oldPages[i];
-        auto& page = *p;
-        for (size_t i = 0; i < ENTRIES_PER_PAGE; ++i) {
-            if (page[i].second != nullptr)
-                insert(page[i].first, page[i].second);
+    for (decltype(oldPages.size()) i = 0; i < oldPages.size(); ++i) {
+        auto page = oldPages[i];
+        for (size_t j = 0; j < ENTRIES_PER_PAGE; ++j) {
+            if (page[j].second != nullptr)
+                insert(page[j].first, page[j].second);
         }
-        if (pageWasModified[i])
-            mToDelete.push_back(p);
-        else {
-            crossbow::allocator::destroy(p);
-            pageWasModified[i];
+        // If the page was modified it can be freed immediately (only the modifier had access to it)
+        if (pageWasModified[i]) {
+            mTable.mPageManager.free(page);
+        } else {
+            mToDelete.push_back(page);
+            pageWasModified[i] = true;
         }
     }
+    pageWasModified.resize(numPages, true);
 }
 
 size_t Modifier::capacity() const {

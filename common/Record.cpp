@@ -61,26 +61,6 @@ Field& Field::operator=(const Field& other)
     return *this;
 }
 
-
-size_t Field::defaultSize() const {
-    if (isFixedSized()) return staticSize();
-    switch (mType) {
-        case FieldType::NULLTYPE:
-            LOG_ASSERT(false, "NULLTYPE is not appropriate to use in a schema");
-            return 0;
-        case FieldType::TEXT:
-            return sizeof(uint32_t);
-        case FieldType::BLOB:
-            return sizeof(uint32_t);
-        case FieldType::NOTYPE:
-            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
-            return std::numeric_limits<size_t>::max();
-        default:
-            LOG_ASSERT(false, "Unknown type");
-            return 0;
-    }
-}
-
 size_t Field::sizeOf(const boost::any& value) const {
     if (isFixedSized()) return staticSize();
     switch (mType) {
@@ -127,26 +107,6 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         mVarSizeFields.emplace_back(f);
     }
     return true;
-}
-
-
-Record::Record(Schema schema)
-        : mSchema(std::move(schema)),
-          mFieldMetaData(mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size()) {
-    int32_t currOffset = headerSize();
-
-    size_t id = 0;
-    for (const auto& field : mSchema.fixedSizeFields()) {
-        mIdMap.insert(std::make_pair(field.name(), id));
-        mFieldMetaData[id++] = std::make_pair(field, currOffset);
-        currOffset += field.staticSize();
-    }
-    for (const auto& field : mSchema.varSizeFields()) {
-        mIdMap.insert(std::make_pair(field.name(), id));
-        mFieldMetaData[id++] = std::make_pair(field, currOffset);
-        // make sure, that all others are set to min
-        currOffset = std::numeric_limits<int32_t>::min();
-    }
 }
 
 size_t Schema::serializedLength() const
@@ -243,18 +203,36 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
     return res;
 }
 
+Record::Record()
+        : mFixedSize(0u) {
+}
+
+Record::Record(Schema schema)
+        : mSchema(std::move(schema)),
+          mFieldMetaData(mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size()),
+          mFixedSize(headerSize()) {
+    size_t id = 0;
+    for (const auto& field : mSchema.fixedSizeFields()) {
+        mIdMap.insert(std::make_pair(field.name(), id));
+        mFieldMetaData[id++] = std::make_pair(field, mFixedSize);
+        mFixedSize += field.staticSize();
+    }
+
+    for (const auto& field : mSchema.varSizeFields()) {
+        mIdMap.insert(std::make_pair(field.name(), id));
+        mFieldMetaData[id++] = std::make_pair(field, std::numeric_limits<int32_t>::min());
+    }
+}
+
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
 {
-    auto result = headerSize();
-    for (auto& f : mFieldMetaData) {
-        auto& field = f.first;
-        if (field.isFixedSized()) {
-            result += field.staticSize();
-            // we will need this space anyway
-            // no matter what tuple contains
-            continue;
-        }
-        const auto& name = field.name();
+    auto result = mFixedSize;
+
+    // Iterate over all variable sized fields
+    for (auto i = std::next(mFieldMetaData.begin(), mSchema.fixedSizeFields().size()); i != mFieldMetaData.end(); ++i) {
+        auto& field = i->first;
+
+        auto& name = field.name();
         auto iter = tuple.find(name);
         if (iter == tuple.end()) {
             result += field.defaultSize();
@@ -262,36 +240,22 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
             result += field.sizeOf(iter->second);
         }
     }
+
     // we have to make sure that the size of a tuple is 8 byte aligned
     return crossbow::align(result, 8);
 }
 
 size_t Record::sizeOfTuple(const char* ptr) const {
-    // If the schema has no variable sized fields then the size of a tuple is the offset of the last element plus its
-    // size else we have to calculate the variable sized fields
-    if (mFieldMetaData.empty()) {
-        return 0;
+    auto result = mFixedSize;
+
+    // Iterate over all variable sized fields and add their lengths up
+    for (decltype(mSchema.varSizeFields().size()) i = 0; i < mSchema.varSizeFields().size(); ++i) {
+        // we know that now all fields are variable length - that means the first four bytes are always the field size
+        result += *reinterpret_cast<const uint32_t* const>(ptr + result) + sizeof(uint32_t);
     }
 
-    size_t pos = 0;
-    if (mSchema.varSizeFields().empty()) {
-        auto& f = mFieldMetaData.back();
-        LOG_ASSERT(f.first.isFixedSized(), "Element must be fixed size in Schema with no variable sized fields");
-        pos = f.second + f.first.staticSize();
-    } else {
-        auto baseId = mSchema.fixedSizeFields().size();
-        auto offset = mFieldMetaData[baseId].second;
-        LOG_ASSERT(offset >= 0, "Offset for first variable length field is smaller than 0");
-        pos = offset;
-
-        for (; baseId < mFieldMetaData.size(); ++baseId) {
-            // we know, that now all fields are variable length - that means the first four bytes are always the field
-            // size
-            pos += *reinterpret_cast<const uint32_t* const>(ptr + pos) + sizeof(uint32_t);
-        }
-    }
     // we have to make sure that the size of a tuple is 8 byte aligned
-    return crossbow::align(pos, 8);
+    return crossbow::align(result, 8);
 }
 
 size_t Record::headerSize() const {
@@ -304,26 +268,8 @@ size_t Record::headerSize() const {
 }
 
 size_t Record::minimumSize() const {
-    if (mFieldMetaData.empty()) {
-        return 0;
-    }
-
-    size_t length = 0;
-    if (mSchema.varSizeFields().empty()) {
-        auto& f = mFieldMetaData.back();
-        LOG_ASSERT(f.first.isFixedSized(), "Element must be fixed size in Schema with no variable sized fields");
-        length = f.second + f.first.staticSize();
-    } else {
-        auto baseId = mSchema.fixedSizeFields().size();
-        auto offset = mFieldMetaData[baseId].second;
-        LOG_ASSERT(offset >= 0, "Offset for first variable length field is smaller than 0");
-
-        // Variable sized fields are always at least 4 bytes to indicate a NULL length
-        length = offset + (mSchema.varSizeFields().size() * sizeof(uint32_t));
-    }
-
-    // Align the length to 8 bytes
-    return crossbow::align(length, 8);
+    // Variable sized fields are always at least 4 bytes to indicate a NULL length
+    return crossbow::align(mFixedSize + mSchema.varSizeFields().size() * sizeof(uint32_t), 8);
 }
 
 
@@ -427,10 +373,9 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     isNull = isFieldNull(ptr, id);
     if (p.second < 0) {
         // we need to calc the position
-        auto baseId = mSchema.fixedSizeFields().size();
-        auto pos = mFieldMetaData[baseId].second;
+        auto pos = mFixedSize;
         LOG_ASSERT(pos >= 0, "Offset for first variable length field is smaller than 0");
-        for (; baseId < id; ++baseId) {
+        for (auto baseId = mSchema.fixedSizeFields().size(); baseId < id; ++baseId) {
             // we know, that now all fields are variable length - that means the first four bytes are always the field
             // size
             pos += *reinterpret_cast<const uint32_t* const>(ptr + pos) + sizeof(uint32_t);

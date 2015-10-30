@@ -72,6 +72,7 @@ int main(int argc, const char** argv) {
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 
     LOG_INFO("Starting TellStore server");
+    LOG_INFO("--- Backend: %1%", tell::store::Storage::implementationName());
     LOG_INFO("--- Port: %1%", serverConfig.port);
     LOG_INFO("--- Network Threads: %1%", serverConfig.numNetworkThreads);
     LOG_INFO("--- GC Interval: %1%s", storageConfig.gcIntervall);

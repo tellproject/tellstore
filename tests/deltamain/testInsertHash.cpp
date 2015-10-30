@@ -83,4 +83,84 @@ TEST_F(InsertTableTest, insertDuplicate) {
     EXPECT_EQ(&mElement1, mTable.get(10u));
 }
 
+/**
+ * @class InsertTable
+ * @test Check if removing an element and inserting another one works correctly
+ */
+TEST_F(InsertTableTest, removeAndInsert) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+
+    EXPECT_TRUE(mTable.remove(10u, &mElement1));
+    EXPECT_EQ(nullptr, mTable.get(10u));
+
+    EXPECT_TRUE(mTable.insert(10u, &mElement2));
+    EXPECT_EQ(&mElement2, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if removing a changed element is prevented
+ */
+TEST_F(InsertTableTest, removeChanged) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    void* actualData = nullptr;
+    EXPECT_FALSE(mTable.remove(10u, &mElement2, &actualData));
+    EXPECT_EQ(&mElement1, actualData);
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if updating an element works
+ */
+TEST_F(InsertTableTest, update) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    EXPECT_TRUE(mTable.update(10u, &mElement1, &mElement2));
+    EXPECT_EQ(&mElement2, mTable.get(10u));
+}
+
+/**
+ * @class InsertTable
+ * @test Check if updating a changed element is prevented
+ */
+TEST_F(InsertTableTest, updateChanged) {
+    EXPECT_TRUE(mTable.insert(10u, &mElement1));
+
+    void* actualData = nullptr;
+    EXPECT_FALSE(mTable.update(10u, &mElement3, &mElement2, &actualData));
+    EXPECT_EQ(&mElement1, actualData);
+    EXPECT_EQ(&mElement1, mTable.get(10u));
+}
+
+/**
+ * @class DynamicInsertTable
+ * @test Check if resizing works correctly
+ */
+TEST(DynamicInsertTableTest, resize) {
+    DynamicInsertTable table(4u);
+    uint64_t element1 = 0x1u;
+    uint64_t element2 = 0x2u;
+    uint64_t element3 = 0x3u;
+    uint64_t element4 = 0x4u;
+    uint64_t element5 = 0x5u;
+
+    EXPECT_TRUE(table.insert(10u, &element1));
+    EXPECT_TRUE(table.insert(11u, &element2));
+    EXPECT_TRUE(table.insert(138u, &element3));
+    EXPECT_TRUE(table.insert(139u, &element4));
+    EXPECT_TRUE(table.insert(140u, &element5));
+
+    EXPECT_FALSE(table.insert(10u, &element2));
+    EXPECT_FALSE(table.insert(139u, &element2));
+
+    EXPECT_EQ(&element1, table.get(10u));
+    EXPECT_EQ(&element2, table.get(11u));
+    EXPECT_EQ(&element3, table.get(138u));
+    EXPECT_EQ(&element4, table.get(139u));
+    EXPECT_EQ(&element5, table.get(140u));
+}
+
 }

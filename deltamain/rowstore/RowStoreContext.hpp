@@ -20,16 +20,38 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
-#include <config.h>
+#include "RowStorePage.hpp"
+#include "RowStoreRecord.hpp"
+#include "RowStoreScanProcessor.hpp"
 
 namespace tell {
 namespace store {
 
-template<Implementation Impl>
-struct StoreImpl;
+class PageManager;
+class Record;
 
+namespace deltamain {
 
+class RowStoreContext {
+public:
+    using ScanProcessor = RowStoreScanProcessor;
+    using Page = RowStoreMainPage;
+    using PageModifier = RowStorePageModifier;
+
+    using MainRecord = RowStoreRecord;
+    using ConstMainRecord = ConstRowStoreRecord;
+
+    static const char* implementationName() {
+        return "Delta-Main Rewrite (Row Store)";
+    }
+
+    RowStoreContext(const PageManager& /* pageManager */, const Record& /* record */) {
+    }
+};
+
+} // namespace deltamain
 } // namespace store
 } // namespace tell

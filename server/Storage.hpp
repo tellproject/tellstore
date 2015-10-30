@@ -24,8 +24,6 @@
 
 #include <config.h>
 
-#include <util/StoreImpl.hpp>
-
 #if defined USE_DELTA_MAIN_REWRITE
 #include <deltamain/DeltaMainRewriteStore.hpp>
 #elif defined USE_LOGSTRUCTURED_MEMORY
@@ -37,7 +35,21 @@
 namespace tell {
 namespace store {
 
-using Storage = StoreImpl<usedImplementation>;
+#if defined USE_DELTA_MAIN_REWRITE
+#if defined USE_ROW_STORE
+using Storage = DeltaMainRewriteRowStore;
+#elif defined USE_COLUMN_MAP
+using Storage = DeltaMainRewriteColumnStore;
+#else
+#error "Unknown implementation"
+#endif
+
+#elif defined USE_LOGSTRUCTURED_MEMORY
+using Storage = LogstructuredMemoryStore;
+
+#else
+#error "Unknown implementation"
+#endif
 
 } // namespace store
 } // namespace tell

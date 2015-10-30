@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 
 #cmakedefine USE_DELTA_MAIN_REWRITE
 #cmakedefine USE_LOGSTRUCTURED_MEMORY
@@ -15,26 +14,10 @@
 namespace tell {
 namespace store {
 
-enum class Implementation {
-    DELTA_MAIN_REWRITE,
-    LOGSTRUCTURED_MEMORY,
-};
-
-template<class T>
-constexpr T log2Of(T x, T tmp = 0) {
-    return x == 1 ? tmp : log2Of(x/2, tmp+1);
-}
-
-constexpr bool isPowerOf2(size_t x) {
-    return x == 1 || (x % 2  == 0 && isPowerOf2(x/2));
-}
-
-constexpr Implementation usedImplementation = Implementation::@IMPLEMENTATION@;
 constexpr size_t TELL_PAGE_SIZE = @PAGE_SIZE@;
 constexpr size_t TOTAL_MEMORY = @TOTAL_MEMORY@;
 constexpr size_t HASHMAP_CAPACITY = @HASHMAP_CAPACITY@;
 constexpr size_t MAX_QUERY_SHARING = @MAX_QUERY_SHARING@;
-constexpr double VAR_SIZED_OVERHEAD = @VAR_SIZED_OVERHEAD@;
 
 } // namespace store
 } // namespace tell

@@ -20,13 +20,13 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include "Table.hpp"
 
 #include <config.h>
 #include <util/PageManager.hpp>
-#include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
 
@@ -47,13 +47,16 @@ class ScanQuery;
 /**
  * @brief A Storage implementation using a Log-Structured Memory approach as its data store
  */
-template<>
-struct StoreImpl<Implementation::LOGSTRUCTURED_MEMORY> : crossbow::non_copyable, crossbow::non_movable {
+struct LogstructuredMemoryStore : crossbow::non_copyable, crossbow::non_movable {
 public:
     using Table = logstructured::Table;
     using GC = Table::GarbageCollector;
 
-    StoreImpl(const StorageConfig& config)
+    static const char* implementationName() {
+        return "Log-Structured Memory";
+    }
+
+    LogstructuredMemoryStore(const StorageConfig& config)
             : mPageManager(PageManager::construct(config.totalMemory)),
               mGc(*this),
               mTableManager(*mPageManager, config, mGc, mVersionManager),
@@ -72,9 +75,9 @@ public:
         return mTableManager.getTable(name, id);
     }
 
-    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest) {
-        return mTableManager.get(tableId, key, size, data, snapshot, version, isNewest);
+    template <typename Fun>
+    int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) {
+        return mTableManager.get(tableId, key, snapshot, std::move(fun));
     }
 
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,

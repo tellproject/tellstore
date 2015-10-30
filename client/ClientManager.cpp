@@ -32,152 +32,27 @@ void checkTableType(const Table& table, TableType type) {
     }
 }
 
-std::unique_ptr<commitmanager::SnapshotDescriptor> nonTransactionalSnapshot(uint64_t baseVersion) {
+} // anonymous namespace
+
+std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createNonTransactionalSnapshot(uint64_t baseVersion) {
     auto version = (baseVersion == std::numeric_limits<uint64_t>::max() ? baseVersion : baseVersion + 1);
     commitmanager::SnapshotDescriptor::BlockType descriptor = 0x0u;
     return commitmanager::SnapshotDescriptor::create(0x0u, baseVersion, version,
             reinterpret_cast<const char*>(&descriptor));
 }
 
-std::unique_ptr<commitmanager::SnapshotDescriptor> analyticalSnapshot(uint64_t lowestActiveVersion,
+std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::createAnalyticalSnapshot(uint64_t lowestActiveVersion,
         uint64_t baseVersion) {
     return commitmanager::SnapshotDescriptor::create(lowestActiveVersion, baseVersion, baseVersion, nullptr);
 }
 
-} // anonymous namespace
-
-ClientTransaction::ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber,
-        TransactionType type, bool shared, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot)
-        : mProcessor(processor),
-          mFiber(fiber),
-          mSnapshot(std::move(snapshot)),
-          mType(type),
-          mShared(shared),
-          mCommitted(false) {
-    if (mType == TransactionType::READ_WRITE && mShared) {
-        throw std::logic_error("Shared transaction must be read-only");
-    }
-}
-
-ClientTransaction::~ClientTransaction() {
-    if (mCommitted || mShared) {
-        return;
-    }
-
-    try {
-        abort();
-    } catch (std::exception& e) {
-        LOG_ERROR("T%1%] Exception caught while aborting transaction [error = %2%]", mSnapshot->version(), e.what());
-    }
-}
-
-ClientTransaction::ClientTransaction(ClientTransaction&& other)
-        : mProcessor(other.mProcessor),
-          mFiber(other.mFiber),
-          mSnapshot(std::move(other.mSnapshot)),
-          mType(other.mType),
-          mShared(other.mShared),
-          mCommitted(other.mCommitted) {
-    other.mCommitted = true;
-}
-
-std::shared_ptr<GetResponse> ClientTransaction::get(const Table& table, uint64_t key) {
-    checkTransaction(table, true);
-
-    return mProcessor.get(mFiber, table.tableId(), key, *mSnapshot);
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
-        const AbstractTuple& tuple) {
-    checkTransaction(table, false);
-
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::insert(const Table& table, uint64_t key,
-        const GenericTuple& tuple) {
-    checkTransaction(table, false);
-
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
-        const AbstractTuple& tuple) {
-    checkTransaction(table, false);
-
-    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::update(const Table& table, uint64_t key,
-        const GenericTuple& tuple) {
-    checkTransaction(table, false);
-
-    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *mSnapshot);
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::remove(const Table& table, uint64_t key) {
-    checkTransaction(table, false);
-
-    return mProcessor.remove(mFiber, table.tableId(), key, *mSnapshot);
-}
-
-std::shared_ptr<ScanIterator> ClientTransaction::scan(const Table& table, ScanMemoryManager& memoryManager,
-        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
-        const char* query) {
-    checkTransaction(table, true);
-
-    std::unique_ptr<commitmanager::SnapshotDescriptor> snapshotHolder;
-    if (mType == TransactionType::ANALYTICAL) {
-        snapshotHolder = analyticalSnapshot(mSnapshot->lowestActiveVersion(), mSnapshot->baseVersion());
-    }
-
-    return mProcessor.scan(mFiber, table.tableId(), table.record(), memoryManager, queryType, selectionLength,
-            selection, queryLength, query, snapshotHolder ? *snapshotHolder : *mSnapshot);
-}
-
-void ClientTransaction::commit() {
-    if (mCommitted) {
-        throw std::logic_error("Transaction has already committed");
-    }
-    if (mShared) {
-        throw std::logic_error("Transaction is shared");
-    }
-
-    mProcessor.commit(mFiber, *mSnapshot);
-    mCommitted = true;
-}
-
-void ClientTransaction::abort() {
-    commit();
-}
-
-std::shared_ptr<ModificationResponse> ClientTransaction::revert(const Table& table, uint64_t key) {
-    return mProcessor.revert(mFiber, table.tableId(), key, *mSnapshot);
-}
-
-void ClientTransaction::checkTransaction(const Table& table, bool readOnly) {
-    checkTableType(table, TableType::TRANSACTIONAL);
-
-    if (mCommitted) {
-        throw std::logic_error("Transaction has already committed");
-    }
-    if (mType != TransactionType::READ_WRITE && !readOnly) {
-        throw std::logic_error("Transaction is read only");
-    }
-}
-
-ClientHandle::ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber)
-        : mProcessor(processor),
-          mFiber(fiber) {
-}
-
-ClientTransaction ClientHandle::startTransaction(TransactionType type /* = TransactionType::READ_WRITE */) {
+std::unique_ptr<commitmanager::SnapshotDescriptor> ClientHandle::startTransaction(
+        TransactionType type /* = TransactionType::READ_WRITE */) {
     return mProcessor.start(mFiber, type);
 }
 
-ClientTransaction ClientHandle::startTransaction(TransactionType type,
-        std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot) {
-    return {mProcessor, mFiber, type, true, std::move(snapshot)};
+void ClientHandle::commit(const commitmanager::SnapshotDescriptor& snapshot) {
+    mProcessor.commit(mFiber, snapshot);
 }
 
 Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
@@ -191,31 +66,99 @@ std::shared_ptr<GetTableResponse> ClientHandle::getTable(const crossbow::string&
 std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = nonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
+    auto snapshot = createNonTransactionalSnapshot(std::numeric_limits<uint64_t>::max());
     return mProcessor.get(mFiber, table.tableId(), key, *snapshot);
 }
 
+std::shared_ptr<GetResponse> ClientHandle::get(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.get(mFiber, table.tableId(), key, snapshot);
+}
+
 std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,
-        const GenericTuple& tuple) {
+        GenericTuple data) {
+    GenericTupleSerializer tuple(table.record(), std::move(data));
+    return insert(table, key, version, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key, uint64_t version,
+        const AbstractTuple& tuple) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = nonTransactionalSnapshot(version);
-    return mProcessor.insert(mFiber, table.tableId(), key, table.record(), tuple, *snapshot);
+    auto snapshot = createNonTransactionalSnapshot(version);
+    return mProcessor.insert(mFiber, table.tableId(), key, *snapshot, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot, GenericTuple data) {
+    GenericTupleSerializer tuple(table.record(), std::move(data));
+    return insert(table, key, snapshot, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::insert(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.insert(mFiber, table.tableId(), key, snapshot, tuple);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key, uint64_t version,
-        const GenericTuple& tuple) {
+        GenericTuple data) {
+    GenericTupleSerializer tuple(table.record(), std::move(data));
+    return update(table, key, version, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key, uint64_t version,
+        const AbstractTuple& tuple) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = nonTransactionalSnapshot(version);
-    return mProcessor.update(mFiber, table.tableId(), key, table.record(), tuple, *snapshot);
+    auto snapshot = createNonTransactionalSnapshot(version);
+    return mProcessor.update(mFiber, table.tableId(), key, *snapshot, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot, GenericTuple data) {
+    GenericTupleSerializer tuple(table.record(), std::move(data));
+    return update(table, key, snapshot, tuple);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::update(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.update(mFiber, table.tableId(), key, snapshot, tuple);
 }
 
 std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, uint64_t key, uint64_t version) {
     checkTableType(table, TableType::NON_TRANSACTIONAL);
 
-    auto snapshot = nonTransactionalSnapshot(version);
+    auto snapshot = createNonTransactionalSnapshot(version);
     return mProcessor.remove(mFiber, table.tableId(), key, *snapshot);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::remove(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.remove(mFiber, table.tableId(), key, snapshot);
+}
+
+std::shared_ptr<ModificationResponse> ClientHandle::revert(const Table& table, uint64_t key,
+        const commitmanager::SnapshotDescriptor& snapshot) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.revert(mFiber, table.tableId(), key, snapshot);
+}
+
+std::shared_ptr<ScanIterator> ClientHandle::scan(const Table& table, const commitmanager::SnapshotDescriptor& snapshot,
+        ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
+        uint32_t queryLength, const char* query) {
+    checkTableType(table, TableType::TRANSACTIONAL);
+
+    return mProcessor.scan(mFiber, table.tableId(), snapshot, table.record(), memoryManager, queryType, selectionLength,
+            selection, queryLength, query);
 }
 
 BaseClientProcessor::BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
@@ -245,15 +188,21 @@ void BaseClientProcessor::shutdown() {
     }
 }
 
-ClientTransaction BaseClientProcessor::start(crossbow::infinio::Fiber& fiber, TransactionType type) {
+std::unique_ptr<commitmanager::SnapshotDescriptor> BaseClientProcessor::start(crossbow::infinio::Fiber& fiber,
+        TransactionType type) {
     // TODO Return a transaction future?
 
     auto startResponse = mCommitManagerSocket.startTransaction(fiber, type != TransactionType::READ_WRITE);
-    if (!startResponse->waitForResult()) {
-        throw std::system_error(startResponse->error());
-    }
+    return startResponse->get();
+}
 
-    return {*this, fiber, type, false, startResponse->get()};
+void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
+    // TODO Return a commit future?
+
+    auto commitResponse = mCommitManagerSocket.commitTransaction(fiber, snapshot.version());
+    if (!commitResponse->get()) {
+        throw std::runtime_error("Commit transaction did not succeed");
+    }
 }
 
 Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema) {
@@ -273,9 +222,9 @@ Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const cr
 }
 
 std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
-        Record record, ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength,
-        const char* selection, uint32_t queryLength, const char* query,
-        const commitmanager::SnapshotDescriptor& snapshot) {
+        const commitmanager::SnapshotDescriptor& snapshot, Record record, ScanMemoryManager& memoryManager,
+        ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+        const char* query) {
     auto scanId = ++mScanId;
 
     auto iterator = std::make_shared<ScanIterator>(fiber, std::move(record), mTellStoreSocket.size());
@@ -293,18 +242,6 @@ std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber
                 query, snapshot);
     }
     return iterator;
-}
-
-void BaseClientProcessor::commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot) {
-    // TODO Return a commit future?
-
-    auto commitResponse = mCommitManagerSocket.commitTransaction(fiber, snapshot.version());
-    if (!commitResponse->waitForResult()) {
-        throw std::system_error(commitResponse->error());
-    }
-    if (!commitResponse->get()) {
-        throw std::runtime_error("Commit transaction did not succeed");
-    }
 }
 
 } // namespace store

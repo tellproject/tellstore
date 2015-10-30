@@ -38,8 +38,6 @@
 #include <crossbow/non_copyable.hpp>
 #include <crossbow/string.hpp>
 
-#include <sparsehash/dense_hash_set>
-
 #include <boost/functional/hash.hpp>
 
 #include <atomic>
@@ -60,91 +58,28 @@ class BaseClientProcessor;
 class Record;
 
 /**
- * @brief Class representing a TellStore transaction
- */
-class ClientTransaction : crossbow::non_copyable {
-public:
-    ClientTransaction(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber, TransactionType type,
-            bool shared, std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
-
-    ~ClientTransaction();
-
-    ClientTransaction(ClientTransaction&& other);
-
-    const commitmanager::SnapshotDescriptor& snapshot() const {
-        return *mSnapshot;
-    }
-
-    uint64_t version() const {
-        return mSnapshot->version();
-    }
-
-    TransactionType type() const {
-        return mType;
-    }
-
-    bool shared() const {
-        return mShared;
-    }
-
-    bool committed() const {
-        return mCommitted;
-    }
-
-    std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
-
-    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, const AbstractTuple& tuple);
-    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, const GenericTuple& tuple);
-
-    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, const AbstractTuple& tuple);
-    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, const GenericTuple& tuple);
-
-    std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key);
-    std::shared_ptr<ModificationResponse> revert(const Table& table, uint64_t key);
-
-    std::shared_ptr<ScanIterator> scan(const Table& table, ScanMemoryManager& memoryManager, ScanQueryType queryType,
-            uint32_t selectionLength, const char* selection, uint32_t queryLength, const char* query);
-
-    void commit();
-
-    void abort();
-
-private:
-    struct ModifiedHasher {
-        size_t operator()(const std::tuple<uint64_t, uint64_t>& value) const {
-            auto hash = std::hash<uint64_t>()(std::get<0>(value));
-            boost::hash_combine(hash, std::hash<uint64_t>()(std::get<1>(value)));
-            return hash;
-        }
-    };
-
-    void checkTransaction(const Table& table, bool readOnly);
-
-    BaseClientProcessor& mProcessor;
-    crossbow::infinio::Fiber& mFiber;
-
-    std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;
-
-    TransactionType mType;
-    bool mShared;
-    bool mCommitted;
-};
-
-/**
  * @brief Class to interact with the TellStore from within a fiber
  */
 class ClientHandle : crossbow::non_copyable, crossbow::non_movable {
 public:
-    ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber);
+    static std::unique_ptr<commitmanager::SnapshotDescriptor> createNonTransactionalSnapshot(uint64_t baseVersion);
+
+    static std::unique_ptr<commitmanager::SnapshotDescriptor> createAnalyticalSnapshot(uint64_t lowestActiveVersion,
+            uint64_t baseVersion);
+
+    ClientHandle(BaseClientProcessor& processor, crossbow::infinio::Fiber& fiber)
+            : mProcessor(processor),
+              mFiber(fiber) {
+    }
 
     crossbow::infinio::Fiber& fiber() {
         return mFiber;
     }
 
-    ClientTransaction startTransaction(TransactionType type = TransactionType::READ_WRITE);
+    std::unique_ptr<commitmanager::SnapshotDescriptor> startTransaction(
+            TransactionType type = TransactionType::READ_WRITE);
 
-    ClientTransaction startTransaction(TransactionType type,
-            std::unique_ptr<commitmanager::SnapshotDescriptor> snapshot);
+    void commit(const commitmanager::SnapshotDescriptor& snapshot);
 
     Table createTable(const crossbow::string& name, Schema schema);
 
@@ -152,13 +87,42 @@ public:
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
 
+    std::shared_ptr<GetResponse> get(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot);
+
+    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, uint64_t version, GenericTuple data);
+
     std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key, uint64_t version,
-            const GenericTuple& tuple);
+            const AbstractTuple& tuple);
+
+    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, GenericTuple data);
+
+    std::shared_ptr<ModificationResponse> insert(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple);
+
+    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, uint64_t version, GenericTuple data);
 
     std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key, uint64_t version,
-            const GenericTuple& tuple);
+            const AbstractTuple& tuple);
+
+    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, GenericTuple data);
+
+    std::shared_ptr<ModificationResponse> update(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple);
 
     std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key, uint64_t version);
+
+    std::shared_ptr<ModificationResponse> remove(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot);
+
+    std::shared_ptr<ModificationResponse> revert(const Table& table, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot);
+
+    std::shared_ptr<ScanIterator> scan(const Table& table, const commitmanager::SnapshotDescriptor& snapshot,
+            ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
+            uint32_t queryLength, const char* query);
 
 private:
     BaseClientProcessor& mProcessor;
@@ -171,6 +135,46 @@ private:
 class BaseClientProcessor : crossbow::non_copyable, crossbow::non_movable {
 public:
     void shutdown();
+
+    std::unique_ptr<commitmanager::SnapshotDescriptor> start(crossbow::infinio::Fiber& fiber, TransactionType type);
+
+    void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
+
+    Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
+
+    std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
+        return mTellStoreSocket.at(0)->getTable(fiber, name);
+    }
+
+    std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot) {
+        return shard(tableId, key)->get(fiber, tableId, key, snapshot);
+    }
+
+    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
+    }
+
+    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
+        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
+    }
+
+    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot) {
+        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
+    }
+
+    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
+            const commitmanager::SnapshotDescriptor& snapshot) {
+        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
+    }
+
+    std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
+            const commitmanager::SnapshotDescriptor& snapshot, Record record, ScanMemoryManager& memoryManager,
+            ScanQueryType queryType, uint32_t selectionLength, const char* selection, uint32_t queryLength,
+            const char* query);
 
 protected:
     BaseClientProcessor(crossbow::infinio::InfinibandService& service, const ClientConfig& config,
@@ -185,9 +189,6 @@ protected:
     }
 
 private:
-    friend class ClientHandle;
-    friend class ClientTransaction;
-
     /**
      * @brief The socket associated with the shard for the given table and key
      */
@@ -196,55 +197,6 @@ private:
         boost::hash_combine(hash, std::hash<uint64_t>()(key));
         return mTellStoreSocket.at(hash % mTellStoreSocket.size()).get();
     }
-
-    ClientTransaction start(crossbow::infinio::Fiber& fiber, TransactionType type);
-
-    Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
-
-    std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
-        return mTellStoreSocket.at(0)->getTable(fiber, name);
-    }
-
-    std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->get(fiber, tableId, key, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->insert(fiber, tableId, key, record, tuple, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->insert(fiber, tableId, key, record, tuple, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const AbstractTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->update(fiber, tableId, key, record, tuple, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const Record& record, const GenericTuple& tuple, const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->update(fiber, tableId, key, record, tuple, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
-    }
-
-    std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
-            const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
-    }
-
-    std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId, Record record,
-            ScanMemoryManager& memoryManager, ScanQueryType queryType, uint32_t selectionLength, const char* selection,
-            uint32_t queryLength, const char* query, const commitmanager::SnapshotDescriptor& snapshot);
-
-    void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
 

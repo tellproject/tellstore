@@ -5,28 +5,28 @@ set(DELTAMAIN_SRCS
     InsertHash.cpp
     Record.cpp
     Table.cpp
+    colstore/ColumnMapContext.cpp
     colstore/ColumnMapPage.cpp
+    colstore/ColumnMapRecord.cpp
     colstore/ColumnMapScanProcessor.cpp
     rowstore/RowStorePage.cpp
+    rowstore/RowStoreRecord.cpp
     rowstore/RowStoreScanProcessor.cpp
-    rowstore/RowStoreVersionIterator.cpp
 )
 
 set(DELTAMAIN_PRIVATE_HDR
     DeltaMainRewriteStore.hpp
     InsertHash.hpp
-    InsertMap.hpp
-    LogRecord.hpp
     Record.hpp
     Table.hpp
+    colstore/ColumnMapContext.hpp
     colstore/ColumnMapPage.hpp
     colstore/ColumnMapRecord.hpp
     colstore/ColumnMapScanProcessor.hpp
-    colstore/ColumnMapUtils.hpp
+    rowstore/RowStoreContext.hpp
     rowstore/RowStorePage.hpp
     rowstore/RowStoreRecord.hpp
     rowstore/RowStoreScanProcessor.hpp
-    rowstore/RowStoreVersionIterator.cpp
 )
 
 # Add TellStore delta main library
