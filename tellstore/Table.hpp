@@ -58,10 +58,6 @@ public:
         return reinterpret_cast<const char*>(this) + sizeof(Tuple);
     }
 
-    bool found() const {
-        return (mSize != 0x0u);
-    }
-
     uint64_t version() const {
         return mVersion;
     }
