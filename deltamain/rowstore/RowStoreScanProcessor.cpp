@@ -70,25 +70,29 @@ void RowStoreScanProcessor::process()
 
 void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
     ConstRowStoreRecord record(ptr);
-    if (!record.valid()) {
-        return;
-    }
-
-    if (auto main = newestMainRecord(record.newest())) {
-        return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
-    }
-
-    auto validTo = std::numeric_limits<uint64_t>::max();
-    auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
-            record.baseVersion(), validTo);
 
     auto versions = ptr->versionData();
-    auto offsets = ptr->offsetData();
+    auto validTo = std::numeric_limits<uint64_t>::max();
 
-    // Skip elements already overwritten by an element in the update log
     typename std::remove_const<decltype(ptr->versionCount)>::type i = 0;
-    for (; i < ptr->versionCount && versions[i] >= highestVersion; ++i) {
+    if (record.newest() != 0u) {
+        if (!record.valid()) {
+            return;
+        }
+
+        if (auto main = newestMainRecord(record.newest())) {
+            return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
+        }
+
+        auto lowestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
+                record.baseVersion(), validTo);
+
+        // Skip elements already overwritten by an element in the update log
+        for (; i < ptr->versionCount && versions[i] >= lowestVersion; ++i) {
+        }
     }
+
+    auto offsets = ptr->offsetData();
     for (; i < ptr->versionCount; ++i) {
         auto sz = offsets[i + 1] - offsets[i];
 
@@ -106,21 +110,26 @@ void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
 
 void RowStoreScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
     ConstInsertRecord record(ptr);
-    if (!record.valid()) {
-        return;
-    }
-
-    if (auto main = newestMainRecord(record.newest())) {
-        return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
-    }
 
     auto validTo = std::numeric_limits<uint64_t>::max();
-    auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
-            record.baseVersion(), validTo);
 
-    if (ptr->version >= highestVersion) {
-        return;
+    if (record.newest() != 0u) {
+        if (!record.valid()) {
+            return;
+        }
+
+        if (auto main = newestMainRecord(record.newest())) {
+            return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
+        }
+
+        auto lowestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
+                record.baseVersion(), validTo);
+
+        if (ptr->version >= lowestVersion) {
+            return;
+        }
     }
+
     auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
     query.processRecord(mRecord, ptr->key, ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version, validTo);
 }
