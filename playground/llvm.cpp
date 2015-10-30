@@ -15,7 +15,7 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "include/KaleidoscopeJIT.h"
+#include "../util/LLVMCodeGenerator.hpp"
 
 using namespace llvm;
 using namespace llvm::orc;
@@ -25,66 +25,56 @@ using namespace llvm::orc;
 
 int main() {
 
-    // initialize target machine and machine-specific settings
-    InitializeNativeTarget();
-    InitializeNativeTargetAsmPrinter();
-    InitializeNativeTargetAsmParser();
+    // create an LLVM Context
+//    LLVMContext &context = getGlobalContext();
+    LLVMContext context;
 
     // create a builder for intermediate representation (IR)
-    IRBuilder<> builder(getGlobalContext());
+    IRBuilder<> builder(context);
 
     // create a jit compiler object
-    std::unique_ptr<KaleidoscopeJIT> jit = llvm::make_unique<KaleidoscopeJIT>();
+    auto jit = LLVMCodeGenerator::getJIT();
 
-    // make a module, which holds all the code and the builder that uses it to create code
-    std::unique_ptr<Module> module = llvm::make_unique<Module>("my cool jit", getGlobalContext());
-    module->setDataLayout(jit->getTargetMachine().createDataLayout());
+    // make a module
+    auto module = LLVMCodeGenerator::getModule(jit.get(), context, "coool jit module");
 
-    // create a function pass manager attached to the module with some optimizations
-    std::unique_ptr<legacy::FunctionPassManager> functionPassMgr = llvm::make_unique<legacy::FunctionPassManager>(module.get());
-    // Provide basic AliasAnalysis support for GVN.
-    functionPassMgr->add(createBasicAliasAnalysisPass());
-    // Do simple "peephole" optimizations and bit-twiddling optzns.
-    functionPassMgr->add(createInstructionCombiningPass());
-    // Reassociate expressions.
-    functionPassMgr->add(createReassociatePass());
-    // Eliminate Common SubExpressions.
-    functionPassMgr->add(createGVNPass());
-    // Simplify the control flow graph (deleting unreachable blocks, etc).
-    functionPassMgr->add(createCFGSimplificationPass());
-    // add basic block vectorization
-    functionPassMgr->add(createBBVectorizePass()); // --> TODO: resolve linker problems
-    // add loop vectorization
-    functionPassMgr->add(createLoopVectorizePass()); // --> TODO: resolve linker problems
-    // initialize function pass manager
-    functionPassMgr->doInitialization();
+    // create the optimizer
+    auto functionPassMgr = LLVMCodeGenerator::getFunctionPassManger(module.get());
 
     // create a function mult2 bottom up
 
+//    // create the function with direct assembly code:
+//    module->appendModuleInlineAsm("define i32 @mult2cmp10(i32 %x) {");
+//    module->appendModuleInlineAsm("entry:");
+//    module->appendModuleInlineAsm("%0 = trunc i32 %x to i31");
+//    module->appendModuleInlineAsm("%ifcmp = icmp slt i31 %0, 5");
+//    module->appendModuleInlineAsm("ret i1 %ifcmp");
+//    module->appendModuleInlineAsm("}");
+
     // create the function protoype
     std::string cmpFunctionName = "mult2cmp10";
-    std::vector<Type*> intarg (1, Type::getInt32Ty(getGlobalContext()));
-    FunctionType *cmpFuncType = FunctionType::get(Type::getInt32Ty(getGlobalContext()), intarg, false);
+    std::vector<Type*> intarg (1, Type::getInt32Ty(context));
+    FunctionType *cmpFuncType = FunctionType::get(Type::getInt32Ty(context), intarg, false);
     Function *cmpFunc = Function::Create(cmpFuncType, Function::ExternalLinkage, cmpFunctionName, module.get());
     cmpFunc->args().begin()->setName("x");
     Value *varx = cmpFunc->args().begin();
 
     // create an entry point for this function and link function prototype and body
     // important: this has to be done before the creation of the function body!!
-    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", cmpFunc);
+    BasicBlock *bb = BasicBlock::Create(context, "entry", cmpFunc);
     builder.SetInsertPoint(bb);
 
     // Create blocks for the then and else cases.  Insert the 'then' block at the
     // end of the function.
 //    BasicBlock *ThenBB =
-//        BasicBlock::Create(getGlobalContext(), "then", TheFunction);
-//    BasicBlock *ElseBB = BasicBlock::Create(getGlobalContext(), "else");
-//    BasicBlock *MergeBB = BasicBlock::Create(getGlobalContext(), "ifcont");
+//        BasicBlock::Create(context, "then", TheFunction);
+//    BasicBlock *ElseBB = BasicBlock::Create(context, "else");
+//    BasicBlock *MergeBB = BasicBlock::Create(context, "ifcont");
 //    builder.CreateCondBr(CondV, ThenBB, ElseBB);
 
     // create the comparison function body and add it as return value
-    Value *const2 = ConstantInt::get(getGlobalContext(), APInt(32, 2)); // 32 bits, value 2
-    Value *const10 = ConstantInt::get(getGlobalContext(), APInt(32, 10));
+    Value *const2 = ConstantInt::get(context, APInt(32, 2)); // 32 bits, value 2
+    Value *const10 = ConstantInt::get(context, APInt(32, 10));
     Value *mult2 = builder.CreateMul(const2, varx, "tmpMult");
     Value *compOp = builder.CreateICmpSLT(mult2, const10, "ifcmp");
     builder.CreateRet(compOp);

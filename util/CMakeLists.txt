@@ -25,7 +25,12 @@ set(UTIL_PRIVATE_HDR
     TableManager.hpp
     UnsafeAtomic.hpp
     VersionManager.hpp
+    LLVMCodeGenerator.hpp
+    LLVMJIT.hpp
 )
+
+# Find LLVM library
+find_package(LLVM 3.7 EXACT REQUIRED)
 
 # Add TellStore util library
 add_library(tellstore-util STATIC ${UTIL_SRCS} ${UTIL_PRIVATE_HDR} ${PROJECT_BINARY_DIR}/config.h)
@@ -54,3 +59,38 @@ target_link_libraries(tellstore-util PUBLIC crossbow_allocator crossbow_logger)
 # Link against TBB
 target_include_directories(tellstore-util PUBLIC ${TBB_INCLUDE_DIRS})
 target_link_libraries(tellstore-util PUBLIC ${TBB_LIBRARIES})
+
+# Link against LLVM
+
+set(USED_LLVM_LIBRARIES
+    LLVMX86Disassembler
+    LLVMX86AsmParser
+    LLVMX86CodeGen
+    LLVMSelectionDAG
+    LLVMAsmPrinter
+    LLVMCodeGen
+    LLVMScalarOpts
+    LLVMProfileData
+    LLVMInstCombine
+    LLVMTransformUtils
+    LLVMipa
+    LLVMAnalysis
+    LLVMX86Desc
+    LLVMMCDisassembler
+    LLVMX86Info
+    LLVMX86AsmPrinter
+    LLVMX86Utils
+    LLVMMCJIT
+    LLVMTarget
+    LLVMExecutionEngine
+    LLVMRuntimeDyld
+    LLVMObject
+    LLVMMCParser
+    LLVMBitReader
+    LLVMMC
+    LLVMCore
+    LLVMSupport
+    LLVMVectorize
+)
+
+target_include_directories(tellstore-util PUBLIC ${USED_LLVM_LIBRARIES})

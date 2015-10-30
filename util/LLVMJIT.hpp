@@ -1,17 +1,40 @@
-//===----- KaleidoscopeJIT.h - A simple JIT for Kaleidoscope ----*- C++ -*-===//
-//
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// Contains a simple JIT definition for use in the kaleidoscope tutorials.
-//
-//===----------------------------------------------------------------------===//
-#ifndef LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
-#define LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
+/*
+ * (C) Copyright 2015 ETH Zurich Systems Group (http://www.systems.ethz.ch/) and others.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Contributors:
+ *     Markus Pilman <mpilman@inf.ethz.ch>
+ *     Simon Loesing <sloesing@inf.ethz.ch>
+ *     Thomas Etter <etterth@gmail.com>
+ *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
+ *     Lucas Braun <braunl@inf.ethz.ch>
+ *
+ * --------------------------------------------------------------------
+ *
+ * This file was copied and slightly adapted from the KaleidoscopeJIT.h
+ * unter the following licencse:
+ *
+ * ===----- KaleidoscopeJIT.h - A simple JIT for Kaleidoscope ----*- C++ -*-===
+ *
+ *                     The LLVM Compiler Infrastructure
+ *
+ * This file is distributed under the University of Illinois Open Source
+ * License. See LICENSE.TXT for details.
+ *
+ */
+#pragma once
+
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
@@ -20,14 +43,16 @@
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/Support/DynamicLibrary.h"
+
 namespace llvm {
 namespace orc {
-class KaleidoscopeJIT {
+
+class LLVMJIT {
 public:
   typedef ObjectLinkingLayer<> ObjLayerT;
   typedef IRCompileLayer<ObjLayerT> CompileLayerT;
   typedef CompileLayerT::ModuleSetHandleT ModuleHandleT;
-  KaleidoscopeJIT()
+  LLVMJIT()
       : TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
         CompileLayer(ObjectLayer, SimpleCompiler(*TM)) {
     llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
@@ -90,7 +115,6 @@ private:
   CompileLayerT CompileLayer;
   std::vector<ModuleHandleT> ModuleHandles;
 };
+
 } // End namespace orc.
 } // End namespace llvm
-
-#endif // LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H

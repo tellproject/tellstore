@@ -41,13 +41,15 @@ set(USED_LLVM_LIBRARIES
     LLVMVectorize
 )
 
+include_directories(
+    ../util
+)
+
 # Executables
 add_executable(lexer-parser-example lexer-parser.cpp)
-add_executable(optimizer-example optimizer-example.cpp include/KaleidoscopeJIT.h)
 add_executable(Playground llvm.cpp)
 
 target_link_libraries(lexer-parser-example ${USED_LLVM_LIBRARIES} )
-target_link_libraries(optimizer-example ${USED_LLVM_LIBRARIES})
 target_link_libraries(Playground ${USED_LLVM_LIBRARIES})
 
 
