@@ -72,7 +72,7 @@ public:
 
     static std::unique_ptr<llvm::legacy::FunctionPassManager> getFunctionPassManger(llvm::Module *module);
 
-    typedef void (*materializeFuncPtr) (
+    typedef void (*MaterializeFuncPtr) (
             const char* /* page data*/,
             uint64_t /* idx */,
             char* /* dest */,
@@ -81,7 +81,7 @@ public:
             const char* /* page record data*/
             );
 
-    static materializeFuncPtr generate_colmap_materialize_function(
+    static MaterializeFuncPtr generate_colmap_materialize_function(
             llvm::orc::LLVMJIT* jit,
             deltamain::ColumnMapContext &colmapContext,
             const std::string &functionName

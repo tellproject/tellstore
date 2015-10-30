@@ -144,7 +144,7 @@ private:
     std::unique_ptr<llvm::orc::LLVMJIT>  mLLVMJit;
 
     // Function pointer
-    void (*mMaterialize) (const char* /* page data*/, uint64_t /* idx */, char* /* dest */, size_t /* size */, uint32_t /* pageCount */, const char* /* page record data*/);
+    LLVMCodeGenerator::MaterializeFuncPtr mMaterialize;
 };
 
 } // namespace deltamain
