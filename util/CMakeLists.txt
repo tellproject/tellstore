@@ -10,10 +10,8 @@ set(UTIL_SRCS
 )
 
 set(UTIL_PRIVATE_HDR
-    chunk_allocator.hpp
     CuckooHash.hpp
     functional.hpp
-    IteratorEntry.hpp
     Log.hpp
     OpenAddressingHash.hpp
     PageManager.hpp
@@ -21,7 +19,6 @@ set(UTIL_PRIVATE_HDR
     Scan.hpp
     ScanQuery.hpp
     StorageConfig.hpp
-    StoreImpl.hpp
     TableManager.hpp
     UnsafeAtomic.hpp
     VersionManager.hpp

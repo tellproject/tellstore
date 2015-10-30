@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "ServerSocket.hpp"
 
 #include <util/PageManager.hpp>
@@ -157,29 +158,26 @@ void ServerSocket::handleGet(crossbow::infinio::MessageId messageId, crossbow::b
     auto key = request.read<uint64_t>();
     handleSnapshot(messageId, request, [this, messageId, tableId, key]
             (const commitmanager::SnapshotDescriptor& snapshot) {
-        size_t size = 0;
-        const char* data = nullptr;
-        uint64_t version = 0x0u;
-        bool isNewest = false;
-        auto ec = mStorage.get(tableId, key, size, data, snapshot, version, isNewest);
+        auto ec = mStorage.get(tableId, key, snapshot, [this, messageId]
+                (size_t size, uint64_t version, bool isNewest) {
+            char* data = nullptr;
+            // Message size is 8 bytes version plus 8 bytes (isNewest, size) and data
+            uint32_t messageLength = 2 * sizeof(uint64_t) + size;
+            writeResponse(messageId, ResponseType::GET, messageLength, [size, version, isNewest, &data]
+                    (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+                message.write<uint64_t>(version);
+                message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
+                message.set(0, sizeof(uint32_t) - sizeof(uint8_t));
+                message.write<uint32_t>(size);
+                data = message.data();
+            });
+            return data;
+        });
 
         if (ec) {
             writeErrorResponse(messageId, static_cast<error::errors>(ec));
             return;
         }
-
-        // Message size is 8 bytes version plus 8 bytes (isNewest, success, size) and data
-        uint32_t messageLength = 2 * sizeof(uint64_t) + size;
-        writeResponse(messageId, ResponseType::GET, messageLength, [version, isNewest, size, data]
-                (crossbow::buffer_writer& message, std::error_code& /* ec */) {
-            message.write<uint64_t>(version);
-            message.write<uint8_t>(isNewest ? 0x1u : 0x0u);
-            message.align(sizeof(uint32_t));
-            message.write<uint32_t>(size);
-            if (size > 0) {
-                message.write(data, size);
-            }
-        });
     });
 }
 
@@ -420,12 +418,17 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
 
 ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocket socket,
         const crossbow::string& data) {
-    if (data.size() < sizeof(uint64_t)) {
-        throw std::logic_error("Client did not send enough data in connection attempt");
+    // The length of the data field may be larger than the actual data sent (behavior of librdma_cm) so check the
+    // handshake against the substring
+    auto& handshake = handshakeString();
+    if (data.size() < (handshake.size() + sizeof(uint64_t)) || data.substr(0, handshake.size()) != handshake) {
+        LOG_ERROR("Connection handshake failed");
+        return nullptr;
     }
-    auto thread = *reinterpret_cast<const uint64_t*>(&data.front());
+    auto thread = *reinterpret_cast<const uint64_t*>(&data[handshake.size()]);
     auto& processor = *mProcessors.at(thread % mProcessors.size());
 
+    LOG_INFO("%1%] New client connection on processor %2%", socket->remoteAddress(), thread);
     return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
 }
 

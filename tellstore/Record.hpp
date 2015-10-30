@@ -160,6 +160,32 @@ public:
         }
     }
 
+    size_t defaultSize() const {
+        switch (mType) {
+        case FieldType::NULLTYPE:
+            return 0;
+        case FieldType::SMALLINT:
+            return sizeof(int16_t);
+        case FieldType::INT:
+            return sizeof(int32_t);
+        case FieldType::BIGINT:
+            return sizeof(int64_t);
+        case FieldType::FLOAT:
+            return sizeof(float);
+        case FieldType::DOUBLE:
+            return sizeof(double);
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return sizeof(uint32_t);
+        case FieldType::NOTYPE:
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            LOG_ASSERT(false, "Unknown type");
+            return std::numeric_limits<size_t>::max();
+        }
+    }
+
     size_t sizeOf(const char* data) const
     {
         if (isFixedSized()) return staticSize();
@@ -357,7 +383,6 @@ public:
         return mType;
     }
 
-    size_t defaultSize() const;
     size_t sizeOf(const boost::any& value) const;
 
     bool isNotNull() const {
@@ -366,7 +391,6 @@ public:
 
     crossbow::string stringValue() const;
 };
-
 
 /**
 * This class is used to create and parse a table schema.
@@ -391,18 +415,23 @@ public:
 * - 2 bytes: Number of indexes
 * - For each index:
 *   - 2 bytes: number of columns to index
+*   - 1 byte: boolean, set to true iff the UNIQUE constraint is set
+*   - 1 byte: padding
+*   - 2 bytes: length of name
+*   - string - aligned to 2
 *   - For each column:
 *       - 2 byte: column id
 */
 class Schema {
 public:
     using id_t = uint16_t;
+    using IndexMap = std::unordered_map<crossbow::string, std::pair<bool, std::vector<id_t>>>;
 private:
     TableType mType = TableType::UNKNOWN;
     bool mAllNotNull = true;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
-    std::vector<std::vector<id_t>> mIndexes;
+    IndexMap mIndexes;
 public:
     Schema() = default;
 
@@ -417,7 +446,14 @@ public:
     Schema& operator=(const Schema&) = default;
 
     bool addField(FieldType type, const crossbow::string& name, bool notNull);
-    void addIndexes(const std::vector<std::vector<crossbow::string>>& idxs);
+    template<class Name, class Fields>
+    void addIndex(Name&& name, Fields&& fields) {
+        mIndexes.emplace(std::forward<Name>(name), std::forward<Fields>(fields));
+    }
+    template<class Name>
+    void addIndex(Name&& name, std::initializer_list<id_t> fields) {
+        mIndexes.emplace(std::forward<Name>(name), fields);
+    }
 
     TableType type() const {
         return mType;
@@ -435,7 +471,7 @@ public:
         return mVarSizeFields;
     }
 
-    const std::vector<std::vector<id_t>>& indexes() const {
+    const IndexMap& indexes() const {
         return mIndexes;
     }
 
@@ -468,8 +504,9 @@ private:
     Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, int32_t>> mFieldMetaData;
+    size_t mFixedSize;
 public:
-    Record() = default;
+    Record();
 
     Record(Schema schema);
 
@@ -482,6 +519,15 @@ public:
     size_t sizeOfTuple(const char* ptr) const;
 
     size_t headerSize() const;
+
+    /**
+     * @brief The combined size of all fixed size fields (including the null bitmap)
+     *
+     * Can be used to get the offset to the first variable sized field.
+     */
+    size_t fixedSize() const {
+        return mFixedSize;
+    }
 
     size_t minimumSize() const;
 
@@ -515,6 +561,10 @@ public:
 
     Field getField(char* const ptr, id_t id);
     Field getField(char* const ptr, const crossbow::string& name);
+
+    bool allNotNull() const {
+        return mSchema.allNotNull();
+    }
 
     bool isFieldNull(const char* ptr, id_t id) const;
 

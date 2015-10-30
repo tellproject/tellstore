@@ -20,45 +20,44 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include <util/Log.hpp>
+#include <util/ScanQuery.hpp>
 
-#include "ColumnMapPage.hpp"
+#include <cstdint>
+#include <vector>
 
 namespace tell {
 namespace store {
+
+class Record;
+
 namespace deltamain {
+
+class ColumnMapMainPage;
 
 class ColumnMapScanProcessor {
 private:
-    friend class Table;
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
-    using PageList = std::vector<char*>;
+    using PageList = std::vector<ColumnMapMainPage*>;
 private: // assigned members
     std::shared_ptr<crossbow::allocator> mAllocator;
-    const std::vector<char*>& pages;
+    const PageList& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
     LogIterator logEnd;
-    PageManager* pageManager;
     ScanQueryBatchProcessor query;
-    const Record* record;
+    const Record& record;
 private: // calculated members
 
     uint64_t currKey;
 public:
-    ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-             const std::vector<char*>& pages,
-             size_t pageIdx,
-             size_t pageEndIdx,
-             const LogIterator& logIter,
-             const LogIterator& logEnd,
-             PageManager* pageManager,
-             const char* queryBuffer,
-             const std::vector<ScanQuery*>& queryData,
-             const Record* record);
+    ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc, const PageList& pages, size_t pageIdx,
+            size_t pageEndIdx, const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer,
+            const std::vector<ScanQuery*>& queryData, const Record& record);
 
     void process();
 };

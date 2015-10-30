@@ -20,189 +20,102 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "Record.hpp"
 
-#include <util/Log.hpp>
-#include <commitmanager/SnapshotDescriptor.hpp>
 #include <crossbow/logger.hpp>
 
-#include <memory.h>
-#include <map>
-
-#include "Table.hpp"
-#include "LogRecord.hpp"
-
-#include "rowstore/RowStoreRecord.hpp"
-#include "rowstore/RowStoreVersionIterator.hpp"
-#include "colstore/ColumnMapRecord.hpp"
+#include <limits>
 
 namespace tell {
 namespace store {
 namespace deltamain {
 
-namespace impl {
+template <typename T>
+void InsertRecordImpl<T>::collect(uint64_t minVersion, uint64_t highestVersion, std::vector<RecordHolder>& elements) const {
+    // Check if the oldest element is the oldest readable element
+    if (highestVersion <= minVersion) {
+        return;
+    }
 
-#if defined USE_ROW_STORE
-template< class T>
-using MVRecord = RowStoreMVRecord<T>;
-#elif defined USE_COLUMN_MAP
-template< class T>
-using MVRecord = ColMapMVRecord<T>;
-#else
-#error "Unknown storage layout"
-#endif
-
-} // namespace impl
-
-#define DISPATCH_METHOD(T, methodName,  ...) switch(this->type()) {\
-case Type::LOG_INSERT:\
-    {\
-        impl::LogInsert<T> rec(this->mData);\
-        return rec.methodName(__VA_ARGS__);\
-    }\
-case Type::LOG_UPDATE:\
-    {\
-        impl::LogUpdate<T> rec(this->mData);\
-        return rec.methodName(__VA_ARGS__);\
-    }\
-case Type::LOG_DELETE:\
-    {\
-        impl::LogDelete<T> rec(this->mData);\
-        return rec.methodName(__VA_ARGS__);\
-    }\
-case Type::MULTI_VERSION_RECORD:\
-    {\
-        impl::MVRecord<T> rec(this->mData);\
-        return rec.methodName(__VA_ARGS__);\
-    }\
-default:\
-    {\
-        LOG_ERROR("Unknown record type");\
-        std::terminate();\
-    }\
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mEntry));
+    elements.emplace_back(mEntry->version, mEntry->data(), logEntry->size() - sizeof(InsertLogEntry));
 }
 
-#define DISPATCH_METHODT(methodName,  ...) DISPATCH_METHOD(T, methodName, __VA_ARGS__)
-#define DISPATCH_METHOD_NCONST(methodName, ...) DISPATCH_METHOD(char*, methodName, __VA_ARGS__)
+int InsertRecord::canUpdate(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
+        RecordType type) const {
+    // Check if the element was already overwritten by an element in the update log
+    if (mEntry->version >= highestVersion) {
+        return (type == RecordType::DELETE ? 0 : error::invalid_write);
+    }
 
-template<class T>
-const char* DMRecordImplBase<T>::data(const commitmanager::SnapshotDescriptor& snapshot,
-                                  size_t& size,
-                                  uint64_t& version,
-                                  bool& isNewest,
-                                  bool& isValid,
-                                  bool *wasDeleted /* = nullptr */,
-                                  const Table *table, /* = nullptr */
-                                  bool copyData /* = true */
-) const {
-    isNewest = true;
-    DISPATCH_METHODT(data, snapshot, size, version, isNewest, isValid, wasDeleted, table, copyData);
-    return nullptr;
+    if (!snapshot.inReadSet(mEntry->version)) {
+        return error::not_in_snapshot;
+    }
+
+    return (type == RecordType::DATA ? 0 : error::invalid_write);
 }
 
-template<class T>
-auto DMRecordImplBase<T>::typeOfNewestVersion(bool& isValid) const -> Type {
-    DISPATCH_METHODT(typeOfNewestVersion, isValid);
+int InsertRecord::canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const {
+    // The element only needs a revert if it was not overwritten by the update log and has the same version
+    needsRevert = !(mEntry->version >= highestVersion || mEntry->version != snapshot.version());
+    return 0;
 }
 
-template<class T>
-size_t DMRecordImplBase<T>::spaceOverhead(Type t) {
-    switch(t) {
-    case Type::LOG_INSERT:
-    case Type::LOG_UPDATE:
-    case Type::LOG_DELETE:
-        return 32;
-    case Type::MULTI_VERSION_RECORD:
-#if defined USE_ROW_STORE
-        return 24;
-#elif defined USE_COLUMN_MAP
-        LOG_ASSERT(false, "You are not supposed to call this on a columMap MVRecord");
-        return 0;
-#else
-#error "Unknown storage layout"
-#endif
-    default:
-        LOG_ASSERT(false, "Unknown record type");
-        return 0;
+UpdateRecordIterator::UpdateRecordIterator(const UpdateLogEntry* record, uint64_t baseVersion)
+        : mCurrent(record),
+          mBaseVersion(baseVersion),
+          mLowestVersion(std::numeric_limits<decltype(mLowestVersion)>::max()) {
+    if (!mCurrent) {
+        return;
+    }
+    LOG_ASSERT(mCurrent->version >= mBaseVersion, "Version of element in Update Log must never be lower than "
+            "base version");
+
+    // Update lowest version
+    mLowestVersion = mCurrent->version;
+
+    // Forward version chain if the element was a revert
+    auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(mCurrent));
+    if (logEntry->type() == crossbow::to_underlying(RecordType::REVERT)) {
+        next();
     }
 }
 
-template<class T>
-bool DMRecordImplBase<T>::needsCleaning(uint64_t lowestActiveVersion, InsertMap& insertMap) const {
-    DISPATCH_METHODT(needsCleaning, lowestActiveVersion, insertMap);
+void UpdateRecordIterator::next() {
+    auto entry = mCurrent;
+    while (true) {
+        if (entry->version == mBaseVersion) {
+            mCurrent = nullptr;
+            return;
+        }
+
+        // Forward version chain until we see an element with smaller version number or we reached the end
+        // This assumes that the version chain is sorted by version number which it is not: But the only case where
+        // a newer version number can follow an older version number is when the newer version was reverted so it
+        // can be ignored anyway.
+        do {
+            entry = reinterpret_cast<const UpdateLogEntry*>(entry->previous.load());
+            if (!entry || entry->version < mBaseVersion) {
+                mCurrent = nullptr;
+                return;
+            }
+        } while (entry->version >= mLowestVersion);
+
+        // Update lowest version
+        mLowestVersion = entry->version;
+
+        // Forward version chain if the element was a revert
+        auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(entry));
+        if (logEntry->type() == crossbow::to_underlying(RecordType::REVERT)) {
+            continue;
+        }
+    }
+    mCurrent = entry;
 }
 
-template<class T>
-void DMRecordImplBase<T>::collect(impl::VersionMap& versions, bool& newestIsDelete, bool& allVersionsInvalid) const
-{
-    DISPATCH_METHODT(collect, versions, newestIsDelete, allVersionsInvalid);
-}
-
-template<class T>
-uint64_t DMRecordImplBase<T>::size() const {
-    DISPATCH_METHODT(size);
-}
-
-template<class T>
-T DMRecordImplBase<T>::dataPtr()
-{
-    DISPATCH_METHODT(dataPtr);
-}
-
-template<class T>
-uint64_t DMRecordImplBase<T>::copyAndCompact(
-        uint64_t lowestActiveVersion,
-        InsertMap& insertMap,
-        char* newLocation,
-        uint64_t maxSize,
-        bool& success) const
-{
-    DISPATCH_METHODT(copyAndCompact, lowestActiveVersion, insertMap, newLocation, maxSize, success);
-}
-
-template<class T>
-void DMRecordImplBase<T>::revert(uint64_t version) {
-    DISPATCH_METHODT(revert, version);
-}
-
-template<class T>
-bool DMRecordImplBase<T>::isValidDataRecord() const {
-    DISPATCH_METHODT(isValidDataRecord);
-}
-
-template<class T>
-const RowStoreVersionIterator DMRecordImplBase<T>::getVersionIterator(const Record *record) const {
-    return RowStoreVersionIterator(record, this->mData);
-}
-
-void DMRecordImpl<char*>::writeKey(uint64_t key) {
-    DISPATCH_METHOD_NCONST(writeKey, key);
-}
-
-void DMRecordImpl<char*>::writeVersion(uint64_t version) {
-    DISPATCH_METHOD_NCONST(writeVersion, version);
-}
-
-void DMRecordImpl<char*>::writePrevious(const char* prev) {
-    DISPATCH_METHOD_NCONST(writePrevious, prev);
-}
-
-void DMRecordImpl<char*>::writeData(size_t size, const char* data) {
-    DISPATCH_METHOD_NCONST(writeData, size, data);
-}
-
-bool DMRecordImpl<char*>::update(char* next,
-                                 bool& isValid,
-                                 const commitmanager::SnapshotDescriptor& snapshot,
-                                 const Table *table
-) {
-    DISPATCH_METHOD_NCONST(update, next, isValid, snapshot, table);
-} 
-
-template class DMRecordImplBase<const char*>;
-template class DMRecordImplBase<char*>;
-template class DMRecordImpl<const char*>;
-template class DMRecordImpl<char*>;
+template class InsertRecordImpl<const InsertLogEntry*>;
+template class InsertRecordImpl<InsertLogEntry*>;
 
 } // namespace deltamain
 } // namespace store

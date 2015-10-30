@@ -20,52 +20,58 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include <util/Log.hpp>
-#include "RowStorePage.hpp"
+#include <util/ScanQuery.hpp>
+
+#include <vector>
 
 namespace tell {
 namespace store {
+
+class Record;
+
 namespace deltamain {
 
+class InsertLogEntry;
+class RowStoreMainEntry;
+class RowStoreMainPage;
+class UpdateLogEntry;
+
 class RowStoreScanProcessor {
-private:
-    friend class Table;
-    using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
-    using PageList = std::vector<char*>;
-private: // assigned members
-    std::shared_ptr<crossbow::allocator> mAllocator;
-    const std::vector<char*>& pages;
-    size_t pageIdx;
-    size_t pageEndIdx;
-    LogIterator logIter;
-    LogIterator logEnd;
-    PageManager* pageManager;
-    ScanQueryBatchProcessor query;
-    const Record* record;
-private: // calculated members
-    void next();
-
-    void setCurrentEntry();
-
-    RowStorePage::Iterator pageIter;
-    RowStorePage::Iterator pageEnd;
-    uint64_t currKey;
-    RowStoreVersionIterator currVersionIter;
 public:
+    using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
+    using PageList = std::vector<RowStoreMainPage*>;
+
     RowStoreScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-             const std::vector<char*>& pages,
+             const PageList& pages,
              size_t pageIdx,
              size_t pageEndIdx,
              const LogIterator& logIter,
              const LogIterator& logEnd,
-             PageManager* pageManager,
              const char* queryBuffer,
              const std::vector<ScanQuery*>& queryData,
-             const Record* record);
+             const Record& record);
 
     void process();
+
+private:
+    void processMainRecord(const RowStoreMainEntry* ptr);
+
+    void processInsertRecord(const InsertLogEntry* ptr);
+
+    uint64_t processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo);
+
+    std::shared_ptr<crossbow::allocator> mAllocator;
+    const PageList& pages;
+    size_t pageIdx;
+    size_t pageEndIdx;
+    LogIterator logIter;
+    LogIterator logEnd;
+    ScanQueryBatchProcessor query;
+    const Record& mRecord;
 };
 
 } // namespace deltamain

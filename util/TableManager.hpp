@@ -129,6 +129,10 @@ public:
     }
 
 public:
+    const StorageConfig& config() const {
+        return mConfig;
+    }
+
     template <typename... Args>
     bool createTable(const crossbow::string& name,
                      const Schema& schema,
@@ -164,12 +168,12 @@ public:
         return lookupTable(res->second);
     }
 
-    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest)
+    template <typename Fun>
+    int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun)
     {
         crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->get(key, size, data, snapshot, version, isNewest);
+        return lookupTable(tableId)->get(key, snapshot, std::move(fun));
     }
 
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,

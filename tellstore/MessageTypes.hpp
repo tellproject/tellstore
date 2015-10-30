@@ -20,12 +20,20 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include <cstdint>
 
+#include <crossbow/string.hpp>
+
 namespace tell {
 namespace store {
+
+/**
+ * @brief Unique string sent as first argument in the connection handshake
+ */
+const crossbow::string& handshakeString();
 
 /**
  * @brief The possible messages types of a request

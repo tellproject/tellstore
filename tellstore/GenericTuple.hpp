@@ -20,17 +20,37 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
-#include <unordered_map>
-#include <boost/any.hpp>
+
+#include <tellstore/AbstractTuple.hpp>
+
 #include <crossbow/string.hpp>
 
+#include <boost/any.hpp>
+
+#include <unordered_map>
 
 namespace tell {
 namespace store {
 
+class Record;
+
 using GenericTuple = std::unordered_map<crossbow::string, boost::any>;
+
+class GenericTupleSerializer : public AbstractTuple {
+    const Record& mRecord;
+    GenericTuple mTuple;
+    size_t mSize;
+public:
+    GenericTupleSerializer(const Record& record, GenericTuple tuple);
+
+    virtual ~GenericTupleSerializer();
+
+    virtual size_t size() const override;
+
+    virtual void serialize(char* dest) const override;
+};
 
 } // namespace store
 } // namespace tell
-

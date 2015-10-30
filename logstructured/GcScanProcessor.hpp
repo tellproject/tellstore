@@ -20,11 +20,11 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include <util/Log.hpp>
 #include <util/ScanQuery.hpp>
-#include <util/StoreImpl.hpp>
 
 #include <crossbow/non_copyable.hpp>
 
@@ -33,6 +33,9 @@
 
 namespace tell {
 namespace store {
+
+class LogstructuredMemoryStore;
+
 namespace logstructured {
 
 class ChainedVersionRecord;
@@ -136,14 +139,14 @@ private:
  */
 class GcScanGarbageCollector {
 public:
-    GcScanGarbageCollector(StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& storage)
+    GcScanGarbageCollector(LogstructuredMemoryStore& storage)
             : mStorage(storage) {
     }
 
     void run(const std::vector<Table*>& tables, uint64_t minVersion);
 
 private:
-    StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>& mStorage;
+    LogstructuredMemoryStore& mStorage;
 };
 
 } // namespace logstructured

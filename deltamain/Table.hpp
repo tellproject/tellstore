@@ -20,21 +20,27 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
-#include "rowstore/RowStorePage.hpp"
-#include "colstore/ColumnMapPage.hpp"
-#include "rowstore/RowStoreScanProcessor.hpp"
-#include "colstore/ColumnMapScanProcessor.hpp"
+#include "InsertHash.hpp"
+#include "Record.hpp"
+#include "colstore/ColumnMapContext.hpp"
+#include "colstore/ColumnMapRecord.hpp"
+#include "rowstore/RowStoreContext.hpp"
 
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
+
+#include <tellstore/ErrorCode.hpp>
 #include <tellstore/Record.hpp>
+
+#include <commitmanager/SnapshotDescriptor.hpp>
+
 #include <crossbow/allocator.hpp>
 
 #include <memory>
 #include <vector>
-#include <limits>
 #include <atomic>
 #include <functional>
 
@@ -50,43 +56,19 @@ class ScanQuery;
 
 namespace deltamain {
 
+template <typename Context>
 class Table {
-    struct PageList {
-        PageList(Log<OrderedLogImpl>::LogIterator begin)
-                : insertBegin(begin) {
-        }
-
-        /// List of pages in the main
-        std::vector<char*> pages;
-
-        /// Iterator pointing to the first element not contained in the main pages
-        Log<OrderedLogImpl>::LogIterator insertBegin;
-    };
-
-    PageManager& mPageManager;
-    Record mRecord;
-    std::atomic<CuckooTable*> mHashTable;
-    Log<OrderedLogImpl> mInsertLog;
-    Log<OrderedLogImpl> mUpdateLog;
-    std::atomic<PageList*> mPages;
-    const uint32_t mNumberOfFixedSizedFields;   //@braunl: added for speedup
-    const uint32_t mNumberOfVarSizedFields;     //@braunl: added for speedup
-    const uint32_t mPageCapacity;               //@braunl: added for speedup
-
 public:
-    Table(PageManager& pageManager, const Schema& schema, uint64_t idx);
+    using ScanProcessor = typename Context::ScanProcessor;
+    using Page = typename Context::Page;
+    using PageModifier = typename Context::PageModifier;
+
+    using MainRecord = typename Context::MainRecord;
+    using ConstMainRecord = typename Context::ConstMainRecord;
+
+    Table(PageManager& pageManager, const Schema& schema, uint64_t idx, uint64_t insertTableCapacity);
 
     ~Table();
-
-#if defined USE_ROW_STORE
-    using ScanProcessor = RowStoreScanProcessor;
-    using Page = RowStorePage;
-#elif defined USE_COLUMN_MAP
-    using ScanProcessor = ColumnMapScanProcessor;
-    using Page = ColumnMapPage;
-#else
-#error "Unknown storage layout"
-#endif
 
     const Record& record() const {
         return mRecord;
@@ -96,45 +78,12 @@ public:
         return mRecord.schema();
     }
 
-/**
- * @braunl: added the following helper functions used by the columnMap store
- */
-    const PageManager* pageManager() const {
-        return pageManager();
-    }
-
-    const int32_t getFieldOffset(const Record::id_t id) const {
-        return mRecord.getFieldMeta(id).second;
-    }
-
-    /**
-     * assumes var-sized fields are constant size 8 (offset + prefix)
-     */
-    const size_t getFieldSize(const Record::id_t id) const {
-        return id < mNumberOfFixedSizedFields ? mRecord.schema().fixedSizeFields().at(id).defaultSize() : 8;
-    }
-
-    const uint32_t getNumberOfFixedSizedFields() const {
-        return mNumberOfFixedSizedFields;
-    }
-
-    const uint32_t getNumberOfVarSizedFields() const {
-        return mNumberOfVarSizedFields;
-    }
-
-    const uint32_t getPageCapacity() const {
-        return mPageCapacity;
-    }
-/**
- * @braunl: end of helper functions
- */
-
     TableType type() const {
         return mRecord.schema().type();
     }
 
-    int get(uint64_t key, size_t& size, const char*& data, const commitmanager::SnapshotDescriptor& snapshot,
-             uint64_t& version, bool& isNewest) const;
+    template <typename Fun>
+    int get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) const;
 
     int insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot);
 
@@ -153,23 +102,153 @@ public:
      * to perform the scan (using ScanProcessor.process()). The method assigns
      * each thread the same amount (storage) pages and the last thread gets the
      * insert log in addition.
-     * TODO: question: what happens with the update-log?! Shouldn't that be
-     * scanned as well?
      */
     std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
             const std::vector<ScanQuery*>& queries) const;
+
 private:
-    template<class Fun>
-    int genericUpdate(const Fun& appendFun, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
+    struct PageList {
+        PageList() = default;
+
+        PageList(Log<OrderedLogImpl>::LogIterator insert, Log<OrderedLogImpl>::LogIterator update)
+                : insertEnd(insert),
+                  updateEnd(update) {
+        }
+
+        /// List of pages in the main
+        std::vector<Page*> pages;
+
+        /// Iterator pointing to the first element in the insert log not contained in the main pages
+        Log<OrderedLogImpl>::LogIterator insertEnd;
+
+        /// Iterator pointing to the first element in the update log not contained in the main pages
+        Log<OrderedLogImpl>::LogIterator updateEnd;
+    };
+
+    const InsertLogEntry* getFromInsert(uint64_t key, DynamicInsertTableEntry** headList = nullptr) const;
+
+    InsertLogEntry* getFromInsert(uint64_t key, DynamicInsertTableEntry** headList = nullptr) {
+        return const_cast<InsertLogEntry*>(const_cast<const Table<Context>*>(this)->getFromInsert(key, headList));
+    }
+
+    int genericUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
+            RecordType type);
+
+    template <typename Rec, typename Fun>
+    bool internalGet(const void* ptr, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, int& ec) const;
+
+    template <typename Rec>
+    bool internalUpdate(void* ptr, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
+            RecordType expectedType, RecordType newType, int& ec);
+
+    template <typename Rec>
+    int canUpdate(const Rec& record, const commitmanager::SnapshotDescriptor& snapshot, RecordType expectedType);
+
+    template <typename Rec>
+    bool internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& snapshot, int& ec);
+
+    PageManager& mPageManager;
+    Record mRecord;
+    DynamicInsertTable mInsertTable;
+    Log<OrderedLogImpl> mInsertLog;
+    Log<OrderedLogImpl> mUpdateLog;
+    std::atomic<CuckooTable*> mMainTable;
+    std::atomic<PageList*> mPages;
+
+    Context mContext;
 };
 
-//TODO: question: isn't that code that could be shared between different approaches?
-//Do we really need a separate garbage collector class for every approach? And is this
-//the right place to put it?
+template <typename Context>
+template <typename Fun>
+int Table<Context>::get(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun) const {
+    int ec;
+
+    // Check main first
+    auto mainTable = mMainTable.load();
+    if (auto ptr = mainTable->get(key)) {
+        if (internalGet<ConstMainRecord>(ptr, snapshot, fun, ec)) {
+            return ec;
+        }
+    }
+
+    // Lookup in the insert hash table
+    if (auto ptr = getFromInsert(key)) {
+        if (internalGet<ConstInsertRecord>(ptr, snapshot, fun, ec)) {
+            return ec;
+        }
+    }
+
+    // Check if the hash table pointer changed
+    // This is required as a concurrent running garbage collection might have transferred inserts from the insert log
+    // into the (new) main.
+    auto newMainTable = mMainTable.load();
+    if (newMainTable != mainTable) {
+        // Lookup in the new hash table
+        if (auto ptr = newMainTable->get(key)) {
+            if (internalGet<ConstMainRecord>(ptr, snapshot, fun, ec)) {
+                return ec;
+            }
+        }
+    }
+
+    // The element was really not found
+    return error::not_found;
+}
+
+template <typename Context>
+template <typename Rec, typename Fun>
+bool Table<Context>::internalGet(const void* ptr, const commitmanager::SnapshotDescriptor& snapshot, Fun fun, int& ec)
+        const {
+    Rec record(ptr, mContext);
+    if (!record.valid()) {
+        return false;
+    }
+
+    // Follow the recycled record in case the current record was garbage collected in the meantime
+    if (auto main = newestMainRecord(record.newest())) {
+        return internalGet<ConstMainRecord>(main, snapshot, std::move(fun), ec);
+    }
+
+    // Lookup in update history
+    bool isNewest = true;
+    UpdateRecordIterator updateIter(reinterpret_cast<const UpdateLogEntry*>(record.newest()), record.baseVersion());
+    for (; !updateIter.done(); updateIter.next()) {
+        if (!snapshot.inReadSet(updateIter->version)) {
+            isNewest = false;
+            continue;
+        }
+
+        // Check if the entry marks a deletion: Return element not found
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
+        if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
+            ec = (isNewest ? error::not_found : error::not_in_snapshot);
+            return true;
+        }
+
+        auto size = entry->size() - sizeof(UpdateLogEntry);
+        auto dest = fun(size, updateIter->version, isNewest);
+        memcpy(dest, updateIter->data(), size);
+
+        ec = 0;
+        return true;
+    }
+
+    // Lookup in base
+    ec = record.get(updateIter.lowestVersion(), snapshot, std::move(fun), isNewest);
+    return true;
+}
+
+template <typename Context>
 class GarbageCollector {
 public:
-    void run(const std::vector<Table*>& tables, uint64_t minVersion);
+    void run(const std::vector<Table<Context>*>& tables, uint64_t minVersion);
 };
+
+extern template class Table<RowStoreContext>;
+extern template class GarbageCollector<RowStoreContext>;
+
+extern template class Table<ColumnMapContext>;
+extern template class GarbageCollector<ColumnMapContext>;
 
 } // namespace deltamain
 } // namespace store

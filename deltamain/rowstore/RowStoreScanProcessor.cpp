@@ -20,101 +20,127 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "RowStoreScanProcessor.hpp"
 
+#include "RowStorePage.hpp"
+#include "RowStoreRecord.hpp"
+
+#include <deltamain/Record.hpp>
 
 namespace tell {
 namespace store {
 namespace deltamain {
 
-
 RowStoreScanProcessor::RowStoreScanProcessor(
         const std::shared_ptr<crossbow::allocator>& alloc,
-        const std::vector<char*>& pages,
+        const PageList& pages,
         size_t pageIdx,
         size_t pageEndIdx,
         const LogIterator& logIter,
         const LogIterator& logEnd,
-        PageManager* pageManager,
         const char* queryBuffer,
         const std::vector<ScanQuery*>& queryData,
-        const Record* record)
+        const Record& record)
     : mAllocator(alloc)
     , pages(pages)
     , pageIdx(pageIdx)
     , pageEndIdx(pageEndIdx)
     , logIter(logIter)
     , logEnd(logEnd)
-    , pageManager(pageManager)
     , query(queryBuffer, queryData)
-    , record(record)
-    , pageIter(RowStorePage(*pageManager, pages[pageIdx]).begin())
-    , pageEnd (RowStorePage(*pageManager, pages[pageIdx]).end())
-    , currKey(0u)
+    , mRecord(record)
 {
 }
 
 void RowStoreScanProcessor::process()
 {
-    for (setCurrentEntry(); currVersionIter.isValid(); next()) {
-        query.processRecord(*currVersionIter->record(), currKey, currVersionIter->data(), currVersionIter->size(),
-                currVersionIter->validFrom(), currVersionIter->validTo());
+    for (auto i = pageIdx; i < pageEndIdx; ++i) {
+        for (auto& ptr : *pages[i]) {
+            processMainRecord(&ptr);
+        }
+    }
+    for (auto insIter = logIter; insIter != logEnd; ++insIter) {
+        if (!insIter->sealed()) {
+            continue;
+        }
+        processInsertRecord(reinterpret_cast<const InsertLogEntry*>(insIter->data()));
     }
 }
 
-void RowStoreScanProcessor::next()
-{
-    // This assures that the iterator is invalid when we reached the end
-    if (currVersionIter.isValid() && (++currVersionIter).isValid()) {
+void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
+    ConstRowStoreRecord record(ptr);
+    if (!record.valid()) {
         return;
     }
-    if (logIter != logEnd) {
-        ++logIter;
-    } else if (pageIter != pageEnd) {
-        ++pageIter;
-    } else {
-        ++pageIdx;
-        if (pageIdx >= pageEndIdx)
-            return;
-        RowStorePage p(*pageManager, pages[pageIdx]);
-        pageIter = p.begin();
-        pageEnd = p.end();
+
+    if (auto main = newestMainRecord(record.newest())) {
+        return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
     }
-    setCurrentEntry();
+
+    auto validTo = std::numeric_limits<uint64_t>::max();
+    auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
+            record.baseVersion(), validTo);
+
+    auto versions = ptr->versionData();
+    auto offsets = ptr->offsetData();
+
+    // Skip elements already overwritten by an element in the update log
+    typename std::remove_const<decltype(ptr->versionCount)>::type i = 0;
+    for (; i < ptr->versionCount && versions[i] >= highestVersion; ++i) {
+    }
+    for (; i < ptr->versionCount; ++i) {
+        auto sz = offsets[i + 1] - offsets[i];
+
+        // Check if the entry marks a deletion: Skip element
+        if (sz == 0) {
+            validTo = versions[i];
+            continue;
+        }
+
+        auto data = reinterpret_cast<const char*>(ptr) + offsets[i];
+        query.processRecord(mRecord, ptr->key, data, sz, versions[i], validTo);
+        validTo = versions[i];
+    }
 }
 
-void RowStoreScanProcessor::setCurrentEntry()
-{
-    while (logIter != logEnd) {
-        if (logIter->sealed()) {
-            CDMRecord rec(logIter->data());
-            if (rec.isValidDataRecord()) {
-                currKey = rec.key();
-                currVersionIter = rec.getVersionIterator(record);
-                return;
-            }
-        }
-        ++logIter;
-    }
-    if (pageIdx >= pageEndIdx)
+void RowStoreScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
+    ConstInsertRecord record(ptr);
+    if (!record.valid()) {
         return;
-    while (true) {
-        while (pageIter != pageEnd) {
-            CDMRecord rec(*pageIter);
-            if (rec.isValidDataRecord()) {
-                currKey = rec.key();
-                currVersionIter = rec.getVersionIterator(record);
-                return;
-            }
-            ++pageIter;
-        }
-        ++pageIdx;
-        if (pageIdx >= pageEndIdx)
-            return;
-        RowStorePage p(*pageManager, pages[pageIdx]);
-        pageIter = p.begin();
-        pageEnd = p.end();
     }
+
+    if (auto main = newestMainRecord(record.newest())) {
+        return processMainRecord(reinterpret_cast<const RowStoreMainEntry*>(main));
+    }
+
+    auto validTo = std::numeric_limits<uint64_t>::max();
+    auto highestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
+            record.baseVersion(), validTo);
+
+    if (ptr->version >= highestVersion) {
+        return;
+    }
+    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
+    query.processRecord(mRecord, ptr->key, ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version, validTo);
+}
+
+uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo) {
+    UpdateRecordIterator updateIter(ptr, baseVersion);
+    for (; !updateIter.done(); updateIter.next()) {
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
+
+        // Check if the entry marks a deletion: Skip element
+        if (entry->type() == crossbow::to_underlying(RecordType::DELETE)) {
+            validTo = updateIter->version;
+            continue;
+        }
+
+        query.processRecord(mRecord, updateIter->key, updateIter->data(), entry->size() - sizeof(UpdateLogEntry),
+                updateIter->version, validTo);
+        validTo = updateIter->version;
+    }
+    return updateIter.lowestVersion();
 }
 
 } // namespace deltamain

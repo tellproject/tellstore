@@ -78,8 +78,12 @@ public:
 
     ~PageManager();
 
-    void* data() {
+    const void* data() const {
         return mData;
+    }
+
+    void* data() {
+        return const_cast<void*>(const_cast<const PageManager*>(this)->data());
     }
 
     size_t size() const {
@@ -102,14 +106,6 @@ public:
     * Returns the given (already zeroed) page back to the pool
     */
     void freeEmpty(void* page);
-
-    /**
-     * Given an address that points into a random memory
-     * address within a page, returns the start address
-     * of this page.
-     * @braunl: added as utility for colum store approaches
-     */
-    const char *getPageStart(const char *address) const;
 };
 
 } // namespace store

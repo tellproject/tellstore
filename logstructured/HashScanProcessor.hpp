@@ -20,10 +20,10 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include <util/ScanQuery.hpp>
-#include <util/StoreImpl.hpp>
 
 #include <crossbow/non_copyable.hpp>
 
@@ -32,6 +32,9 @@
 
 namespace tell {
 namespace store {
+
+class LogstructuredMemoryStore;
+
 namespace logstructured {
 
 class HashScanGarbageCollector;
@@ -73,7 +76,7 @@ private:
  */
 class HashScanGarbageCollector {
 public:
-    HashScanGarbageCollector(StoreImpl<Implementation::LOGSTRUCTURED_MEMORY>&)
+    HashScanGarbageCollector(LogstructuredMemoryStore&)
     {}
 
     void run(const std::vector<Table*>& tables, uint64_t minVersion);

@@ -21,46 +21,30 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 
-#pragma once
+#include <tellstore/GenericTuple.hpp>
 
-#include <util/IteratorEntry.hpp>
+#include <tellstore/Record.hpp>
 
 namespace tell {
 namespace store {
 
-class Record;
+AbstractTuple::~AbstractTuple() = default;
 
-namespace deltamain {
+GenericTupleSerializer::GenericTupleSerializer(const Record& record, GenericTuple tuple)
+    : mRecord(record)
+    , mTuple(std::move(tuple))
+    , mSize(mRecord.sizeOfTuple(mTuple))
+{}
 
-class RowStoreVersionIterator {
-    public:
-        using IteratorEntry = tell::store::BaseIteratorEntry;
-    private:
-        IteratorEntry currEntry;
-//        const Record* record; TODO: seems like it wouldn't be used...
-        const char* current = nullptr;
-        uint32_t idx = 0;
-        void initRes();
+GenericTupleSerializer::~GenericTupleSerializer() = default;
 
-    public:
+size_t GenericTupleSerializer::size() const {
+    return mSize;
+}
 
-        RowStoreVersionIterator(const Record* record, const char* current);
+void GenericTupleSerializer::serialize(char* dest) const {
+    mRecord.create(dest, mTuple, mSize);
+}
 
-        RowStoreVersionIterator() {}
-
-        bool isValid() const { return current != nullptr; }
-
-        RowStoreVersionIterator& operator++();
-
-        const IteratorEntry& operator*() const {
-            return currEntry;
-        }
-
-        const IteratorEntry* operator->() const {
-            return &currEntry;
-        }
-    };
-
-} // namespace deltamain
 } // namespace store
 } // namespace tell

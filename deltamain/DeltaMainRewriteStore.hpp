@@ -20,13 +20,13 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include "Table.hpp"
 
 #include <config.h>
 #include <util/PageManager.hpp>
-#include <util/StoreImpl.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
 
@@ -42,19 +42,23 @@ namespace store {
 
 class ScanQuery;
 
-template<>
-struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, crossbow::non_movable {
-    using Table = deltamain::Table;
-    using GC = deltamain::GarbageCollector;
+template<typename Context>
+struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
+    using Table = deltamain::Table<Context>;
+    using GC = deltamain::GarbageCollector<Context>;
 
-    StoreImpl(const StorageConfig& config)
+    static const char* implementationName() {
+        return Context::implementationName();
+    }
+
+    DeltaMainRewriteStore(const StorageConfig& config)
         : mPageManager(PageManager::construct(config.totalMemory))
         , tableManager(*mPageManager, config, gc, mVersionManager)
     {
     }
 
 
-    StoreImpl(const StorageConfig& config, size_t totalMem)
+    DeltaMainRewriteStore(const StorageConfig& config, size_t totalMem)
         : mPageManager(PageManager::construct(totalMem))
         , tableManager(*mPageManager, config, gc, mVersionManager)
     {
@@ -64,7 +68,7 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
                      const Schema& schema,
                      uint64_t& idx)
     {
-        return tableManager.createTable(name, schema, idx);
+        return tableManager.createTable(name, schema, idx, tableManager.config().hashMapCapacity);
     }
 
     const Table* getTable(uint64_t id) const
@@ -77,10 +81,10 @@ struct StoreImpl<Implementation::DELTA_MAIN_REWRITE> : crossbow::non_copyable, c
         return tableManager.getTable(name, id);
     }
 
-    int get(uint64_t tableId, uint64_t key, size_t& size, const char*& data,
-            const commitmanager::SnapshotDescriptor& snapshot, uint64_t& version, bool& isNewest)
+    template <typename Fun>
+    int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun)
     {
-        return tableManager.get(tableId, key, size, data, snapshot, version, isNewest);
+        return tableManager.get(tableId, key, snapshot, std::move(fun));
     }
 
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
@@ -125,8 +129,10 @@ private:
     GC gc;
     VersionManager mVersionManager;
     TableManager<Table, GC> tableManager;
-
 };
+
+using DeltaMainRewriteRowStore = DeltaMainRewriteStore<deltamain::RowStoreContext>;
+using DeltaMainRewriteColumnStore = DeltaMainRewriteStore<deltamain::ColumnMapContext>;
 
 } // namespace store
 } // namespace tell

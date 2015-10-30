@@ -20,66 +20,71 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "PageManager.hpp"
-#include <sys/mman.h>
-#include <cassert>
-#include <memory.h>
+
+#include <crossbow/logger.hpp>
+
 #include <iostream>
 #include <new>
 
-#include <crossbow/logger.hpp>
+#include <sys/mman.h>
+#include <memory.h>
 
 namespace tell {
 namespace store {
 
 PageManager::PageManager(size_t size)
-    : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)), mSize(size), mPages(
-    size / TELL_PAGE_SIZE, nullptr)
+    : mData(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, 0, 0)),
+      mSize(size),
+      mPages(size / TELL_PAGE_SIZE, nullptr)
 {
     if (mData == MAP_FAILED) {
         throw std::bad_alloc();
     }
-    assert(size % TELL_PAGE_SIZE == 0);
-    auto numPages = size / TELL_PAGE_SIZE;
+    LOG_ASSERT(mSize % TELL_PAGE_SIZE == 0, "Size must divide the page size");
+    auto numPages = mSize / TELL_PAGE_SIZE;
     memset(mData, 0, mSize);
-    char* data = reinterpret_cast<char*>(mData);
-    data += size - TELL_PAGE_SIZE; // data does now point to the last page
-    for (size_t i = 0ul; i < numPages; ++i) {
+    auto data = reinterpret_cast<char*>(mData);
+    data += mSize - TELL_PAGE_SIZE; // data does now point to the last page
+    for (decltype(numPages) i = 0ul; i < numPages; ++i) {
         __attribute__((unused)) auto res = mPages.push(data);
-        assert(res);
+        LOG_ASSERT(res, "Pusing page did not succeed");
         data -= TELL_PAGE_SIZE;
     }
+    LOG_ASSERT(mPages.size() == numPages, "Not all pages were added to the stack");
 }
 
 PageManager::~PageManager() {
+    // TODO Fix this behavior
+    // Wait for all pages to be released
+    // This is required as the epoch might delete the PageManager while a previous epoch is being deleted (with a
+    // reference to this page manager).
+    while (mPages.capacity() != mPages.size());
     munmap(mData, mSize);
 }
 
 void* PageManager::alloc() {
     void* res = nullptr;
     __attribute__((unused)) auto success = mPages.pop(res);
-    assert(success == (res != nullptr));
-    assert(res >= mData && res < reinterpret_cast<char*>(mData) + mSize);
-    assert((reinterpret_cast<char*>(res) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0);
+    LOG_ASSERT(success == (res != nullptr), "Successful pop must not return null pages");
+    LOG_ASSERT(!success || (res >= mData && res < reinterpret_cast<char*>(mData) + mSize), "Page points out of bound");
+    LOG_ASSERT(!success || (reinterpret_cast<char*>(res) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
+            "Pointer points not to beginning of page");
     return res;
 }
 
 void PageManager::free(void* page) {
-    assert(page >= mData && page < reinterpret_cast<char*>(mData) + mSize);
-    assert((reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0);
+    LOG_ASSERT(page != nullptr, "Page must not be null");
+    LOG_ASSERT(page >= mData && page < reinterpret_cast<char*>(mData) + mSize, "Page points out of bound");
+    LOG_ASSERT((reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
+            "Pointer points not to beginning of page");
     memset(page, 0, TELL_PAGE_SIZE);
     freeEmpty(page);
 }
 
 void PageManager::freeEmpty(void* page) {
     while (!mPages.push(page));
-}
-
-const char *PageManager::getPageStart(const char *address) const {
-    return reinterpret_cast<const char *> (
-        reinterpret_cast<uint64_t>(address)
-        - ((reinterpret_cast<uint64_t>(address) - reinterpret_cast<uint64_t>(mData)) % TELL_PAGE_SIZE)
-        );
 }
 
 } // namespace store

@@ -2,10 +2,13 @@
 # TellStore common
 ###################
 set(COMMON_SRCS
+    GenericTuple.cpp
+    MessageTypes.cpp
     Record.cpp
 )
 
 set(COMMON_PUBLIC_HDR
+    AbstractTuple.hpp
     ErrorCode.hpp
     GenericTuple.hpp
     MessageTypes.hpp
