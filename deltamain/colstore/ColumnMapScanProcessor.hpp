@@ -36,7 +36,7 @@ class Record;
 
 namespace deltamain {
 
-class ColumnMapMainPage;
+struct ColumnMapMainPage;
 
 class ColumnMapScanProcessor {
 private:
