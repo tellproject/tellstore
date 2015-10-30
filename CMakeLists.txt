@@ -32,6 +32,7 @@ find_package(CommitManager REQUIRED)
 find_package(Sparsehash REQUIRED)
 find_package(TBB REQUIRED)
 find_package(Jemalloc REQUIRED)
+find_package(LLVM 3.7 EXACT REQUIRED)
 
 if(IMPLEMENTATION STREQUAL "DELTA_MAIN_REWRITE")
     set(STORAGE_LIBRARY tellstore-deltamain)
