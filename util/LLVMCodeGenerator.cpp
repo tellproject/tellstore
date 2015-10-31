@@ -137,6 +137,11 @@ LLVMCodeGenerator::MaterializeFuncPtr LLVMCodeGenerator::generate_colmap_materia
         const std::string &functionName
     )
 {
+#ifndef NDEBUG
+    LOG_TRACE("Generating LLVM materialize function");
+    auto startTime = std::chrono::steady_clock::now();
+#endif
+
     // create an LLVM Context
     LLVMContext llvmContext;
 
@@ -144,7 +149,8 @@ LLVMCodeGenerator::MaterializeFuncPtr LLVMCodeGenerator::generate_colmap_materia
     IRBuilder<> builder(llvmContext);
 
     auto module = LLVMCodeGenerator::getModule(jit, llvmContext, "LLVM jit module");
-
+    module->setDataLayout(jit->getTargetMachine().createDataLayout());
+    module->setTargetTriple(jit->getTargetMachine().getTargetTriple().getTriple());
 
     // create argument vector
     std::vector<Type*> args ({{
@@ -238,19 +244,31 @@ LLVMCodeGenerator::MaterializeFuncPtr LLVMCodeGenerator::generate_colmap_materia
     builder.CreateRetVoid();
     LOG_ASSERT(verifyFunction(*func), "LLVM Code Generation for ColumnMap materialize failed!");
 #ifndef NDEBUG
+    LOG_TRACE("Dumping LLVM Code before optimizations");
     module->dump();
 #endif
 
-//    // optimize
-//    auto optimizer = LLVMCodeGenerator::getFunctionPassManger(module.get());
-//    optimizer->run(*func);  //first dump to see the difference
+    // optimize
+    auto optimizer = LLVMCodeGenerator::getFunctionPassManger(module.get());
+    optimizer->run(*func);  //first dump to see the difference
+
+#ifndef NDEBUG
+    LOG_TRACE("Dumping LLVM Code after optimizations");
+    module->dump();
+#endif
 
     jit->addModule(std::move(module));
     auto exprSymbol = jit->findSymbol(functionName);
+    LOG_ASSERT(exprSymbol, "Couldn't find function symbol in jit module");
 
-    LOG_ASSERT(exprSymbol, "Couldn't find function symbol in jit module")
-    return reinterpret_cast<MaterializeFuncPtr>(exprSymbol.getAddress());
-    return nullptr;
+    auto res = reinterpret_cast<MaterializeFuncPtr>(exprSymbol.getAddress());
+
+#ifndef NDEBUG
+    auto endTime = std::chrono::steady_clock::now();
+    LOG_TRACE("Generating LLVM materialize function took %1%ns", (endTime - startTime).count());
+#endif
+
+    return res;
 }
 
 void LLVMCodeGenerator::initialize() {
