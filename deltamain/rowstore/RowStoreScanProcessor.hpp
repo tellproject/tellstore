@@ -35,10 +35,10 @@ class Record;
 
 namespace deltamain {
 
-class InsertLogEntry;
-class RowStoreMainEntry;
+struct InsertLogEntry;
+struct RowStoreMainEntry;
 class RowStoreMainPage;
-class UpdateLogEntry;
+struct UpdateLogEntry;
 
 class RowStoreScanProcessor {
 public:

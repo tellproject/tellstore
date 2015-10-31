@@ -475,6 +475,23 @@ public:
         return mIndexes;
     }
 
+    id_t idOf(const crossbow::string& name) const {
+        id_t res = 0;
+        for (const auto& field : mFixedSizeFields) {
+            if (field.name() == name) {
+                return res;
+            }
+            ++res;
+        }
+        for (const auto& field : mVarSizeFields) {
+            if (field.name() == name) {
+                return res;
+            }
+            ++res;
+        }
+        throw std::range_error("field does not exist");
+    }
+
 public: // Serialization
     static Schema deserialize(crossbow::buffer_reader& reader);
     size_t serializedLength() const;

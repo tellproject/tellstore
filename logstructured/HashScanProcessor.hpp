@@ -33,7 +33,7 @@
 namespace tell {
 namespace store {
 
-class LogstructuredMemoryStore;
+struct LogstructuredMemoryStore;
 
 namespace logstructured {
 

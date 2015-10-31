@@ -223,10 +223,6 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
         LOG_DEBUG("Getting tuple took %1%ns", getDuration.count());
 
         auto tuple = getFuture->get();
-        if (!tuple->found()) {
-            LOG_ERROR("Tuple not found");
-            return;
-        }
         if (tuple->version() != snapshot->version()) {
             LOG_ERROR("Tuple not in the version written");
             return;
