@@ -33,88 +33,97 @@
  * License. See LICENSE.TXT for details.
  *
  */
+
 #pragma once
 
-#include "llvm/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
-#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
-#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
-#include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
-#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
-#include "llvm/IR/Mangler.h"
-#include "llvm/Support/DynamicLibrary.h"
+#include <llvm/ExecutionEngine/Orc/IRCompileLayer.h>
+#include <llvm/ExecutionEngine/Orc/JITSymbol.h>
+#include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/Mangler.h>
+
+#include <crossbow/singleton.hpp>
+
+#include <memory>
 
 namespace llvm {
-namespace orc {
+class Module;
+class TargetMachine;
+} // namespace llvm
 
-class LLVMJIT {
+namespace tell {
+namespace store {
+
+/**
+ * @brief Singleton for initializing and configuring the LLVM infrastructure
+ *
+ * Initializes the native target and sets up the TargetMachine with the features available on the host the application
+ * is running.
+ */
+class LLVMCompilerT {
 public:
-  typedef ObjectLinkingLayer<> ObjLayerT;
-  typedef IRCompileLayer<ObjLayerT> CompileLayerT;
-  typedef CompileLayerT::ModuleSetHandleT ModuleHandleT;
-  LLVMJIT()
-      : TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
-        CompileLayer(ObjectLayer, SimpleCompiler(*TM)) {
-    llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
-  }
-  TargetMachine &getTargetMachine() { return *TM; }
-  ModuleHandleT addModule(std::unique_ptr<Module> M) {
-    // We need a memory manager to allocate memory and resolve symbols for this
-    // new module. Create one that resolves symbols by looking back into the
-    // JIT.
-    auto Resolver = createLambdaResolver(
-        [&](const std::string &Name) {
-          if (auto Sym = findMangledSymbol(Name))
-            return RuntimeDyld::SymbolInfo(Sym.getAddress(), Sym.getFlags());
-          return RuntimeDyld::SymbolInfo(nullptr);
-        },
-        [](const std::string &S) { return nullptr; });
-    auto H = CompileLayer.addModuleSet(singletonSet(std::move(M)),
-                                       make_unique<SectionMemoryManager>(),
-                                       std::move(Resolver));
-    ModuleHandles.push_back(H);
-    return H;
-  }
-  void removeModule(ModuleHandleT H) {
-    ModuleHandles.erase(
-        std::find(ModuleHandles.begin(), ModuleHandles.end(), H));
-    CompileLayer.removeModuleSet(H);
-  }
-  JITSymbol findSymbol(const std::string Name) {
-    return findMangledSymbol(mangle(Name));
-  }
-private:
-  std::string mangle(const std::string &Name) {
-    std::string MangledName;
-    {
-      raw_string_ostream MangledNameStream(MangledName);
-      Mangler::getNameWithPrefix(MangledNameStream, Name, DL);
+    LLVMCompilerT();
+
+    ~LLVMCompilerT();
+
+    llvm::TargetMachine* targetMachine() {
+        return mTargetMachine.get();
     }
-    return MangledName;
-  }
-  template <typename T> static std::vector<T> singletonSet(T t) {
-    std::vector<T> Vec;
-    Vec.push_back(std::move(t));
-    return Vec;
-  }
-  JITSymbol findMangledSymbol(const std::string &Name) {
-    // Search modules in reverse order: from last added to first added.
-    // This is the opposite of the usual search order for dlsym, but makes more
-    // sense in a REPL where we want to bind to the newest available definition.
-    for (auto H : make_range(ModuleHandles.rbegin(), ModuleHandles.rend()))
-      if (auto Sym = CompileLayer.findSymbolIn(H, Name, true))
-        return Sym;
-    // If we can't find the symbol in the JIT, try looking in the host process.
-    if (auto SymAddr = RTDyldMemoryManager::getSymbolAddressInProcess(Name))
-      return JITSymbol(SymAddr, JITSymbolFlags::Exported);
-    return nullptr;
-  }
-  std::unique_ptr<TargetMachine> TM;
-  const DataLayout DL;
-  ObjLayerT ObjectLayer;
-  CompileLayerT CompileLayer;
-  std::vector<ModuleHandleT> ModuleHandles;
+
+private:
+    std::unique_ptr<llvm::TargetMachine> mTargetMachine;
 };
 
-} // End namespace orc.
-} // End namespace llvm
+using LLVMCompiler = crossbow::singleton<LLVMCompilerT>;
+
+extern LLVMCompiler llvmCompiler;
+
+/**
+ * @brief JIT based on LLVM
+ */
+class LLVMJIT {
+public:
+    using ObjectLayer = llvm::orc::ObjectLinkingLayer<>;
+    using CompileLayer = llvm::orc::IRCompileLayer<ObjectLayer>;
+    using ModuleHandle = CompileLayer::ModuleSetHandleT;
+
+    LLVMJIT();
+
+    const llvm::TargetMachine* getTargetMachine() {
+        return mTargetMachine;
+    }
+
+    /**
+     * @brief Compile the given module through the JIT
+     *
+     * The compiled functions can then be retrieved through the LLVMJIT::findSymbol function. Afterwards the module can
+     * be destroyed.
+     */
+    ModuleHandle addModule(llvm::Module* module);
+
+    void removeModule(ModuleHandle handle) {
+        mCompileLayer.removeModuleSet(handle);
+    }
+
+    llvm::orc::JITSymbol findSymbol(const std::string& name) {
+        return mCompileLayer.findSymbol(mangle(name), true);
+    }
+
+private:
+    std::string mangle(const std::string& name) {
+        std::string mangledName;
+        {
+            llvm::raw_string_ostream mangledNameStream(mangledName);
+            llvm::Mangler::getNameWithPrefix(mangledNameStream, name, mDataLayout);
+        }
+        return mangledName;
+    }
+
+    llvm::TargetMachine* mTargetMachine;
+    llvm::DataLayout mDataLayout;
+    ObjectLayer mObjectLayer;
+    CompileLayer mCompileLayer;
+};
+
+} // namespace store
+} // namespace tell

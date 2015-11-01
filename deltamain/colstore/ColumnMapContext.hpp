@@ -26,13 +26,12 @@
 #include "ColumnMapPage.hpp"
 #include "ColumnMapScanProcessor.hpp"
 
-#include <util/LLVMCodeGenerator.hpp>
+#include <util/LLVMJIT.hpp>
 
 #include <config.h>
 
 #include <cstdint>
 #include <vector>
-
 
 namespace tell {
 namespace store {
@@ -118,11 +117,24 @@ public:
                 - ((reinterpret_cast<uintptr_t>(entry) - mPageData) % TELL_PAGE_SIZE));
     }
 
+    /**
+     * @brief Materialize the tuple from the page into the destination buffer
+     */
     void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-        mMaterialize(page->recordData(), idx, dest, size, page->count, page->heapData());
+        mMaterialize(page->recordData(), page->heapData(), page->count, idx, dest, size);
     }
 
 private:
+    using MaterializeFunc = void (*) (
+            const char* /* record data */,
+            const char* /* page heap data */,
+            uint32_t /* count */,
+            uint64_t /* idx */,
+            char* /* dest */,
+            size_t /* size */);
+
+    MaterializeFunc generateMaterializeFunc();
+
     /// Pointer to the start of the page manager data region
     uintptr_t mPageData;
 
@@ -141,10 +153,9 @@ private:
     /// \copydoc ColumnMapContext::fieldLengths() const
     std::vector<uint32_t> mFieldLengths;
 
-    std::unique_ptr<llvm::orc::LLVMJIT>  mLLVMJit;
+    MaterializeFunc mMaterialize;
 
-    // Function pointer
-    LLVMCodeGenerator::MaterializeFuncPtr mMaterialize;
+    LLVMJIT mLLVMJit;
 };
 
 } // namespace deltamain

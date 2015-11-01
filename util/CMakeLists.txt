@@ -3,16 +3,17 @@
 ###################
 set(UTIL_SRCS
     CuckooHash.cpp
+    LLVMJIT.cpp
     Log.cpp
     OpenAddressingHash.cpp
     PageManager.cpp
     ScanQuery.cpp
-    LLVMCodeGenerator.cpp
 )
 
 set(UTIL_PRIVATE_HDR
     CuckooHash.hpp
     functional.hpp
+    LLVMJIT.hpp
     Log.hpp
     OpenAddressingHash.hpp
     PageManager.hpp
@@ -23,8 +24,6 @@ set(UTIL_PRIVATE_HDR
     TableManager.hpp
     UnsafeAtomic.hpp
     VersionManager.hpp
-    LLVMCodeGenerator.hpp
-    LLVMJIT.hpp
 )
 
 set(USED_LLVM_LIBRARIES

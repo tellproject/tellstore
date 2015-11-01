@@ -12,7 +12,6 @@ set(TEST_SRCS
     simpleTests.cpp
     deltamain/testInsertHash.cpp
     logstructured/testTable.cpp
-    testLLVMCodeGenerator.cpp
 )
 
 set(TEST_PRIVATE_HDR
