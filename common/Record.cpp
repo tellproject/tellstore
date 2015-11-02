@@ -173,7 +173,7 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
     reader.advance(sizeof(uint8_t));
     for (uint16_t i = 0; i < numColumns; ++i) {
         auto ftype = reader.read<FieldType>();
-        bool isNotNull = (reader.read<uint8_t>() != 0x0u);
+        bool notNull = (reader.read<uint8_t>() != 0x0u);
         reader.advance(sizeof(uint8_t));
         auto nameLen = reader.read<uint32_t>();
         crossbow::string name(reader.data(), nameLen);
@@ -181,7 +181,7 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
         reader.align(sizeof(uint32_t));
 
         mAllNotNull &= notNull;
-        Field field(ftype, name, isNotNull);
+        Field field(ftype, name, notNull);
         if (field.isFixedSized()) {
             res.mFixedSizeFields.emplace_back(std::move(field));
         } else {
