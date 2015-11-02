@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #pragma once
 
 #include "PredicateBitmap.hpp"
@@ -269,6 +270,8 @@ private:
  */
 class ScanQueryProcessor : crossbow::non_copyable {
 public:
+    static constexpr size_t TUPLE_OVERHEAD = sizeof(uint64_t);
+
     ScanQueryProcessor(ScanQuery* data)
             : mData(data),
               mBuffer(nullptr),
@@ -294,6 +297,19 @@ public:
      */
     void processRecord(const Record& record, uint64_t key, const char* data, uint32_t length, uint64_t validFrom,
             uint64_t validTo);
+
+    /**
+     * @brief Process the tuple according to the query data associated with this processor
+     *
+     * @param record Record of the tuple
+     * @param key Key of the tuple
+     * @param length Length of the tuple
+     * @param validFrom Valid-From version of the tuple
+     * @param validTo Valid-To version of the tuple
+     * @param fun Function to serialize the record
+     */
+    template <typename Fun>
+    void writeRecord(uint64_t key, uint32_t length, uint64_t validFrom, uint64_t validTo, Fun fun);
 
 private:
     /**
@@ -378,6 +394,27 @@ private:
     uint16_t mTupleCount;
 };
 
+template <typename Fun>
+void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t validFrom, uint64_t validTo, Fun fun) {
+    LOG_ASSERT(mData->queryType() == ScanQueryType::FULL, "Only full record supported");
+
+    auto snapshot = mData->snapshot();
+    if (snapshot && !snapshot->inReadSet(validFrom, validTo)) {
+        return;
+    }
+
+    ensureBufferSpace(length + TUPLE_OVERHEAD);
+
+    // Write key
+    mBufferWriter.write<uint64_t>(key);
+
+    // Write complete tuple
+    fun(mBufferWriter.data());
+    mBufferWriter.advance(length);
+
+    ++mTupleCount;
+}
+
 /**
  * @brief Processor for processing a batch of queries all at once
  *
@@ -424,6 +461,10 @@ public:
      */
     void processRecord(const Record& record, uint64_t key, const char* data, uint32_t length, uint64_t validFrom,
             uint64_t validTo);
+
+    std::vector<ScanQueryProcessor>& queries() {
+        return mQueries;
+    }
 
 private:
     constexpr static off_t offsetToFirstColumn() { return 8; }

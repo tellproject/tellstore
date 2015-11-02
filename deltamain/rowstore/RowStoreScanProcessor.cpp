@@ -33,6 +33,7 @@ namespace store {
 namespace deltamain {
 
 RowStoreScanProcessor::RowStoreScanProcessor(
+        const RowStoreContext& /* context */,
         const std::shared_ptr<crossbow::allocator>& alloc,
         const PageList& pages,
         size_t pageIdx,

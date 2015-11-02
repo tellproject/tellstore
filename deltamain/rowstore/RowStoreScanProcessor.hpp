@@ -36,6 +36,7 @@ class Record;
 namespace deltamain {
 
 struct InsertLogEntry;
+class RowStoreContext;
 struct RowStoreMainEntry;
 class RowStoreMainPage;
 struct UpdateLogEntry;
@@ -45,15 +46,10 @@ public:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<RowStoreMainPage*>;
 
-    RowStoreScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc,
-             const PageList& pages,
-             size_t pageIdx,
-             size_t pageEndIdx,
-             const LogIterator& logIter,
-             const LogIterator& logEnd,
-             const char* queryBuffer,
-             const std::vector<ScanQuery*>& queryData,
-             const Record& record);
+    RowStoreScanProcessor(const RowStoreContext& context, const std::shared_ptr<crossbow::allocator>& alloc,
+            const PageList& pages, size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter,
+            const LogIterator& logEnd, const char* queryBuffer, const std::vector<ScanQuery*>& queryData,
+            const Record& record);
 
     void process();
 

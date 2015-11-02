@@ -36,30 +36,46 @@ class Record;
 
 namespace deltamain {
 
+class ColumnMapContext;
+struct ColumnMapMainEntry;
 struct ColumnMapMainPage;
+struct InsertLogEntry;
+struct UpdateLogEntry;
 
 class ColumnMapScanProcessor {
 private:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<ColumnMapMainPage*>;
-private: // assigned members
+
+public:
+    ColumnMapScanProcessor(const ColumnMapContext& context, const std::shared_ptr<crossbow::allocator>& alloc,
+            const PageList& pages, size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter,
+            const LogIterator& logEnd, const char* queryBuffer, const std::vector<ScanQuery*>& queryData,
+            const Record& record);
+
+    void process();
+
+private:
+    void processMainPage(const ColumnMapMainPage* page);
+
+    std::vector<uint64_t> processEntries(const ColumnMapMainEntry* entries, uint32_t count);
+
+    void processInsertRecord(const InsertLogEntry* ptr);
+
+    uint64_t processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo);
+
+    const ColumnMapContext& mContext;
+
     std::shared_ptr<crossbow::allocator> mAllocator;
     const PageList& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
     LogIterator logEnd;
-    ScanQueryBatchProcessor query;
-    const Record& record;
-private: // calculated members
+    ScanQueryBatchProcessor mQuery;
+    const Record& mRecord;
 
-    uint64_t currKey;
-public:
-    ColumnMapScanProcessor(const std::shared_ptr<crossbow::allocator>& alloc, const PageList& pages, size_t pageIdx,
-            size_t pageEndIdx, const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queryData, const Record& record);
-
-    void process();
+    std::vector<char> mResult;
 };
 
 } // namespace deltamain

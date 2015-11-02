@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include "ScanQuery.hpp"
 
 #include <crossbow/alignment.hpp>
@@ -29,8 +30,6 @@ namespace store {
 namespace {
 
 const uint16_t gMaxTupleCount = 250;
-
-const size_t gTupleDataOffset = sizeof(uint64_t);
 
 Record buildScanRecord(ScanQueryType queryType, const char* queryData, const char* queryDataEnd, const Record& record) {
     switch (queryType) {
@@ -78,7 +77,7 @@ ScanQuery::ScanQuery(ScanQueryType queryType, std::unique_ptr<char[]> selectionD
           mSnapshot(std::move(snapshot)),
           mRecord(buildScanRecord(mQueryType, mQueryData.get(), mQueryDataEnd, record)),
           mHeaderLength(mRecord.headerSize()),
-          mMinimumLength(mRecord.minimumSize() + gTupleDataOffset) {
+          mMinimumLength(mRecord.minimumSize() + ScanQueryProcessor::TUPLE_OVERHEAD) {
 }
 
 ScanQuery::~ScanQuery() = default;
@@ -155,7 +154,7 @@ void ScanQueryProcessor::processRecord(const Record& record, uint64_t key, const
 }
 
 void ScanQueryProcessor::writeFullRecord(uint64_t key, const char* data, uint32_t length) {
-    ensureBufferSpace(length + gTupleDataOffset);
+    ensureBufferSpace(length + TUPLE_OVERHEAD);
 
     // Write key
     mBufferWriter.write<uint64_t>(key);
@@ -210,7 +209,7 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
 
         if (mBuffer) {
             // Copy the incomplete tuple into the new buffer (including the preceding key)
-            auto dataStart = ptr - gTupleDataOffset;
+            auto dataStart = ptr - TUPLE_OVERHEAD;
             auto dataLength = static_cast<size_t>(mBufferWriter.data() - dataStart);
             newBufferWriter.write(dataStart, dataLength);
 
@@ -225,7 +224,7 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
 
         mBuffer = newBuffer;
         mBufferWriter = std::move(newBufferWriter);
-        ptr = mBuffer + gTupleDataOffset;
+        ptr = mBuffer + TUPLE_OVERHEAD;
         mTupleCount = 0u;
 
         if (!field.isFixedSized()) {
@@ -251,7 +250,7 @@ void ScanQueryProcessor::writeAggregationRecord(const Record& record, const char
         initAggregationRecord();
     }
 
-    auto tupleData = mBuffer + gTupleDataOffset;
+    auto tupleData = mBuffer + TUPLE_OVERHEAD;
 
     Record::id_t fieldId = 0u;
     auto end = mData->aggregationEnd();
@@ -275,7 +274,7 @@ void ScanQueryProcessor::initAggregationRecord() {
 
     mBufferWriter.write<uint64_t>(0u);
     auto tupleData = mBufferWriter.data();
-    mBufferWriter.set(0, mData->minimumLength() - gTupleDataOffset);
+    mBufferWriter.set(0, mData->minimumLength() - TUPLE_OVERHEAD);
 
     // Set all fields that can be NULL to NULL
     // Whenever the first value is written the field will be marked as non-NULL

@@ -215,7 +215,8 @@ std::vector<typename Table<Context>::ScanProcessor> Table<Context>::Table::start
     for (decltype(numThreads) i = 0; i < numThreads; ++i) {
         const auto& startIter = (i == numThreads - 1 ? insIter : insEnd);
         auto endIdx = beginIdx + numPages / numThreads + (i < mod ? 1 : 0);
-        result.emplace_back(alloc, pageList->pages, beginIdx, endIdx, startIter, insEnd, queryBuffer, queries, mRecord);
+        result.emplace_back(mContext, alloc, pageList->pages, beginIdx, endIdx, startIter, insEnd, queryBuffer, queries,
+                mRecord);
         beginIdx = endIdx;
     }
     return result;
