@@ -180,7 +180,7 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
         reader.advance(nameLen);
         reader.align(sizeof(uint32_t));
 
-        mAllNotNull &= notNull;
+        res.mAllNotNull &= notNull;
         Field field(ftype, name, notNull);
         if (field.isFixedSized()) {
             res.mFixedSizeFields.emplace_back(std::move(field));
