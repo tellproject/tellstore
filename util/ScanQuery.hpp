@@ -25,6 +25,7 @@
 #include "PredicateBitmap.hpp"
 
 #include <tellstore/Record.hpp>
+
 #include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/byte_buffer.hpp>
@@ -450,59 +451,9 @@ private:
         return *reinterpret_cast<const uint8_t*>(current + 1);
     }
 
-protected:
     const char* mQueryBuffer;
+
     std::vector<ScanQueryProcessor> mQueries;
-};
-
-/**
- * @brief The ScanQueryBatchPageProcessor class is used in columnstore-oriented
- * layouts where scans are not performed on single records sequentially, but
- * rather on an entire page.
- */
-class ScanQueryBatchPageProcessor : ScanQueryBatchProcessor {
-
-public:
-    ScanQueryBatchPageProcessor(const char* queryBuffer, const std::vector<ScanQuery*>& queryData, const size_t maxRecordCount);
-
-    /**
-     *
-     * @brief Process an entire page with all associated scan processors
-     *
-     * Checks all tuples against the combined query buffer.
-     * @param page
-     * @param record
-     * @param data
-     * @param length
-     */
-    void processPage(const char* page, const Record &record, const char *data, uint32_t length);
-
-private:
-    static uint getNumberOfConjucts(const char* queryBuffer)   // given a query buffer determines the total number of conjuncts (among all queries)
-    {
-        //TODO: implement
-        return 0;
-    }
-
-    /**
-     * returns a reference to the corresponding conjunct bitvector
-     */
-    uint64_t *getConjunctBitVector(uint conjunctId);   //get a reference to the bitvector for conjunct j
-
-    /**
-     * resets all elements of the bitmatrix to 0. This will usually be called
-     * when we start processing a new page
-     */
-    void resetBitMatrix();
-
-private:
-    using BlockType = uint64_t;
-    static const size_t BlockSize = sizeof(BlockType);
-    const uint mNumberOfConjuncts;
-//    const uint mMaxRecordCount;
-    const uint mConjunctBitVectorLength;
-    std::vector<BlockType> mBitMatrix;     //matrix for qualifying tuples where bit [i,j] is 1 tuple j matches conjunct j
-
 };
 
 } //namespace store
