@@ -57,9 +57,18 @@ public:
     using ConstMainRecord = ConstColumnMapRecord;
 
     /**
+     * @brief Worst case padding overhead on a page
+     *
+     * If the number of elements is uneven a 4-byte padding has to be added after the size array so that the following
+     * record data is 8-byte aligned. In addition a maximum padding of 6 byte has to be inserted to ensure that the
+     * ColumnMapHeapEntry array is 8 byte aligned after the last fixed size field.
+     */
+    static constexpr uint32_t PAGE_PADDING_OVERHEAD = 10u;
+
+    /**
      * @brief Maximum number of bytes that fit into a column map page
      */
-    static constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE - sizeof(ColumnMapMainPage);
+    static constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE - (sizeof(ColumnMapMainPage) + PAGE_PADDING_OVERHEAD);
 
     static const char* implementationName() {
         return "Delta-Main Rewrite (Column Map)";

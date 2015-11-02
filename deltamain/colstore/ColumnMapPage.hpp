@@ -116,7 +116,7 @@ struct alignas(8) ColumnMapMainPage {
      * @brief Pointer to the record data of the elements stored in this page
      */
     const char* recordData() const {
-        return data() + count * (sizeof(ColumnMapMainEntry) + sizeof(uint32_t));
+        return crossbow::align(data() + count * (sizeof(ColumnMapMainEntry) + sizeof(uint32_t)), 8u);
     }
 
     char* recordData() {

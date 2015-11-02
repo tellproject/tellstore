@@ -522,6 +522,7 @@ private:
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<std::pair<Field, int32_t>> mFieldMetaData;
     size_t mFixedSize;
+    size_t mVariableSizeOffset;
 public:
     Record();
 
@@ -540,7 +541,7 @@ public:
     /**
      * @brief The combined size of all fixed size fields (including the null bitmap)
      *
-     * Can be used to get the offset to the first variable sized field.
+     * This value is not yet aligned! To get the offset to the first variable sized field align the size to 4 bytes.
      */
     size_t fixedSize() const {
         return mFixedSize;

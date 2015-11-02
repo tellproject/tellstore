@@ -90,6 +90,22 @@ llvm::Value* creatMulOrShift(llvm::LLVMContext& context, llvm::IRBuilder<>& buil
         return builder.CreateMul(lhs, ConstantInt::get(context, APInt(32, factor)));
 }
 
+llvm::Value* createPointerAlign(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* value,
+        uintptr_t alignment) {
+    using namespace llvm;
+
+    // -> auto result = reinterpret_cast<uintptr_t>(value);
+    auto result = builder.CreatePtrToInt(value, Type::getIntNTy(context, sizeof(uintptr_t) * 8));
+    // -> result = result - 1u + alignment;
+    result = builder.CreateAdd(result, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, alignment - 1u)));
+    // -> result = result & -alignment;
+    result = builder.CreateAnd(result, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, -alignment)));
+    // -> recordData = reinterpret_cast<const char*>(recordDataPtr);
+    result = builder.CreateIntToPtr(result, Type::getInt8PtrTy(context));
+
+    return result;
+}
+
 /**
  * @brief Calculate the additional overhead required by every element in a column map page
  *
@@ -104,7 +120,7 @@ uint32_t calcEntryOverhead(const Record& record) {
  * @brief Calculate the number of elements fitting in one page excluding any variable sized fields
  */
 uint32_t calcFixedSizeCapacity(const Record& record) {
-    return ColumnMapContext::MAX_DATA_SIZE / (calcEntryOverhead(record) + crossbow::align(record.fixedSize(), 8));
+    return ColumnMapContext::MAX_DATA_SIZE / (calcEntryOverhead(record) + record.fixedSize());
 }
 
 } // anonymous namespace
@@ -197,12 +213,26 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     auto bb = BasicBlock::Create(context, "entry", func);
     builder.SetInsertPoint(bb);
 
+    // Set alignment hints (all pointers are 8 byte aligned)
+    builder.CreateAlignmentAssumption(module.getDataLayout(), args[0], 8u);
+    builder.CreateAlignmentAssumption(module.getDataLayout(), args[1], 8u);
+    builder.CreateAlignmentAssumption(module.getDataLayout(), args[4], 8u);
+
     // Build function body
     auto recordData = args[0];
     auto dest = args[4];
 
     // Copy all fixed size fields including the header (null bitmap) if the record has one
+    typename decltype(mFieldLengths)::value_type lastFieldLength = 0;
     for (auto fieldLength : mFieldLengths) {
+        if (lastFieldLength != 0u) {
+            // -> dest += fieldLength
+            dest = builder.CreateAdd(dest, ConstantInt::get(context, APInt(64, lastFieldLength)));
+
+            // -> recordData += page->count * fieldLength;
+            recordData = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[2], lastFieldLength));
+        }
+
         // -> auto src = recordData + idx * fieldLength;
         auto src = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[3], fieldLength));
 
@@ -211,20 +241,32 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
             dest,
             src,
             ConstantInt::get(context, APInt(64, fieldLength)),
-            ConstantInt::get(context, APInt(32, 1)),
+            ConstantInt::get(context, APInt(32, (fieldLength > 8u ? 8u : fieldLength))),
             ConstantInt::getFalse(context)
         }};
         builder.CreateCall(memcpyFunc, makeArrayRef(&memcpyValues.front(), memcpyValues.size()));
 
-        // -> dest += fieldLength
-        dest = builder.CreateAdd(dest, ConstantInt::get(context, APInt(64, fieldLength)));
-
-        // -> recordData += page->count * fieldLength;
-        recordData = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[2], fieldLength));
+        lastFieldLength = fieldLength;
     }
 
     // Copy all variable size fields in one batch
-    if (mVarSizeFieldCount != 0) {
+    if (mVarSizeFieldCount != 0u) {
+        if (lastFieldLength != 0u) {
+            // -> dest += crossbow::align(fieldLength, 4u);
+            auto alignedFieldLength = crossbow::align(lastFieldLength, 4u);
+            dest = builder.CreateAdd(dest, ConstantInt::get(context, APInt(64, alignedFieldLength)));
+            builder.CreateAlignmentAssumption(module.getDataLayout(), dest, 4u);
+
+            // -> recordData += page->count * fieldLength;
+            recordData = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[2], lastFieldLength));
+
+            if (lastFieldLength < 8u) {
+                // -> recordData = crossbow::align(recordData, 8u);
+                recordData = createPointerAlign(context, builder, recordData, 8u);
+            }
+            builder.CreateAlignmentAssumption(module.getDataLayout(), recordData, 8u);
+        }
+
         // -> auto offset = reinterpret_cast<const ColumnMapHeapEntry*>(recordData)[idx].offset;
         static_assert(offsetof(ColumnMapHeapEntry, offset) == 0, "Offset of ColumnMapHeapEntry::offset must be 0");
         auto heapOffset = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[3],
@@ -235,15 +277,15 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
         auto heapOffsetSub = builder.CreateSub(ConstantInt::get(context, APInt(32, 0)), heapOffset);
         auto src = builder.CreateGEP(args[1], heapOffsetSub);
 
-        // -> auto length = size - mFixedSize;
-        auto length = builder.CreateSub(args[5], ConstantInt::get(context, APInt(64, mFixedSize)));
+        // -> auto length = size - crossbow::align(mFixedSize, 4u);
+        auto length = builder.CreateSub(args[5], ConstantInt::get(context, APInt(64, crossbow::align(mFixedSize, 4u))));
 
         // -> memcpy(dest, src, length);
         std::array<Value*, 5> memcpyValues = {{
             dest,
             src,
             length,
-            ConstantInt::get(context, APInt(32, 1)),
+            ConstantInt::get(context, APInt(32, 4u)),
             ConstantInt::getFalse(context)
         }};
         builder.CreateCall(memcpyFunc, makeArrayRef(&memcpyValues.front(), memcpyValues.size()));

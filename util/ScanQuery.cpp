@@ -195,6 +195,9 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
         const char* data) {
     FieldBase field(type);
     auto fieldLength = field.sizeOf(data);
+    if (!field.isFixedSized()) {
+        mBufferWriter.align(4u);
+    }
     if (!mBufferWriter.canWrite(fieldLength)) {
         char* newBuffer;
         uint32_t newBufferLength;
@@ -224,6 +227,10 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
         mBufferWriter = std::move(newBufferWriter);
         ptr = mBuffer + gTupleDataOffset;
         mTupleCount = 0u;
+
+        if (!field.isFixedSized()) {
+            mBufferWriter.align(4u);
+        }
 
         if (!mBufferWriter.canWrite(fieldLength)) {
             // TODO Handle error

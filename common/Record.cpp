@@ -215,11 +215,29 @@ Record::Record(Schema schema)
           mFixedSize(headerSize()) {
     size_t id = 0;
     for (const auto& field : mSchema.fixedSizeFields()) {
+        auto fieldLength = field.staticSize();
+        if (fieldLength < 8u) {
+            continue;
+        }
+        LOG_ASSERT(fieldLength % 8u == 0u, "Field Size must be a multiple of 8");
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, mFixedSize);
-        mFixedSize += field.staticSize();
+        mFixedSize += fieldLength;
     }
 
+    for (auto alignment : {4u, 2u}) {
+        for (const auto& field : mSchema.fixedSizeFields()) {
+            auto fieldLength = field.staticSize();
+            if (fieldLength != alignment) {
+                continue;
+            }
+            mIdMap.insert(std::make_pair(field.name(), id));
+            mFieldMetaData[id++] = std::make_pair(field, mFixedSize);
+            mFixedSize += fieldLength;
+        }
+    }
+
+    mVariableSizeOffset = crossbow::align(mFixedSize, 4u);
     for (const auto& field : mSchema.varSizeFields()) {
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, std::numeric_limits<int32_t>::min());
@@ -228,7 +246,7 @@ Record::Record(Schema schema)
 
 size_t Record::sizeOfTuple(const GenericTuple& tuple) const
 {
-    auto result = mFixedSize;
+    auto result = mVariableSizeOffset;
 
     // Iterate over all variable sized fields
     for (auto i = std::next(mFieldMetaData.begin(), mSchema.fixedSizeFields().size()); i != mFieldMetaData.end(); ++i) {
@@ -241,19 +259,21 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const
         } else {
             result += field.sizeOf(iter->second);
         }
+        result = crossbow::align(result, 4u);
     }
 
     // we have to make sure that the size of a tuple is 8 byte aligned
-    return crossbow::align(result, 8);
+    return crossbow::align(result, 8u);
 }
 
 size_t Record::sizeOfTuple(const char* ptr) const {
-    auto result = mFixedSize;
+    auto result = mVariableSizeOffset;
 
     // Iterate over all variable sized fields and add their lengths up
     for (decltype(mSchema.varSizeFields().size()) i = 0; i < mSchema.varSizeFields().size(); ++i) {
         // we know that now all fields are variable length - that means the first four bytes are always the field size
         result += *reinterpret_cast<const uint32_t* const>(ptr + result) + sizeof(uint32_t);
+        result = crossbow::align(result, 4u);
     }
 
     // we have to make sure that the size of a tuple is 8 byte aligned
@@ -271,7 +291,7 @@ size_t Record::headerSize() const {
 
 size_t Record::minimumSize() const {
     // Variable sized fields are always at least 4 bytes to indicate a NULL length
-    return crossbow::align(mFixedSize + mSchema.varSizeFields().size() * sizeof(uint32_t), 8);
+    return crossbow::align(mVariableSizeOffset + mSchema.varSizeFields().size() * sizeof(uint32_t), 8u);
 }
 
 
@@ -307,6 +327,11 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
             // In this case we set the field to NULL
             setFieldNull(result, id, true);
 
+            // If this is a variable sized field we have to make sure it is aligned
+            if (f.second < 0) {
+                current = crossbow::align(current, 4u);
+            }
+
             // Write a string of \0 bytes as a default value for fields if the field is null. This is for performance
             // reason as any fixed size field has a constant offset.
             auto fieldLength = f.first.defaultSize();
@@ -324,27 +349,38 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
                 return false;
             }
             case FieldType::SMALLINT: {
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(int16_t) == 0u,
+                        "Pointer to field must be aligned");
                 memcpy(current, boost::any_cast<int16_t>(&(iter->second)), sizeof(int16_t));
                 current += sizeof(int16_t);
             } break;
             case FieldType::INT: {
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(int32_t) == 0u,
+                        "Pointer to field must be aligned");
                 memcpy(current, boost::any_cast<int32_t>(&(iter->second)), sizeof(int32_t));
                 current += sizeof(int32_t);
             } break;
             case FieldType::BIGINT: {
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(int64_t) == 0u,
+                        "Pointer to field must be aligned");
                 memcpy(current, boost::any_cast<int64_t>(&(iter->second)), sizeof(int64_t));
                 current += sizeof(int64_t);
             } break;
             case FieldType::FLOAT: {
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(float) == 0u,
+                        "Pointer to field must be aligned");
                 memcpy(current, boost::any_cast<float>(&(iter->second)), sizeof(float));
                 current += sizeof(float);
             } break;
             case FieldType::DOUBLE: {
+                LOG_ASSERT(reinterpret_cast<uintptr_t>(current) % alignof(double) == 0u,
+                        "Pointer to field must be aligned");
                 memcpy(current, boost::any_cast<double>(&(iter->second)), sizeof(double));
                 current += sizeof(double);
             } break;
             case FieldType::TEXT:
             case FieldType::BLOB: {
+                current = crossbow::align(current, 4u);
                 const crossbow::string& str = *boost::any_cast<crossbow::string>(&(iter->second));
                 uint32_t len = uint32_t(str.size());
                 memcpy(current, &len, sizeof(len));
@@ -360,6 +396,7 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
             }
         }
     }
+    LOG_ASSERT((crossbow::align(current, 8u) - result) == recSize, "Data not written to the end");
     return true;
 }
 
@@ -375,12 +412,13 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     isNull = isFieldNull(ptr, id);
     if (p.second < 0) {
         // we need to calc the position
-        auto pos = mFixedSize;
+        auto pos = mVariableSizeOffset;
         LOG_ASSERT(pos >= 0, "Offset for first variable length field is smaller than 0");
         for (auto baseId = mSchema.fixedSizeFields().size(); baseId < id; ++baseId) {
             // we know, that now all fields are variable length - that means the first four bytes are always the field
             // size
             pos += *reinterpret_cast<const uint32_t* const>(ptr + pos) + sizeof(uint32_t);
+            pos = crossbow::align(pos, 4u);
         }
         return ptr + pos;
     } else {

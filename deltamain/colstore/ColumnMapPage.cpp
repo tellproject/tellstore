@@ -368,8 +368,8 @@ void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t sta
     LOG_ASSERT(endIdx > startIdx, "End index must be larger than start index");
 
     // Determine begin and end offset of the variable size heap
-    auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(page->recordData()
-            + page->count * mContext.fixedSize());
+    auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(crossbow::align(page->recordData()
+            + page->count * mContext.fixedSize(), 8u));
     auto beginOffset = heapEntries[endIdx - 1].offset;
     auto endOffset = (startIdx == 0 ? 0 : heapEntries[startIdx - 1].offset);
     LOG_ASSERT(beginOffset >= endOffset, "End offset larger than begin offset");
@@ -452,16 +452,16 @@ void ColumnMapPageModifier::writeUpdate(const UpdateLogEntry* entry) {
     } else if (mUpdateIdx != 0u && mContext.varSizeFieldCount() != 0u) {
         // Deletes do not have any data on the var size heap but the offsets must be correct nonetheless
         // Copy the current offset of the heap
-        auto heapData = mUpdatePage->recordData() + mUpdatePage->count * mContext.fixedSize();
-        auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(heapData);
+        auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(crossbow::align(mUpdatePage->recordData()
+                + mUpdatePage->count * mContext.fixedSize(), 8u));
         auto heapOffset = heapEntries[mUpdateIdx - 1].offset;
 
-        heapData += mUpdateIdx * sizeof(ColumnMapHeapEntry);
+        heapEntries += mUpdateIdx;
         for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
-            new (heapData) ColumnMapHeapEntry(heapOffset, 0u, nullptr);
+            new (heapEntries) ColumnMapHeapEntry(heapOffset, 0u, nullptr);
 
             // Advance pointer to offset entry of next field
-            heapData += mUpdatePage->count * sizeof(ColumnMapHeapEntry);
+            heapEntries += mUpdatePage->count;
         }
     }
 
@@ -501,17 +501,19 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
         mFillHeap -= length;
         memcpy(mFillHeap, srcData, length);
 
-        destData += mUpdateIdx * sizeof(ColumnMapHeapEntry);
+        auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(crossbow::align(destData, 8u));
+        heapEntries += mUpdateIdx;
+
         auto heapOffset = static_cast<uint32_t>(mFillPage->heapData() - mFillHeap);
         for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
             // Write heap entry and advance to next field
             auto varSize = *reinterpret_cast<const uint32_t*>(srcData);
             srcData += sizeof(uint32_t);
-            new (destData) ColumnMapHeapEntry(heapOffset, varSize, srcData);
+            new (heapEntries) ColumnMapHeapEntry(heapOffset, varSize, srcData);
             srcData += varSize;
 
             // Advance pointer to offset entry of next field
-            destData += mUpdatePage->count * sizeof(ColumnMapHeapEntry);
+            heapEntries += mUpdatePage->count;
 
             // Advance offset into the heap
             heapOffset -= sizeof(uint32_t) + varSize;
@@ -572,14 +574,17 @@ void ColumnMapPageModifier::flushFillPage() {
         }
         startOffset += fieldLength;
     }
+    LOG_ASSERT(startOffset == mContext.fixedSize(), "Offset after adding all fixed size fields is not the fixed size");
 
     // Copy all variable size field heap entries
     // If the offset correction is 0 we can do a single memory copy otherwise we have to adjust the offset for every
     // element.
+    recordData = crossbow::align(recordData, 8u);
     for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
         for (const auto& action : mCleanActions) {
-            auto srcData = reinterpret_cast<const ColumnMapHeapEntry*>(action.page->recordData()
-                    + action.page->count * startOffset + action.startIdx * sizeof(ColumnMapHeapEntry));
+            auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(crossbow::align(action.page->recordData()
+                    + action.page->count * startOffset, 8u));
+            auto srcData = heapEntries + (action.page->count * i) + action.startIdx;
             if (action.offsetCorrection == 0) {
                 auto length = (action.endIdx - action.startIdx) * sizeof(ColumnMapHeapEntry);
                 memcpy(recordData, srcData, length);
@@ -593,7 +598,6 @@ void ColumnMapPageModifier::flushFillPage() {
                 }
             }
         }
-        startOffset += sizeof(ColumnMapHeapEntry);
     }
     mCleanActions.clear();
 

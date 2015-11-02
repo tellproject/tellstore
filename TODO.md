@@ -2,7 +2,7 @@
 
 - [ ] Take PageManager out of the epoch mechanism
 - [ ] Add DropTable command
-- [ ] Fix alignment in serialized records
+- [x] Fix alignment in serialized records
 - [ ] Do not crash on shutdown
 - [ ] Cache SnapshotDescriptor in server
 - [ ] Move SnapshotDescriptor code from CommitManager to TellStore (do not link against CommitManager)
