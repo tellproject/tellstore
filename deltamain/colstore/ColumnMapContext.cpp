@@ -192,6 +192,11 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
         }
     }
 
+    // Set noalias hints (data pointers are not allowed to overlap)
+    func->setDoesNotAlias(1);
+    func->setDoesNotAlias(2);
+    func->setDoesNotAlias(5);
+
     // Add host CPU features
     func->addFnAttr(Attribute::NoUnwind);
     func->addFnAttr("target-cpu", mLLVMJit.getTargetMachine()->getTargetCPU());
