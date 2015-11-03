@@ -136,8 +136,8 @@ public:
 private:
     using MaterializeFunc = void (*) (
             const char* /* record data */,
-            const char* /* page heap data */,
-            uint32_t /* count */,
+            const char* /* heap data */,
+            uint64_t /* count */,
             uint64_t /* idx */,
             char* /* dest */,
             size_t /* size */);

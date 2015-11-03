@@ -32,6 +32,7 @@
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Analysis/Passes.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/IRBuilder.h>
@@ -41,6 +42,7 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Transforms/Scalar.h>
 
 #include <array>
@@ -62,32 +64,20 @@ static const std::array<std::string, 6> gMaterializeParamNames = {{
     "size"
 }};
 
-/**
- * @brief Returns the exact log2 if it exists and -1 otherwise
- */
-int32_t computeLog2(uint32_t val) {
-    LOG_ASSERT(val!=0, "");
-    if (val & (val - 1))
-        return -1;
-
-    int32_t result = 0;
-    while (true) {
-        if (val & 0x1)
-            return result;
-        val >>= 1;
-        ++result;
-    }
-    return -1;
-}
-
-llvm::Value* creatMulOrShift(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* lhs, uint factor) {
+llvm::Value* creatMulOrShift(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* lhs, uint64_t idx) {
     using namespace llvm;
 
-    int log2 = computeLog2(factor);
-    if (factor > 0)
-        return builder.CreateShl(lhs, ConstantInt::get(context, APInt(32, log2)));
-    else
-        return builder.CreateMul(lhs, ConstantInt::get(context, APInt(32, factor)));
+    LOG_ASSERT(idx != 0, "");
+    if (idx & (idx - 1)) {
+        return builder.CreateMul(lhs, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, idx)));
+    }
+
+    uint64_t log2 = 0;
+    while ((idx & 0x1u) == 0x0u) {
+        idx >>= 1;
+        ++log2;
+    }
+    return builder.CreateShl(lhs, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, log2)));
 }
 
 llvm::Value* createPointerAlign(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* value,
@@ -160,7 +150,7 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     using namespace llvm;
 
 #ifndef NDEBUG
-    LOG_TRACE("Generating LLVM materialize function");
+    LOG_INFO("Generating LLVM materialize function");
     auto startTime = std::chrono::steady_clock::now();
 #endif
 
@@ -174,7 +164,7 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     std::array<Type*, 6> params = {{
         Type::getInt8PtrTy(context),    // recordData
         Type::getInt8PtrTy(context),    // heapData
-        Type::getInt32Ty(context),      // count
+        Type::getInt64Ty(context),      // count
         Type::getInt64Ty(context),      // idx
         Type::getInt8PtrTy(context),    // dest
         Type::getInt64Ty(context)       // size
@@ -202,26 +192,10 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     func->addFnAttr("target-cpu", mLLVMJit.getTargetMachine()->getTargetCPU());
     func->addFnAttr("target-features", mLLVMJit.getTargetMachine()->getTargetFeatureString());
 
-    // Get memcpy intrinsic function
-    std::array<Type*, 5> memcpyCallParams = {{
-        Type::getInt8PtrTy(context),    // dest
-        Type::getInt8PtrTy(context),    // src
-        Type::getInt64Ty(context),      // len
-        Type::getInt32Ty(context),      // align
-        Type::getInt1Ty(context)        // isvolatile
-    }};
-    auto memcpyFunc = Intrinsic::getDeclaration(&module, Intrinsic::memcpy, makeArrayRef(&memcpyCallParams.front(),
-            memcpyCallParams.size()));
-
     // Build function
     IRBuilder<> builder(context);
     auto bb = BasicBlock::Create(context, "entry", func);
     builder.SetInsertPoint(bb);
-
-    // Set alignment hints (all pointers are 8 byte aligned)
-    builder.CreateAlignmentAssumption(module.getDataLayout(), args[0], 8u);
-    builder.CreateAlignmentAssumption(module.getDataLayout(), args[1], 8u);
-    builder.CreateAlignmentAssumption(module.getDataLayout(), args[4], 8u);
 
     // Build function body
     auto recordData = args[0];
@@ -232,24 +206,19 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     for (auto fieldLength : mFieldLengths) {
         if (lastFieldLength != 0u) {
             // -> dest += fieldLength
-            dest = builder.CreateAdd(dest, ConstantInt::get(context, APInt(64, lastFieldLength)));
+            dest = builder.CreateInBoundsGEP(dest, ConstantInt::get(context, APInt(64, lastFieldLength)));
 
             // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[2], lastFieldLength));
+            recordData = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[2],
+                    lastFieldLength));
         }
 
         // -> auto src = recordData + idx * fieldLength;
-        auto src = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[3], fieldLength));
+        auto src = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[3], fieldLength));
 
         // -> memcpy(dest, src, fieldLength);
-        std::array<Value*, 5> memcpyValues = {{
-            dest,
-            src,
-            ConstantInt::get(context, APInt(64, fieldLength)),
-            ConstantInt::get(context, APInt(32, (fieldLength > 8u ? 8u : fieldLength))),
-            ConstantInt::getFalse(context)
-        }};
-        builder.CreateCall(memcpyFunc, makeArrayRef(&memcpyValues.front(), memcpyValues.size()));
+        builder.CreateMemCpy(dest, src, ConstantInt::get(context, APInt(64, fieldLength)),
+                fieldLength > 8u ? 8u : fieldLength);
 
         lastFieldLength = fieldLength;
     }
@@ -259,70 +228,72 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
         if (lastFieldLength != 0u) {
             // -> dest += crossbow::align(fieldLength, 4u);
             auto alignedFieldLength = crossbow::align(lastFieldLength, 4u);
-            dest = builder.CreateAdd(dest, ConstantInt::get(context, APInt(64, alignedFieldLength)));
-            builder.CreateAlignmentAssumption(module.getDataLayout(), dest, 4u);
+            dest = builder.CreateInBoundsGEP(dest, ConstantInt::get(context, APInt(64, alignedFieldLength)));
 
             // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[2], lastFieldLength));
+            recordData = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[2],
+                    lastFieldLength));
 
             if (lastFieldLength < 8u) {
                 // -> recordData = crossbow::align(recordData, 8u);
                 recordData = createPointerAlign(context, builder, recordData, 8u);
             }
-            builder.CreateAlignmentAssumption(module.getDataLayout(), recordData, 8u);
         }
 
         // -> auto offset = reinterpret_cast<const ColumnMapHeapEntry*>(recordData)[idx].offset;
         static_assert(offsetof(ColumnMapHeapEntry, offset) == 0, "Offset of ColumnMapHeapEntry::offset must be 0");
-        auto heapOffset = builder.CreateGEP(recordData, creatMulOrShift(context, builder, args[3],
+        auto heapOffset = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[3],
                 sizeof(ColumnMapHeapEntry)));
-        heapOffset = builder.CreateLoad(builder.CreateBitCast(heapOffset, Type::getInt32PtrTy(context)));
+        heapOffset = builder.CreateAlignedLoad(builder.CreateBitCast(heapOffset, Type::getInt32PtrTy(context)), 8u);
 
         // -> auto src = page->heapData() - offset;
-        auto heapOffsetSub = builder.CreateSub(ConstantInt::get(context, APInt(32, 0)), heapOffset);
+        auto heapOffsetSub = builder.CreateSub(ConstantInt::get(context, APInt(64, 0)), builder.CreateZExt(heapOffset,
+                Type::getInt64Ty(context)));
         auto src = builder.CreateGEP(args[1], heapOffsetSub);
 
         // -> auto length = size - crossbow::align(mFixedSize, 4u);
         auto length = builder.CreateSub(args[5], ConstantInt::get(context, APInt(64, crossbow::align(mFixedSize, 4u))));
 
         // -> memcpy(dest, src, length);
-        std::array<Value*, 5> memcpyValues = {{
-            dest,
-            src,
-            length,
-            ConstantInt::get(context, APInt(32, 4u)),
-            ConstantInt::getFalse(context)
-        }};
-        builder.CreateCall(memcpyFunc, makeArrayRef(&memcpyValues.front(), memcpyValues.size()));
+        builder.CreateMemCpy(dest, src, length, 4u);
     }
 
     // Return
     builder.CreateRetVoid();
 
-    LOG_ASSERT(verifyFunction(*func), "LLVM Code Generation for ColumnMap materialize failed!");
-
 #ifndef NDEBUG
-    LOG_TRACE("Dumping LLVM Code before optimizations");
+    LOG_INFO("Dumping LLVM Code before optimizations");
     module.dump();
 #endif
 
     // Setup optimizations
-    legacy::FunctionPassManager optimizer(&module);
-    // Provide basic AliasAnalysis support for GVN
-    optimizer.add(createBasicAliasAnalysisPass());
-    // Do simple "peephole" optimizations and bit-twiddling optimizations
-    optimizer.add(createInstructionCombiningPass());
-    // Eliminate Common SubExpressions
-    optimizer.add(createGVNPass());
-    // Simplify the control flow graph (deleting unreachable blocks, etc)
-    optimizer.add(createCFGSimplificationPass());
+    legacy::PassManager modulePass;
+#ifndef NDEBUG
+    modulePass.add(createVerifierPass());
+#endif
+    modulePass.add(createTargetTransformInfoWrapperPass(mLLVMJit.getTargetMachine()->getTargetIRAnalysis()));
 
-    // Run optimizations
-    optimizer.doInitialization();
-    optimizer.run(*func);
+    legacy::FunctionPassManager functionPass(&module);
+#ifndef NDEBUG
+    functionPass.add(createVerifierPass());
+#endif
+    functionPass.add(createTargetTransformInfoWrapperPass(mLLVMJit.getTargetMachine()->getTargetIRAnalysis()));
+
+    PassManagerBuilder optimizationBuilder;
+    optimizationBuilder.OptLevel = 2;
+    optimizationBuilder.LoadCombine = true;
+    optimizationBuilder.populateFunctionPassManager(functionPass);
+    optimizationBuilder.populateModulePassManager(modulePass);
+    optimizationBuilder.populateLTOPassManager(modulePass);
+
+    functionPass.doInitialization();
+    functionPass.run(*func);
+    functionPass.doFinalization();
+
+    modulePass.run(module);
 
 #ifndef NDEBUG
-    LOG_TRACE("Dumping LLVM Code after optimizations");
+    LOG_INFO("Dumping LLVM Code after optimizations");
     module.dump();
 #endif
 
@@ -336,7 +307,7 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
 
 #ifndef NDEBUG
     auto endTime = std::chrono::steady_clock::now();
-    LOG_TRACE("Generating LLVM materialize function took %1%ns", (endTime - startTime).count());
+    LOG_INFO("Generating LLVM materialize function took %1%ns", (endTime - startTime).count());
 #endif
 
     return res;

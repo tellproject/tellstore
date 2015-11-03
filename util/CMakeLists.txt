@@ -55,6 +55,7 @@ set(USED_LLVM_LIBRARIES
     LLVMCore
     LLVMSupport
     LLVMVectorize
+    LLVMPasses
 )
 
 # Add TellStore util library

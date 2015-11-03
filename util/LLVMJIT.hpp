@@ -89,7 +89,7 @@ public:
 
     LLVMJIT();
 
-    const llvm::TargetMachine* getTargetMachine() {
+    llvm::TargetMachine* getTargetMachine() {
         return mTargetMachine;
     }
 
