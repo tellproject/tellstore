@@ -475,7 +475,7 @@ bool Record::isFieldNull(const char* ptr, Record::id_t id) const {
     // TODO: Check whether the compiler optimizes this correctly - otherwise this might be inefficient (but more readable)
     auto bitmap = *reinterpret_cast<const uchar*>(ptr + id / 8);
     auto mask = uchar(0x1 << (id % 8));
-    return (bitmap & mask) == 0;
+    return (bitmap & mask) != 0;
 }
 
 void Record::setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
@@ -486,7 +486,7 @@ void Record::setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
     auto& bitmap = *reinterpret_cast<uchar*>(ptr + id / 8);
     auto mask = uchar(0x1 << (id % 8));
 
-    if (!isNull) {
+    if (isNull) {
         bitmap |= mask;
     } else {
         bitmap &= ~mask;
