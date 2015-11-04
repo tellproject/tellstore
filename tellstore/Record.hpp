@@ -199,6 +199,32 @@ public:
         }
     }
 
+    size_t alignOf() const {
+        switch (mType) {
+        case FieldType::NULLTYPE:
+            return 0;
+        case FieldType::SMALLINT:
+            return alignof(int16_t);
+        case FieldType::INT:
+            return alignof(int32_t);
+        case FieldType::BIGINT:
+            return alignof(int64_t);
+        case FieldType::FLOAT:
+            return alignof(float);
+        case FieldType::DOUBLE:
+            return alignof(double);
+        case FieldType::TEXT:
+        case FieldType::BLOB:
+            return alignof(uint32_t);
+        case FieldType::NOTYPE:
+            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
+            return std::numeric_limits<size_t>::max();
+        default:
+            LOG_ASSERT(false, "Unknown type");
+            return std::numeric_limits<size_t>::max();
+        }
+    }
+
     /**
      * We only support prefix and postfix like - for everything else
      * we expect the client to do the post filtering

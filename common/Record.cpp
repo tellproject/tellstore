@@ -80,6 +80,10 @@ size_t Field::sizeOf(const boost::any& value) const {
 }
 
 bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull) {
+    if (!mIndexes.empty()) {
+        LOG_ERROR("Can not add more fields after adding indexes");
+        return false;
+    }
     if (name.size() > std::numeric_limits<uint16_t>::max()) {
         LOG_ERROR("Field name with %d bytes are not supported", name.size());
         return false;
@@ -88,8 +92,15 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         LOG_ERROR("%d is the maximum number of columns in a table", std::numeric_limits<uint16_t>::max());
         return false;
     }
+
+    Field f(type, name, notNull);
+    auto alignment = f.alignOf();
     bool res = true;
+    auto insertPos = mFixedSizeFields.begin();
     for (auto iter = mFixedSizeFields.begin(); iter != mFixedSizeFields.end() && res; ++iter) {
+        if (alignment <= iter->alignOf()) {
+            insertPos = std::next(iter);
+        }
         res = iter->name() != name;
     }
     for (auto iter = mVarSizeFields.begin(); iter != mVarSizeFields.end() && res; ++iter) {
@@ -100,9 +111,8 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         return res;
     }
     mAllNotNull &= notNull;
-    Field f(type, name, notNull);
     if (f.isFixedSized()) {
-        mFixedSizeFields.emplace_back(f);
+        mFixedSizeFields.emplace(insertPos, f);
     } else {
         mVarSizeFields.emplace_back(f);
     }
@@ -214,27 +224,18 @@ Record::Record(Schema schema)
           mFieldMetaData(mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size()),
           mFixedSize(headerSize()) {
     size_t id = 0;
+#ifndef NDEBUG
+    auto lastAlignment = std::numeric_limits<size_t>::max();
+#endif
     for (const auto& field : mSchema.fixedSizeFields()) {
-        auto fieldLength = field.staticSize();
-        if (fieldLength < 8u) {
-            continue;
-        }
-        LOG_ASSERT(fieldLength % 8u == 0u, "Field Size must be a multiple of 8");
+#ifndef NDEBUG
+        auto alignment = field.alignOf();
+        LOG_ASSERT(lastAlignment >= alignment, "Alignment not in descending order");
+        lastAlignment = alignment;
+#endif
         mIdMap.insert(std::make_pair(field.name(), id));
         mFieldMetaData[id++] = std::make_pair(field, mFixedSize);
-        mFixedSize += fieldLength;
-    }
-
-    for (auto alignment : {4u, 2u}) {
-        for (const auto& field : mSchema.fixedSizeFields()) {
-            auto fieldLength = field.staticSize();
-            if (fieldLength != alignment) {
-                continue;
-            }
-            mIdMap.insert(std::make_pair(field.name(), id));
-            mFieldMetaData[id++] = std::make_pair(field, mFixedSize);
-            mFixedSize += fieldLength;
-        }
+        mFixedSize += field.staticSize();
     }
 
     mVariableSizeOffset = crossbow::align(mFixedSize, 4u);
