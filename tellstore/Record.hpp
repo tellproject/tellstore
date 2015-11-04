@@ -547,6 +547,13 @@ public:
         return mFixedSize;
     }
 
+    /**
+     * @brief The aligned offset to the first variable size field
+     */
+    size_t variableSizeOffset() const {
+        return mVariableSizeOffset;
+    }
+
     size_t minimumSize() const;
 
     bool idOf(const crossbow::string& name, id_t& result) const;

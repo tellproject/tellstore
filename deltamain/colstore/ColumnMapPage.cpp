@@ -497,6 +497,8 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
 
     // Copy all variable sized fields into the fill page
     if (mContext.varSizeFieldCount() != 0) {
+        srcData = crossbow::align(srcData, 4u);
+
         auto length = static_cast<size_t>((data + size) - srcData);
         mFillHeap -= length;
         memcpy(mFillHeap, srcData, length);
@@ -510,6 +512,7 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
             auto varSize = *reinterpret_cast<const uint32_t*>(srcData);
             srcData += sizeof(uint32_t);
             new (heapEntries) ColumnMapHeapEntry(heapOffset, varSize, srcData);
+            varSize = crossbow::align(varSize, 4u);
             srcData += varSize;
 
             // Advance pointer to offset entry of next field

@@ -156,6 +156,9 @@ private:
     /// \copydoc ColumnMapContext::fixedSize() const
     uint32_t mFixedSize;
 
+    /// Aligned offset to the first variable size field
+    uint32_t mVariableSizeOffset;
+
     /// \copydoc ColumnMapContext::varSizeFieldCount() const
     uint32_t mVarSizeFieldCount;
 

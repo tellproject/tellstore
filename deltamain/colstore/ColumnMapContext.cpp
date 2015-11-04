@@ -120,6 +120,7 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
           mEntryOverhead(calcEntryOverhead(record)),
           mFixedSizeCapacity(calcFixedSizeCapacity(record)),
           mFixedSize(record.fixedSize()),
+          mVariableSizeOffset(record.variableSizeOffset()),
           mVarSizeFieldCount(record.varSizeFieldCount()) {
     mFieldLengths.reserve(record.fixedSizeFieldCount() + 1);
 
@@ -226,9 +227,8 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     // Copy all variable size fields in one batch
     if (mVarSizeFieldCount != 0u) {
         if (lastFieldLength != 0u) {
-            // -> dest += crossbow::align(fieldLength, 4u);
-            auto alignedFieldLength = crossbow::align(lastFieldLength, 4u);
-            dest = builder.CreateInBoundsGEP(dest, ConstantInt::get(context, APInt(64, alignedFieldLength)));
+            // -> dest = crossbow::align(dest + fieldLength, 4u);
+            dest = builder.CreateInBoundsGEP(args[4], ConstantInt::get(context, APInt(64, mVariableSizeOffset)));
 
             // -> recordData += page->count * fieldLength;
             recordData = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[2],
