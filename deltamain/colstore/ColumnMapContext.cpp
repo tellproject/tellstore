@@ -127,7 +127,7 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
     if (startOffset > 0) {
         mFieldLengths.emplace_back(startOffset);
     }
-    LOG_ASSERT(record.getFieldMeta(0).second == static_cast<int32_t>(startOffset),
+    LOG_ASSERT(record.fixedSizeFieldCount() == 0 || record.getFieldMeta(0).second == static_cast<int32_t>(startOffset),
             "First field must point to end of header");
 
     for (decltype(record.fixedSizeFieldCount()) i = 1; i < record.fixedSizeFieldCount(); ++i) {
