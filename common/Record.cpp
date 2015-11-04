@@ -485,7 +485,7 @@ void Record::setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
     auto& bitmap = *reinterpret_cast<uchar*>(ptr + id / 8);
     auto mask = uchar(0x1 << (id % 8));
 
-    if (isNull) {
+    if (!isNull) {
         bitmap |= mask;
     } else {
         bitmap &= ~mask;
