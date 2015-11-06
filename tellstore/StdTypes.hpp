@@ -62,6 +62,7 @@ enum class AggregationType : uint8_t {
     MIN,
     MAX,
     SUM,
+    CNT,
 };
 
 enum ScanQueryType : uint8_t {
