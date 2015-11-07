@@ -270,6 +270,7 @@ class ClientManager : crossbow::non_copyable, crossbow::non_movable {
 public:
     template <typename... Args>
     ClientManager(const ClientConfig& config, Args... contextArgs);
+    ~ClientManager();
 
     void shutdown();
 
@@ -308,6 +309,12 @@ ClientManager<Context>::ClientManager(const ClientConfig& config, Args... contex
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
         mProcessor.emplace_back(new ClientProcessor<Context>(mService, config, i, contextArgs...));
     }
+}
+
+template<typename Context>
+ClientManager<Context>::~ClientManager() {
+    shutdown();
+    mServiceThread.detach();
 }
 
 template <typename Context>
