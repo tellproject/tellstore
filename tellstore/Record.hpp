@@ -76,8 +76,35 @@ void agg(AggregationType type, NumberType* result, NumberType value) {
 
     case AggregationType::CNT: {
         *result += 1;
-        break;
+    } break;
+
+    default: {
+        LOG_ASSERT(false, "Unknown aggregation type");
+    } break;
     }
+}
+
+template <class NumberType>
+void initAgg(AggregationType type, NumberType* result) {
+    static_assert(std::is_floating_point<NumberType>::value ||
+            std::is_integral<NumberType>::value, "agg is only supported for number types");
+
+    switch (type) {
+    case AggregationType::MIN: {
+        *result = std::numeric_limits<NumberType>::max();
+    } break;
+
+    case AggregationType::MAX: {
+        *result = std::numeric_limits<NumberType>::min();
+    } break;
+
+    case AggregationType::SUM: {
+        *result = 0;
+    } break;
+
+    case AggregationType::CNT: {
+        *result = 0;
+    } break;
 
     default: {
         LOG_ASSERT(false, "Unknown aggregation type");
@@ -375,6 +402,39 @@ NUMBER_COMPARE:
 
         case FieldType::DOUBLE: {
             tell::store::agg(type, reinterpret_cast<double*>(left), *reinterpret_cast<const double*>(right));
+        } break;
+
+        case FieldType::TEXT:
+        case FieldType::BLOB: {
+            LOG_ASSERT(false, "Can not do this kind of aggregation on non-numeric types");
+        } break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown type");
+        }
+        }
+    }
+
+    void initAgg(AggregationType type, char* data) {
+        switch (mType) {
+        case FieldType::SMALLINT: {
+            tell::store::initAgg(type, reinterpret_cast<int16_t*>(data));
+        } break;
+
+        case FieldType::INT: {
+            tell::store::initAgg(type, reinterpret_cast<int32_t*>(data));
+        } break;
+
+        case FieldType::BIGINT: {
+            tell::store::initAgg(type, reinterpret_cast<int64_t*>(data));
+        } break;
+
+        case FieldType::FLOAT: {
+            tell::store::initAgg(type, reinterpret_cast<float*>(data));
+        } break;
+
+        case FieldType::DOUBLE: {
+            tell::store::initAgg(type, reinterpret_cast<double*>(data));
         } break;
 
         case FieldType::TEXT:

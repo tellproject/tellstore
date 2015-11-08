@@ -301,18 +301,14 @@ void ScanQueryProcessor::writeAggregationField(char* ptr, Record::id_t fieldId, 
     if (record.schema().allNotNull()) {
         // If the schema is all non NULL then initialize the aggregation on the first field written
         if (mTupleCount == 0u) {
-            auto fieldLength = field.sizeOf(data);
-            memcpy(ptr + offset, data, fieldLength);
-            return;
+            field.initAgg(aggType, ptr + offset);
         }
     } else {
         // If the schema can contain NULL values then check if this is the first time we encountered a non NULL value
         // for the field - Initialize the aggregation with the field data
         if (record.isFieldNull(ptr, fieldId)) {
-            auto fieldLength = field.sizeOf(data);
-            memcpy(ptr + offset, data, fieldLength);
+            field.initAgg(aggType, ptr + offset);
             record.setFieldNull(ptr, fieldId, false);
-            return;
         }
     }
     field.agg(aggType, ptr + offset, data);
