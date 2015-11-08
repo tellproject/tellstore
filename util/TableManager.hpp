@@ -85,7 +85,7 @@ private:
     void gcThread() {
         std::unique_lock<std::mutex> lock(mGCMutex);
         auto begin = Clock::now();
-        auto duration = std::chrono::seconds(mConfig.gcIntervall);
+        auto duration = std::chrono::seconds(mConfig.gcInterval);
         while (!mShutDown.load()) {
             auto now = Clock::now();
             if (begin + duration > now) {

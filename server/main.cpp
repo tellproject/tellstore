@@ -48,6 +48,8 @@ int main(int argc, const char** argv) {
             crossbow::program_options::value<-1>("network-threads", &serverConfig.numNetworkThreads,
                     crossbow::program_options::tag::ignore_short<true>{}),
             crossbow::program_options::value<-2>("scan-threads", &storageConfig.numScanThreads,
+                    crossbow::program_options::tag::ignore_short<true>{}),
+            crossbow::program_options::value<-3>("gc-interval", &storageConfig.gcInterval,
                     crossbow::program_options::tag::ignore_short<true>{}));
 
     try {
@@ -75,7 +77,7 @@ int main(int argc, const char** argv) {
     LOG_INFO("--- Backend: %1%", tell::store::Storage::implementationName());
     LOG_INFO("--- Port: %1%", serverConfig.port);
     LOG_INFO("--- Network Threads: %1%", serverConfig.numNetworkThreads);
-    LOG_INFO("--- GC Interval: %1%s", storageConfig.gcIntervall);
+    LOG_INFO("--- GC Interval: %1%s", storageConfig.gcInterval);
     LOG_INFO("--- Total Memory: %1%GB", double(storageConfig.totalMemory) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Scan Threads: %1%", storageConfig.numScanThreads);
     LOG_INFO("--- Hash Map Capacity: %1%", storageConfig.hashMapCapacity);

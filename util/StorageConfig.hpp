@@ -28,7 +28,7 @@
 namespace tell {
 namespace store {
 struct StorageConfig {
-    uint16_t gcIntervall = 60;
+    uint16_t gcInterval = 60;
     size_t totalMemory = TOTAL_MEMORY;
     size_t numScanThreads = 2;
     size_t hashMapCapacity = HASHMAP_CAPACITY;
