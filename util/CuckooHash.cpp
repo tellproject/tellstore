@@ -131,12 +131,21 @@ bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
         auto idx = h(key);
         auto& entry = at(cnt, idx, pageIdx);
         if (entry.first == key && entry.second != nullptr) {
-            if (!replace) {
-                goto END;
+            if (replace) {
+                auto e = &entry;
+                if (cow(cnt, pageIdx)) {
+                    e = &at(cnt, idx, pageIdx);
+                }
+                e->second = value;
+                increment = false;
+                res = true;
             }
-            break;
+            goto END;
         }
         ++cnt;
+    }
+    if (replace) {
+        goto END;
     }
     // actual insert comes here
     while (true) {
@@ -156,14 +165,8 @@ bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
                     e->second = value;
                     res = true;
                     goto END;
-                } else if (e->first == key) {
-                    assert(replace);
-                    if (cow(cnt, pageIdx)) {e = &at(cnt, idx, pageIdx);}
-                    increment = false;
-                    e->second = value;
-                    res = true;
-                    goto END;
                 } else {
+                    assert(e->first != key);
                     if (cow(cnt, pageIdx)) {
                         e = &at(cnt, idx, pageIdx);
                     }
