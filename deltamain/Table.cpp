@@ -458,7 +458,7 @@ template <typename Context>
 void GarbageCollector<Context>::run(const std::vector<Table<Context>*>& tables, uint64_t minVersion) {
     for (auto table : tables) {
         if (table->type() == TableType::NON_TRANSACTIONAL) {
-            table->runGC(std::numeric_limits<uint64_t>::max());
+            table->runGC(std::numeric_limits<uint64_t>::max() - 1);
         } else {
             table->runGC(minVersion);
         }
