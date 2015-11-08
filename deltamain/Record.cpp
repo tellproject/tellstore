@@ -107,8 +107,8 @@ void UpdateRecordIterator::next() {
 
         // Forward version chain if the element was a revert
         auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(entry));
-        if (logEntry->type() == crossbow::to_underlying(RecordType::REVERT)) {
-            continue;
+        if (logEntry->type() != crossbow::to_underlying(RecordType::REVERT)) {
+            break;
         }
     }
     mCurrent = entry;
