@@ -74,6 +74,11 @@ void agg(AggregationType type, NumberType* result, NumberType value) {
         *result += value;
     } break;
 
+    case AggregationType::CNT: {
+        *result += 1;
+        break;
+    }
+
     default: {
         LOG_ASSERT(false, "Unknown aggregation type");
     } break;
@@ -86,6 +91,11 @@ protected:
 public:
     FieldBase(FieldType type) : mType(type) {}
 public:
+
+    FieldType type() const {
+        return mType;
+    }
+
     bool isFixedSized() const {
         switch (mType) {
         case FieldType::NULLTYPE:
@@ -403,10 +413,6 @@ public:
 
     const crossbow::string& name() const {
         return mName;
-    }
-
-    FieldType type() const {
-        return mType;
     }
 
     size_t sizeOf(const boost::any& value) const;
