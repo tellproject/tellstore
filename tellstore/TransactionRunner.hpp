@@ -107,8 +107,11 @@ public:
      * Must only be called from inside the transaction.
      */
     void block() {
-        mState.store(TransactionState::BLOCKED);
-        mWaitCondition.notify_all();
+        {
+            std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
+            mState.store(TransactionState::BLOCKED);
+            mWaitCondition.notify_one();
+        }
         mFiber->wait();
     }
 
@@ -140,9 +143,10 @@ private:
     }
 
     void completeTransaction() {
+        std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
         mFiber = nullptr;
         mState.store(TransactionState::DONE);
-        mWaitCondition.notify_all();
+        mWaitCondition.notify_one();
     }
 
     ClientManager<Context>& mClient;
@@ -153,6 +157,7 @@ private:
 
     std::exception_ptr mException;
 
+    std::mutex mWaitMutex;
     std::condition_variable mWaitCondition;
 };
 
@@ -180,12 +185,10 @@ void SingleTransactionRunner<Context>::execute(size_t num, Fun fun) {
 
 template <typename Context>
 bool SingleTransactionRunner<Context>::wait() {
-    std::mutex waitMutex;
-    std::unique_lock<decltype(waitMutex)> waitLock(waitMutex);
+    std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
     mWaitCondition.wait(waitLock, [this] () {
         return (mState != TransactionState::RUNNING);
     });
-    waitLock.unlock();
 
     if (mException) {
         std::rethrow_exception(mException);
@@ -244,7 +247,8 @@ private:
 
     void completeTransaction() {
         if (--mActive == 0u) {
-            mWaitCondition.notify_all();
+            std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
+            mWaitCondition.notify_one();
         }
     }
 
@@ -255,6 +259,7 @@ private:
     std::mutex mExceptionMutex;
     std::queue<std::exception_ptr> mException;
 
+    std::mutex mWaitMutex;
     std::condition_variable mWaitCondition;
 };
 
@@ -274,8 +279,7 @@ void MultiTransactionRunner<Context>::execute(size_t num, Fun fun) {
 
 template <typename Context>
 void MultiTransactionRunner<Context>::wait() {
-    std::mutex waitMutex;
-    std::unique_lock<decltype(waitMutex)> waitLock(waitMutex);
+    std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
     mWaitCondition.wait(waitLock, [this] () {
         return (mActive == 0u);
     });
