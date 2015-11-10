@@ -2,14 +2,8 @@
 
 #include <cstddef>
 
-#cmakedefine USE_DELTA_MAIN_REWRITE
-#cmakedefine USE_LOGSTRUCTURED_MEMORY
-
-#cmakedefine USE_ROW_STORE
-#cmakedefine USE_COLUMN_MAP
-
-#cmakedefine USE_LOG_SCAN
-#cmakedefine USE_HASH_SCAN
+// Only activate log scan
+#define USE_LOG_SCAN
 
 namespace tell {
 namespace store {
