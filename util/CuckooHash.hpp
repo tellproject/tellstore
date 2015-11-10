@@ -160,11 +160,6 @@ public:
     bool cow(unsigned h, size_t idx);
 
     void rehash();
-
-    void resize();
-
-private:
-    void rehash(size_t capacity, size_t numPages);
 };
 
 } // namespace store

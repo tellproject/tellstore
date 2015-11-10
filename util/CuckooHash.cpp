@@ -236,41 +236,33 @@ bool Modifier::cow(unsigned h, size_t idx) {
 }
 
 void Modifier::rehash() {
-    auto capacity = mPages.size()/3 * ENTRIES_PER_PAGE;
-    if (5 * mSize / 4 > capacity || (mPages.size() > 1 && mSize / 5 > capacity)) {
-        resize();
-        return;
-    }
-
-    rehash(capacity, mPages.size());
-}
-
-void Modifier::resize() {
-    auto capacity = mPages.size()/3 * ENTRIES_PER_PAGE;
+    auto totalCapacity = mPages.size() * ENTRIES_PER_PAGE;
     auto numPages = mPages.size();
-    if (mSize / 5 > capacity) {
-        numPages /= 2;
-    } else {
+    // Double number of pages if usage is above 80 percent, halve if below 20 percent
+    if (4 * mSize / 5 > totalCapacity) {
         numPages *= 2;
+    } else if (numPages > 3 && mSize / 5 < totalCapacity) {
+        numPages /= 2;
     }
-    assert(numPages % 3 == 0);
-    capacity = numPages/3 * ENTRIES_PER_PAGE;
-    if (numPages == 0) numPages = 1;
-    assert(isPowerOf2(numPages/3 * ENTRIES_PER_PAGE));
+    LOG_ASSERT(numPages >= 3, "Need at least 3 pages");
+    LOG_ASSERT(numPages % 3 == 0, "Number of pages must be divisible by 3");
 
-    rehash(capacity, numPages);
-}
-
-void Modifier::rehash(size_t capacity, size_t numPages) {
+    // Allocate pages
     std::vector<EntryT*> oldPages;
     oldPages.swap(mPages);
     mPages.reserve(numPages);
     for (decltype(numPages) i = 0; i < numPages; ++i) {
         mPages.emplace_back(reinterpret_cast<EntryT*>(mTable.mPageManager.alloc()));
     }
-    hash1 = cuckoo_hash_function(capacity);
-    hash2 = cuckoo_hash_function(capacity);
-    hash3 = cuckoo_hash_function(capacity);
+
+    // Allocate hash functions
+    auto hashCapacity = (numPages / 3) * ENTRIES_PER_PAGE;
+    LOG_ASSERT(isPowerOf2(hashCapacity), "Hash capacity must be power of 2");
+    hash1 = cuckoo_hash_function(hashCapacity);
+    hash2 = cuckoo_hash_function(hashCapacity);
+    hash3 = cuckoo_hash_function(hashCapacity);
+
+    // Copy elements from old pages into new pages
     for (decltype(oldPages.size()) i = 0; i < oldPages.size(); ++i) {
         auto page = oldPages[i];
         for (size_t j = 0; j < ENTRIES_PER_PAGE; ++j) {
