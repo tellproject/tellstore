@@ -79,10 +79,20 @@ bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
     typename std::remove_const<decltype(page->count)>::type i = 0;
     while (i < page->count) {
 START:
+        LOG_ASSERT(mFillIdx == mFillEndIdx, "Current fill index must be at the end index");
+        LOG_ASSERT(mUpdateIdx == mUpdateEndIdx, "Current update index must be at the end index");
+
         auto baseIdx = i;
         auto newest = entries[baseIdx].newest.load();
         bool wasDelete = false;
         if (newest != 0u) {
+            if (mainStartIdx != mainEndIdx) {
+                LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                addCleanAction(page, mainStartIdx, mainEndIdx);
+                mainStartIdx = 0;
+                mainEndIdx = 0;
+            }
+
             uint64_t lowestVersion;
 
             // Write all updates into the update page
@@ -102,6 +112,8 @@ START:
             // If all elements were overwritten by updates the main page does not need to be processed
             if (lowestVersion <= mMinVersion) {
                 if (mUpdateIdx == mUpdateEndIdx) {
+                    LOG_ASSERT(mFillIdx == mFillEndIdx, "No elements written but fill index advanced");
+
                     // Invalidate the element and remove it from the hash table - Retry from beginning if the
                     // invalidation fails
                     if (!entries[baseIdx].newest.compare_exchange_strong(newest,
@@ -113,6 +125,8 @@ START:
                     __attribute__((unused)) auto res = mMainTableModifier.remove(entries[baseIdx].key);
                     LOG_ASSERT(res, "Removing key from hash table did not succeed");
                 } else {
+                    LOG_ASSERT(mFillIdx != mFillEndIdx, "Elements written without advancing the fill index");
+
                     // Flush the changes to the current element
                     auto fillEntry = mFillPage->entryData() + mFillEndIdx;
                     mPointerActions.emplace_back(&entries[baseIdx].newest, newest, fillEntry);
@@ -120,12 +134,6 @@ START:
                     __attribute__((unused)) auto res = mMainTableModifier.insert(entries[baseIdx].key, fillEntry, true);
                     LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
-                    if (mainStartIdx != mainEndIdx) {
-                        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
-                        addCleanAction(page, mainStartIdx, mainEndIdx);
-                        mainStartIdx = 0;
-                        mainEndIdx = 0;
-                    }
                     mUpdateEndIdx = mUpdateIdx;
                     mFillEndIdx = mFillIdx;
                 }
@@ -183,6 +191,7 @@ START:
                     mainEndIdx = 0;
                 }
                 flush();
+                i = baseIdx;
                 goto START;
             }
 
@@ -198,7 +207,7 @@ START:
 
         LOG_ASSERT(!wasDelete, "Last element must not be a delete");
         LOG_ASSERT(mFillIdx - mFillEndIdx == (copyEndIdx - copyStartIdx) + (mUpdateIdx - mUpdateEndIdx),
-                "Fill count does not match actual number of written elements")
+                "Fill count does not match actual number of written elements");
 
         // Invalidate the element if it can be removed completely otherwise enqueue modification of the newest pointer
         // Retry from beginning if the invalidation fails
@@ -218,27 +227,25 @@ START:
             LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
             // No updates and copy region starts at end from previous - simply extend copy region from main
-            if (mainEndIdx == copyStartIdx && mUpdateIdx == mUpdateEndIdx) {
+            if (mainEndIdx == copyStartIdx && mUpdateIdx == mUpdateStartIdx) {
                 mainEndIdx = copyEndIdx;
             } else {
-                // Enqueue updates
-                if (mUpdateIdx != mUpdateEndIdx) {
-                    if (mainStartIdx != mainEndIdx) {
-                        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
-                        addCleanAction(page, mainStartIdx, mainEndIdx);
-                        mainStartIdx = 0;
-                        mainEndIdx = 0;
-                    }
-                    mUpdateEndIdx = mUpdateIdx;
+                // Flush any pending actions from previous main
+                if (mainStartIdx != mainEndIdx) {
+                    LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+                    addCleanAction(page, mainStartIdx, mainEndIdx);
+                    mainStartIdx = 0;
+                    mainEndIdx = 0;
                 }
+                // Enqueue updates
+                mUpdateEndIdx = mUpdateIdx;
+
                 // Enqueue main
                 if (copyStartIdx != copyEndIdx) {
                     if (mUpdateStartIdx != mUpdateEndIdx) {
-                        LOG_ASSERT(mainStartIdx == mainEndIdx, "Main and update copy at the same time");
                         mCleanActions.emplace_back(mUpdatePage, mUpdateStartIdx, mUpdateEndIdx, 0);
                         mUpdateStartIdx = mUpdateEndIdx;
                     }
-                    LOG_ASSERT(mainEndIdx == 0u || mainEndIdx != copyStartIdx, "This case was handled earlier");
                     mainStartIdx = copyStartIdx;
                     mainEndIdx = copyEndIdx;
                 }
@@ -255,7 +262,7 @@ START:
 
     // Append last pending clean action
     if (mainStartIdx != mainEndIdx) {
-        LOG_ASSERT(mUpdateStartIdx == mUpdateEndIdx, "Main and update copy at the same time");
+        LOG_ASSERT(mUpdateStartIdx == mUpdateIdx, "Main and update copy at the same time");
         addCleanAction(page, mainStartIdx, mainEndIdx);
     }
 
@@ -264,6 +271,8 @@ START:
 
 bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
     while (true) {
+        LOG_ASSERT(mFillIdx == mFillEndIdx, "Current fill index must be at the end index");
+        LOG_ASSERT(mUpdateIdx == mUpdateEndIdx, "Current update index must be at the end index");
         bool wasDelete = false;
         if (oldRecord.newest() != 0u) {
             uint64_t lowestVersion;
@@ -277,15 +286,15 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
 
             // Check if all elements were overwritten by the update log
             if (wasDelete && oldRecord.baseVersion() < mMinVersion) {
-                --mFillIdx;
                 mFillSize -= size + mContext.fixedSize();
+                LOG_ASSERT(mFillIdx > mFillEndIdx, "No element written before the delete");
+                --mFillIdx;
                 LOG_ASSERT(mUpdateIdx > mUpdateEndIdx, "No element written before the delete");
                 --mUpdateIdx;
             } else if (lowestVersion > std::max(mMinVersion, oldRecord.baseVersion())) {
                 auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(oldRecord.value()));
-                auto size = mContext.entryOverhead() + logEntry->size() - sizeof(InsertLogEntry);
 
-                mFillSize += size;
+                mFillSize += size + logEntry->size() - sizeof(InsertLogEntry);
                 if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
                     flush();
                     continue;
@@ -314,6 +323,9 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
 
             writeInsert(oldRecord.value());
         }
+
+        LOG_ASSERT(mFillIdx - mFillEndIdx == mUpdateIdx - mUpdateEndIdx,
+                "Fill count does not match actual number of written elements");
 
         auto fillEntry = mFillPage->entryData() + mFillEndIdx;
         mPointerActions.emplace_back(&oldRecord.value()->newest, oldRecord.newest(), fillEntry);
@@ -455,19 +467,22 @@ void ColumnMapPageModifier::writeUpdate(const UpdateLogEntry* entry) {
     if (logEntry->type() != crossbow::to_underlying(RecordType::DELETE)) {
         // Write data into update page
         writeData(entry->data(), logEntry->size() - sizeof(UpdateLogEntry));
-    } else if (mUpdateIdx != 0u && mContext.varSizeFieldCount() != 0u) {
-        // Deletes do not have any data on the var size heap but the offsets must be correct nonetheless
-        // Copy the current offset of the heap
-        auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(crossbow::align(mUpdatePage->recordData()
-                + mUpdatePage->count * mContext.fixedSize(), 8u));
-        auto heapOffset = heapEntries[mUpdateIdx - 1].offset;
+    } else {
+        mUpdatePage->sizeData()[mUpdateIdx] = 0u;
+        if (mContext.varSizeFieldCount() != 0u) {
+            // Deletes do not have any data on the var size heap but the offsets must be correct nonetheless
+            // Copy the current offset of the heap
+            auto heapEntries = reinterpret_cast<ColumnMapHeapEntry*>(crossbow::align(mUpdatePage->recordData()
+                    + mUpdatePage->count * mContext.fixedSize(), 8u));
+            auto heapOffset = static_cast<uint32_t>(mFillPage->heapData() - mFillHeap);
 
-        heapEntries += mUpdateIdx;
-        for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
-            new (heapEntries) ColumnMapHeapEntry(heapOffset, 0u, nullptr);
+            heapEntries += mUpdateIdx;
+            for (decltype(mContext.varSizeFieldCount()) i = 0; i < mContext.varSizeFieldCount(); ++i) {
+                new (heapEntries) ColumnMapHeapEntry(heapOffset, 0u, nullptr);
 
-            // Advance pointer to offset entry of next field
-            heapEntries += mUpdatePage->count;
+                // Advance pointer to offset entry of next field
+                heapEntries += mUpdatePage->count;
+            }
         }
     }
 
@@ -563,12 +578,13 @@ void ColumnMapPageModifier::flushFillPage() {
 
     // Copy sizes
     auto sizes = mFillPage->sizeData();
-    for (auto& action : mCleanActions) {
+    for (const auto& action : mCleanActions) {
         auto srcData = action.page->sizeData() + action.startIdx;
         auto count = action.endIdx - action.startIdx;
         memcpy(sizes, srcData, count * sizeof(uint32_t));
         sizes += count;
     }
+    LOG_ASSERT(sizes == mFillPage->sizeData() + mFillPage->count, "Did not copy all sizes");
 
     auto recordData = mFillPage->recordData();
     size_t startOffset = 0;
@@ -584,6 +600,8 @@ void ColumnMapPageModifier::flushFillPage() {
         startOffset += fieldLength;
     }
     LOG_ASSERT(startOffset == mContext.fixedSize(), "Offset after adding all fixed size fields is not the fixed size");
+    LOG_ASSERT(recordData == mFillPage->recordData() + mContext.fixedSize() * mFillPage->count,
+            "Offset after adding all fixed size fields is not the fixed size");
 
     // Copy all variable size field heap entries
     // If the offset correction is 0 we can do a single memory copy otherwise we have to adjust the offset for every
