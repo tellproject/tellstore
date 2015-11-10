@@ -367,6 +367,12 @@ bool ColumnMapPageModifier::needsCleaning(const ColumnMapMainPage* page) {
 void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t startIdx, uint32_t endIdx) {
     LOG_ASSERT(endIdx > startIdx, "End index must be larger than start index");
 
+    // Do not copy and adjust heap if the table has no variable sized fields
+    if (mContext.varSizeFieldCount() == 0u) {
+        mCleanActions.emplace_back(page, startIdx, endIdx, 0u);
+        return;
+    }
+
     // Determine begin and end offset of the variable size heap
     auto heapEntries = reinterpret_cast<const ColumnMapHeapEntry*>(crossbow::align(page->recordData()
             + page->count * mContext.fixedSize(), 8u));
