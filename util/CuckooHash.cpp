@@ -189,28 +189,22 @@ END:
 
 bool Modifier::remove(uint64_t key) {
     size_t pIdx;
-    bool res = false;
     unsigned cnt = 0;
     for (auto& hash : {hash1, hash2, hash3}) {
         auto idx = hash(key);
         auto& entry = at(cnt, idx, pIdx);
-        if (entry.first == key) {
+        auto e = &entry;
+        if (e->first == key && e->second != nullptr) {
             if (cow(cnt, pIdx)) {
-                auto& e = at(cnt, idx, pIdx);
-                res = e.second != nullptr;
-                e.second = nullptr;
-            } else {
-                res = entry.second != nullptr;
-                entry.second = nullptr;
+                e = &at(cnt, idx, pIdx);
             }
+            e->second = nullptr;
             --mSize;
-            goto END;
+            return true;
         }
         ++cnt;
     }
-END:
-    if (res) --mSize;
-    return res;
+    return false;
 }
 
 Modifier::EntryT& Modifier::at(unsigned h, size_t idx, size_t& pageIdx) {
