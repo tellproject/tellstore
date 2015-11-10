@@ -238,7 +238,7 @@ START:
                         mCleanActions.emplace_back(mUpdatePage, mUpdateStartIdx, mUpdateEndIdx, 0);
                         mUpdateStartIdx = mUpdateEndIdx;
                     }
-                    LOG_ASSERT(mainEndIdx != copyStartIdx, "This case was handled earlier");
+                    LOG_ASSERT(mainEndIdx == 0u || mainEndIdx != copyStartIdx, "This case was handled earlier");
                     mainStartIdx = copyStartIdx;
                     mainEndIdx = copyEndIdx;
                 }
