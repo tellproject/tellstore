@@ -355,19 +355,17 @@ bool ColumnMapPageModifier::needsCleaning(const ColumnMapMainPage* page) {
     typename std::remove_const<decltype(page->count)>::type i = 0;
     while (i < page->count) {
         // In case the record has pending updates it needs to be cleaned
-        if (entries[i].newest.load() != 0x0u) {
+        auto newest = entries[i].newest.load();
+        LOG_ASSERT(newest % 8u == 0u, "Newest pointer must be unmarked before garbage collection");
+        if (newest != 0x0u) {
             return true;
-        }
-
-        // If only one version is in the record it does not need cleaning
-        if (i + 1 == page->count || entries[i].key != entries[i + 1].key) {
-            return false;
         }
 
         // Skip to next key
         // The record needs cleaning if one but the first version can be purged
         auto key = entries[i].key;
         for (++i; i < page->count && entries[i].key == key; ++i) {
+            LOG_ASSERT(entries[i].newest.load() == 0x0u, "Newest pointer must be null");
             if (entries[i].version < mMinVersion) {
                 return true;
             }
@@ -632,6 +630,7 @@ void ColumnMapPageModifier::flushFillPage() {
     for (auto& action : mPointerActions) {
         auto desired = reinterpret_cast<uintptr_t>(action.desired) | crossbow::to_underlying(NewestPointerTag::MAIN);
         while (!action.ptr->compare_exchange_strong(action.expected, desired)) {
+            LOG_ASSERT(action.expected % 8u == 0u && action.expected != 0x0u, "Changed pointer is invalid");
             action.desired->newest.store(action.expected);
         }
     }
