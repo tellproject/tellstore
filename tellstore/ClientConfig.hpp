@@ -43,10 +43,11 @@ struct ClientConfig {
             : maxPendingResponses(100ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull) {
-        infinibandConfig.receiveBufferCount = 128;
-        infinibandConfig.sendBufferCount = 128;
-        infinibandConfig.bufferLength = 32 * 1024;
+        infinibandConfig.receiveBufferCount = 256;
+        infinibandConfig.sendBufferCount = 256;
+        infinibandConfig.bufferLength = 128 * 1024;
         infinibandConfig.sendQueueLength = 128;
+        infinibandConfig.completionQueueLength = 512;
     }
 
     /// Configuration for the Infiniband devices
