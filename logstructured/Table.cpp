@@ -84,7 +84,7 @@ LazyRecordWriter::~LazyRecordWriter() {
 
     mRecord->invalidate();
     auto entry = LogEntry::entryFromData(reinterpret_cast<char*>(mRecord));
-    entry->seal();
+    mTable.mLog.seal(entry);
 }
 
 ChainedVersionRecord* LazyRecordWriter::record() {
@@ -111,7 +111,7 @@ void LazyRecordWriter::seal() {
     }
 
     auto entry = LogEntry::entryFromData(reinterpret_cast<char*>(mRecord));
-    entry->seal();
+    mTable.mLog.seal(entry);
     mRecord = nullptr;
 }
 

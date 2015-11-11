@@ -133,6 +133,14 @@ public:
         mSize.fetch_and(0xFFFFFFFFu << 1);
     }
 
+    /**
+     * @brief Atomically retrieves the size and whether the entry is sealed
+     */
+    std::tuple<uint32_t, bool> sizeAndSealed() const {
+        auto size = mSize.load();
+        return std::make_tuple(size >> 1, (size & 0x1u) == 0);
+    }
+
 private:
     friend class LogPage;
 
@@ -557,6 +565,10 @@ public:
         return mPages.load();
     }
 
+    void seal(LogEntry* entry) {
+        entry->seal();
+    }
+
     /**
      * @brief Appends the given pages to the log
      *
@@ -773,8 +785,22 @@ public:
     }
 
     LogPage* tail() {
-        return mTail.load().tailPage;
+        return mTail.load().page;
     }
+
+    LogIterator sealedEnd() {
+        return sealedEntryEndImpl<LogIterator>();
+    }
+
+    ConstLogIterator sealedEnd() const {
+        return sealedCend();
+    }
+
+    ConstLogIterator sealedCend() const {
+        return sealedEntryEndImpl<ConstLogIterator>();
+    }
+
+    void seal(LogEntry* entry);
 
     /**
      * @brief Tries to set the new tail of the log from oldTail to newTail
@@ -799,7 +825,7 @@ protected:
     template <typename Iterator>
     Iterator pageBeginImpl() const {
         auto tail = mTail.load();
-        return Iterator(tail.tailPage);
+        return Iterator(tail.page);
     }
 
     /**
@@ -816,7 +842,7 @@ protected:
     template <typename Iterator>
     Iterator entryBeginImpl() const {
         auto tail = mTail.load();
-        return Iterator(tail.tailPage, tail.startOffset);
+        return Iterator(tail.page, tail.offset);
     }
 
     /**
@@ -831,26 +857,33 @@ protected:
         return Iterator(page, page->offset());
     }
 
+    /**
+     * @brief Sealed entry iteration ends at the current sealed head
+     */
+    template <typename Iterator>
+    Iterator sealedEntryEndImpl() const {
+        auto sealedHead = mSealedHead.load();
+        return Iterator(sealedHead.page, sealedHead.offset);
+    }
+
 private:
     /**
-     * @brief Struct containing the log tail
-     *
-     * Stores a pointer to the current tail page and the offset up to which the page was truncated.
+     * @brief Struct containing a position in the log (page with offset into page)
      *
      * The 16 byte alignment is required on x64 for the 128 bit CAS to work correctly. The stored offset value has to be
      * 8 byte in size to make the object use the complete 16 bytes (otherwise the 128 bit CAS would fail on garbage
      * data).
      */
-    struct alignas(16) LogTail {
-        LogTail() noexcept = default;
+    struct alignas(16) LogPosition {
+        LogPosition() noexcept = default;
 
-        LogTail(LogPage* tail, uint32_t offset)
-                : tailPage(tail),
-                  startOffset(offset) {
+        LogPosition(LogPage* p, uint32_t o)
+                : page(p),
+                  offset(o) {
         }
 
-        LogPage* tailPage;
-        uint64_t startOffset;
+        LogPage* page;
+        uint64_t offset;
     };
 
     /**
@@ -858,8 +891,18 @@ private:
      */
     LogPage* createPage(LogPage* oldHead);
 
+    void advanceSealedHead(LogPosition oldSealedHead);
+
+    /// The head page of the log
     std::atomic<LogPage*> mHead;
-    std::atomic<LogTail> mTail;
+
+    /// The sealed head of the log
+    /// Stores the position of the first unsealed element in the log.
+    std::atomic<LogPosition> mSealedHead;
+
+    /// The tail of the log
+    /// Stores a pointer to the current tail page and the offset up to which the page was truncated.
+    std::atomic<LogPosition> mTail;
 };
 
 /**

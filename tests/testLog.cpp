@@ -20,6 +20,7 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
+
 #include <config.h>
 #include <util/Log.hpp>
 #include <util/PageManager.hpp>
@@ -181,7 +182,9 @@ TYPED_TEST(BaseLogTest, emptyLogIteration) {
  */
 TYPED_TEST(BaseLogTest, logIteratorAppendSamePage) {
     auto entry1 = this->mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    this->mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
     auto i = this->mLog.begin();
     auto end = this->mLog.end();
@@ -193,7 +196,9 @@ TYPED_TEST(BaseLogTest, logIteratorAppendSamePage) {
     EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 
     auto entry2 = this->mLog.append(31);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
+    this->mLog.seal(entry2);
+    EXPECT_TRUE(entry2->sealed()) << "Failed to seal element";
 
     EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
@@ -207,7 +212,9 @@ TYPED_TEST(BaseLogTest, logIteratorAppendSamePage) {
  */
 TYPED_TEST(BaseLogTest, logIteratorAppendNewPage) {
     auto entry1 = this->mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    this->mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
     auto i = this->mLog.begin();
     auto end = this->mLog.end();
@@ -219,7 +226,9 @@ TYPED_TEST(BaseLogTest, logIteratorAppendNewPage) {
     EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 
     auto entry2 = this->mLog.append(LogPage::MAX_DATA_SIZE);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
+    this->mLog.seal(entry2);
+    EXPECT_TRUE(entry2->sealed()) << "Failed to seal element";
 
     EXPECT_TRUE(end == i) << "Iterator not pointing to end";
 }
@@ -318,16 +327,22 @@ TEST_F(UnorderedLogTest, appendMultiplePage) {
  */
 TEST_F(UnorderedLogTest, appendPageWriteToHead) {
     auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
     auto page1 = new(mPageManager->alloc()) LogPage();
     auto entry2 = page1->append(16);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
+    mLog.seal(entry2);
+    EXPECT_TRUE(entry2->sealed()) << "Failed to seal element";
 
     mLog.appendPage(page1);
 
     auto entry3 = mLog.append(16);
-    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry3) << "Failed to allocate entry";
+    mLog.seal(entry3);
+    EXPECT_TRUE(entry3->sealed()) << "Failed to seal element";
 
     auto i = mLog.begin();
     auto end = mLog.end();
@@ -353,16 +368,22 @@ TEST_F(UnorderedLogTest, appendPageWriteToHead) {
  */
 TEST_F(UnorderedLogTest, appendPageNewHead) {
     auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
     auto page1 = new(mPageManager->alloc()) LogPage();
     auto entry2 = page1->append(16);
-    EXPECT_NE(nullptr, entry2) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
+    mLog.seal(entry2);
+    EXPECT_TRUE(entry2->sealed()) << "Failed to seal element";
 
     mLog.appendPage(page1);
 
     auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
-    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry3) << "Failed to allocate entry";
+    mLog.seal(entry3);
+    EXPECT_TRUE(entry3->sealed()) << "Failed to seal element";
 
     auto i = mLog.begin();
     auto end = mLog.end();
@@ -395,16 +416,59 @@ TEST_F(OrderedLogTest, append) {
     auto tail = mLog.head();
 
     auto entry1 = mLog.append(31);
-    EXPECT_NE(nullptr, entry1) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
     auto entry2 = tail->append(LogPage::MAX_DATA_SIZE);
     EXPECT_EQ(nullptr, entry2) << "Allocated entry outside page boundary";
 
     auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
-    EXPECT_NE(nullptr, entry3) << "Failed to allocate entry";
+    ASSERT_NE(nullptr, entry3) << "Failed to allocate entry";
+    mLog.seal(entry3);
+    EXPECT_TRUE(entry3->sealed()) << "Failed to seal element";
 
     EXPECT_NE(tail, mLog.head()) << "New head is the same as the old head";
     EXPECT_EQ(tail->next(), mLog.head()) << "Next pointer of old head does not point to new head";
+}
+
+/**
+ * @class Log
+ * @test Check that appends work correctly
+ *
+ * Allocates 3 entries: One small on head page, then a large one that does not fit directly on the head page, then a
+ * second large one that triggers allocation of a new head segment.
+ */
+TEST_F(OrderedLogTest, sealedLogIterator) {
+    // Insert first element
+    auto entry1 = mLog.append(31);
+    ASSERT_NE(nullptr, entry1) << "Failed to allocate entry";
+    EXPECT_EQ(entry1, &(*mLog.sealedEnd())) << "Sealed End does not point to first element";
+
+    // Insert second element on same page
+    auto entry2 = mLog.append(55);
+    ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
+    EXPECT_EQ(entry1, &(*mLog.sealedEnd())) << "Sealed End does not point to first element";
+
+    // Seal second element, sealed end must still point to beginning
+    mLog.seal(entry2);
+    EXPECT_TRUE(entry2->sealed()) << "Failed to seal element";
+    EXPECT_EQ(entry1, &(*mLog.sealedEnd())) << "Sealed End does not point to first element";
+
+    // Insert third element on next page
+    auto entry3 = mLog.append(LogPage::MAX_DATA_SIZE);
+    ASSERT_NE(nullptr, entry3) << "Failed to allocate entry";
+    EXPECT_EQ(entry1, &(*mLog.sealedEnd())) << "Sealed End does not point to first element";
+
+    // Seal first entry, sealed end must point to third element
+    mLog.seal(entry1);
+    EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
+    EXPECT_EQ(entry3, &(*mLog.sealedEnd())) << "Sealed End does not point to third element";
+
+    // Seal third entry, sealed end must point past third element
+    mLog.seal(entry3);
+    EXPECT_TRUE(entry3->sealed()) << "Failed to seal element";
+    EXPECT_EQ(mLog.end(), mLog.sealedEnd()) << "Sealed End does not point to end";
 }
 
 /**
@@ -422,13 +486,24 @@ protected:
 
     virtual void SetUp() {
         mEntry1 = BaseLogTest<Impl>::mLog.append(31);
-        EXPECT_NE(nullptr, mEntry1) << "Failed to allocate entry";
+        ASSERT_NE(nullptr, mEntry1) << "Failed to allocate entry";
+        BaseLogTest<Impl>::mLog.seal(mEntry1);
+        EXPECT_TRUE(mEntry1->sealed()) << "Failed to seal element";
+
         mEntry2 = BaseLogTest<Impl>::mLog.append(55);
-        EXPECT_NE(nullptr, mEntry2) << "Failed to allocate entry";
+        ASSERT_NE(nullptr, mEntry2) << "Failed to allocate entry";
+        BaseLogTest<Impl>::mLog.seal(mEntry2);
+        EXPECT_TRUE(mEntry2->sealed()) << "Failed to seal element";
+
         mEntry3 = BaseLogTest<Impl>::mLog.append(LogPage::MAX_DATA_SIZE);
-        EXPECT_NE(nullptr, mEntry3) << "Failed to allocate entry";
+        ASSERT_NE(nullptr, mEntry3) << "Failed to allocate entry";
+        BaseLogTest<Impl>::mLog.seal(mEntry3);
+        EXPECT_TRUE(mEntry3->sealed()) << "Failed to seal element";
+
         mEntry4 = BaseLogTest<Impl>::mLog.append(LogPage::MAX_DATA_SIZE);
-        EXPECT_NE(nullptr, mEntry4) << "Failed to allocate entry";
+        ASSERT_NE(nullptr, mEntry4) << "Failed to allocate entry";
+        BaseLogTest<Impl>::mLog.seal(mEntry4);
+        EXPECT_TRUE(mEntry4->sealed()) << "Failed to seal element";
     }
 
     LogEntry* mEntry1;
@@ -701,7 +776,7 @@ TYPED_TEST(LogTestThreaded, DISABLED_append) {
             for (auto i = values; i < end; ++i) {
                 auto entry = this->mLog.append(sizeof(i));
                 memcpy(entry->data(), &i, sizeof(i));
-                entry->seal();
+                this->mLog.seal(entry);
             }
         });
         values += valuesCount;
@@ -744,7 +819,7 @@ TEST_F(UnorderedLogThreadedTest, DISABLED_append) {
             for (auto i = values; i < end; ++i) {
                 auto entry = this->mLog.append(sizeof(i));
                 memcpy(entry->data(), &i, sizeof(i));
-                entry->seal();
+                this->mLog.seal(entry);
             }
         });
         values += valuesCount;
@@ -761,7 +836,7 @@ TEST_F(UnorderedLogThreadedTest, DISABLED_append) {
                     entry = page->append(sizeof(i));
                 }
                 memcpy(entry->data(), &i, sizeof(i));
-                entry->seal();
+                this->mLog.seal(entry);
             }
             this->mLog.appendPage(page);
         });

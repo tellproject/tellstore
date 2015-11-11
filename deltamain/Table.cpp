@@ -93,7 +93,7 @@ int Table<Context>::insert(uint64_t key, size_t size, const char* data,
     // If the element changed it could be invalidate in the meantime
     if (!mInsertTable.insert(key, insertEntry, insertList)) {
         insertEntry->newest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
-        logEntry->seal();
+        mInsertLog.seal(logEntry);
         return error::not_in_snapshot;
     }
 
@@ -106,14 +106,14 @@ int Table<Context>::insert(uint64_t key, size_t size, const char* data,
         if (auto ptr = newMainTable->get(key)) {
             if (internalUpdate<MainRecord>(ptr, size, data, snapshot, RecordType::DELETE, RecordType::DATA, ec)) {
                 insertEntry->newest.store(crossbow::to_underlying(NewestPointerTag::INVALID));
-                logEntry->seal();
+                mInsertLog.seal(logEntry);
                 mInsertTable.remove(key, insertEntry, insertList);
                 return ec;
             }
         }
     }
 
-    logEntry->seal();
+    mInsertLog.seal(logEntry);
     return 0;
 }
 
@@ -248,7 +248,7 @@ void Table<Context>::runGC(uint64_t minVersion) {
     PageModifier pageListModifier(mContext, mPageManager, mainTableModifier, minVersion);
 
     auto pageList = crossbow::allocator::construct<PageList>();
-    pageList->updateEnd = mUpdateLog.end();
+    pageList->updateEnd = mUpdateLog.sealedEnd();
 
     std::vector<void*> obsoletePages;
     auto oldPageList = mPages.load();
@@ -342,7 +342,7 @@ bool Table<Context>::internalUpdate(void* ptr, size_t size, const char* data,
     // Try to set the newest pointer of the base record to the newly written UpdateLogEntry
     if (!record.tryUpdate(reinterpret_cast<uintptr_t>(updateEntry))) {
         updateEntry->previous.store(crossbow::to_underlying(NewestPointerTag::INVALID));
-        logEntry->seal();
+        mUpdateLog.seal(logEntry);
 
         // If the newest pointer points to a main record then the base was garbage collected in the meantime
         // Retry the write again on the new main record.
@@ -354,7 +354,7 @@ bool Table<Context>::internalUpdate(void* ptr, size_t size, const char* data,
         ec  = error::not_in_snapshot;
         return true;
     }
-    logEntry->seal();
+    mUpdateLog.seal(logEntry);
 
     ec = 0;
     return true;
@@ -436,7 +436,7 @@ bool Table<Context>::internalRevert(void* ptr, const commitmanager::SnapshotDesc
     // Try to set the newest pointer of the base record to the newly written UpdateLogEntry
     if (!record.tryUpdate(reinterpret_cast<uintptr_t>(updateEntry))) {
         updateEntry->previous.store(crossbow::to_underlying(NewestPointerTag::INVALID));
-        logEntry->seal();
+        mUpdateLog.seal(logEntry);
 
         // If the newest pointer points to a main record then the base was garbage collected in the meantime
         // Retry the write again on the new main record.
@@ -448,7 +448,7 @@ bool Table<Context>::internalRevert(void* ptr, const commitmanager::SnapshotDesc
         ec = error::not_in_snapshot;
         return true;
     }
-    logEntry->seal();
+    mUpdateLog.seal(logEntry);
 
     ec = 0;
     return true;

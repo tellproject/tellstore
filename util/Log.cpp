@@ -247,13 +247,26 @@ UnorderedLogImpl::LogHead UnorderedLogImpl::createPage(LogHead oldHead) {
 OrderedLogImpl::OrderedLogImpl(PageManager& pageManager)
         : BaseLogImpl(pageManager),
           mHead(acquirePage()),
-          mTail(LogTail(mHead.load(), 0)) {
-    LOG_ASSERT(mHead.load() == mTail.load().tailPage, "Head and Tail do not point to the same page");
+          mSealedHead(LogPosition(mHead.load(), 0)),
+          mTail(LogPosition(mHead.load(), 0)) {
+    LOG_ASSERT(mHead.load() == mSealedHead.load().page, "Head and Sealed head do not point to the same page");
+    LOG_ASSERT(mHead.load() == mTail.load().page, "Head and Tail do not point to the same page");
+}
+
+void OrderedLogImpl::seal(LogEntry* entry) {
+    entry->seal();
+
+    // Check if the sealed head pointer points to another element
+    auto sealedHead = mSealedHead.load();
+    if (reinterpret_cast<LogEntry*>(sealedHead.page->data() + sealedHead.offset) != entry) {
+        return;
+    }
+    advanceSealedHead(sealedHead);
 }
 
 bool OrderedLogImpl::truncateLog(LogIterator oldTail, LogIterator newTail) {
-    LogTail old(oldTail.page(), oldTail.offset());
-    if (!mTail.compare_exchange_strong(old, LogTail(newTail.page(), newTail.offset()))) {
+    LogPosition old(oldTail.page(), oldTail.offset());
+    if (!mTail.compare_exchange_strong(old, LogPosition(newTail.page(), newTail.offset()))) {
         return false;
     }
 
@@ -312,9 +325,123 @@ LogPage* OrderedLogImpl::createPage(LogPage* oldHead) {
 
     // Set the page as new head
     // We do not care if this succeeds - if it does not, it means another thread updated the head for us
-    mHead.compare_exchange_strong(oldHead, nPage);
+    auto expectedHead = oldHead;
+    mHead.compare_exchange_strong(expectedHead, nPage);
+
+    // The sealed end pointer must be moved to the next page in case it points past the last valid element
+    auto sealedHead = mSealedHead.load();
+    if (sealedHead.page == oldHead && sealedHead.offset == oldHead->offset()) {
+        advanceSealedHead(sealedHead);
+    }
 
     return nPage;
+}
+
+void OrderedLogImpl::advanceSealedHead(LogPosition oldSealedHead) {
+    auto sealedHead = oldSealedHead;
+    uint32_t size;
+    bool sealed;
+    LogEntry* currentEntry;
+
+    // Check if the page has space left for a following log entry otherwise mark as move-to-next-page
+    if (sealedHead.offset <= (LogPage::MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE)) {
+        currentEntry = reinterpret_cast<LogEntry*>(sealedHead.page->data() + sealedHead.offset);
+        std::tie(size, sealed) = currentEntry->sizeAndSealed();
+    } else {
+        size = 0u;
+        sealed = true;
+        currentEntry = nullptr;
+    }
+
+    while (true) {
+        while (sealed) {
+            if (size == 0u) {
+                uint32_t pageOffset;
+                bool pageSealed;
+                std::tie(pageOffset, pageSealed) = sealedHead.page->offsetAndSealed();
+
+                // If the page is not sealed other threads might still append to this page do not advance in this case
+                if (!pageSealed) {
+                    break;
+                }
+
+                // Check if another thread did an append in the meantime else move to next page
+                if (pageOffset > sealedHead.offset) {
+                    std::tie(size, sealed) = currentEntry->sizeAndSealed();
+                    LOG_ASSERT(size != 0u, "Entry was not acquired despite being in valid page region");
+                } else {
+                    auto next = sealedHead.page->next().load();
+                    // Only advance if the next page is already valid
+                    if (next == nullptr) {
+                        break;
+                    }
+                    sealedHead.page = next;
+                    sealedHead.offset = 0u;
+
+                    currentEntry = reinterpret_cast<LogEntry*>(sealedHead.page->data() + sealedHead.offset);
+                    std::tie(size, sealed) = currentEntry->sizeAndSealed();
+                }
+            } else {
+                sealedHead.offset += LogEntry::entrySizeFromSize(size);
+
+                // Check if the page has space left for a following log entry otherwise mark as move-to-next-page
+                if (sealedHead.offset <= (LogPage::MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE)) {
+                    currentEntry = reinterpret_cast<LogEntry*>(sealedHead.page->data() + sealedHead.offset);
+                    std::tie(size, sealed) = currentEntry->sizeAndSealed();
+                } else {
+                    size = 0u;
+                }
+            }
+        }
+
+        // Set the new unsealed head
+        // In the case this fails the sealed head was moved forward by another thread and the algorithm can return.
+        if (!mSealedHead.compare_exchange_strong(oldSealedHead, sealedHead)) {
+            return;
+        }
+        oldSealedHead = sealedHead;
+
+        // The oldest unsealed element might have been sealed in the meantime
+        // In this case repeat the sealing process
+        if (sealedHead.offset <= (LogPage::MAX_ENTRY_SIZE - LogEntry::LOG_ENTRY_SIZE)) {
+            std::tie(size, sealed) = currentEntry->sizeAndSealed();
+        } else {
+            size = 0u;
+            sealed = true;
+        }
+
+        // There might be a new next page
+        if (size == 0u) {
+            uint32_t pageOffset;
+            bool pageSealed;
+            std::tie(pageOffset, pageSealed) = sealedHead.page->offsetAndSealed();
+
+            // If the page is not sealed then there will be no new page
+            if (!pageSealed) {
+                return;
+            }
+
+            // Check if elements are left on the current page otherwise advance to next page
+            if (pageOffset > sealedHead.offset) {
+                std::tie(size, sealed) = currentEntry->sizeAndSealed();
+                LOG_ASSERT(size != 0u, "Entry was not acquired despite being in valid page region");
+            } else {
+                auto next = sealedHead.page->next().load();
+                if (next == nullptr) {
+                    return;
+                }
+                sealedHead.page = next;
+                sealedHead.offset = 0u;
+
+                currentEntry = reinterpret_cast<LogEntry*>(sealedHead.page->data() + sealedHead.offset);
+                std::tie(size, sealed) = currentEntry->sizeAndSealed();
+            }
+        }
+
+        if (!sealed) {
+            return;
+        }
+    }
 }
 
 template <class Impl>
