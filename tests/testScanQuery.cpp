@@ -72,7 +72,7 @@ protected:
         mTuple2.reset(record.create(insertTuple2, mTuple2Size));
     }
 
-    bool checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record);
+    bool checkQuery(size_t qsize, const char* qbuffer, uint64_t key, const char* tuple, const Record& record);
 
     Schema mSchema;
 
@@ -83,9 +83,10 @@ protected:
     std::unique_ptr<char[]> mTuple2;
 };
 
-bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, const char* tuple, const Record& record) {
+bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, uint64_t key, const char* tuple,
+        const Record& record) {
     auto q = qbuffer;
-    auto res = ScanQueryBatchProcessor::check(q, tuple, record);
+    auto res = ScanQueryBatchProcessor::check(q, key, tuple, record);
     EXPECT_EQ(qbuffer + qsize, q) << "Returned pointer does not point at end of qbuffer";
     return res;
 }
@@ -99,12 +100,12 @@ bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, const char* tu
 TEST_F(ScanQueryTest, noPredicates) {
     Record record(mSchema);
 
-    size_t qsize = 8;
+    size_t qsize = 16;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
 }
 
 /**
@@ -118,18 +119,18 @@ TEST_F(ScanQueryTest, singlePredicate) {
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
 
-    size_t qsize = 24;
+    size_t qsize = 32;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
-    *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
+    *reinterpret_cast<int32_t*>(qbuffer.get() + 28) = gTuple1Number;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
-    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
 }
 
 /**
@@ -145,23 +146,23 @@ TEST_F(ScanQueryTest, andPredicate) {
     Record::id_t largenumberField;
     ASSERT_TRUE(record.idOf("largenumber", largenumberField)) << "Field not found";
 
-    size_t qsize = 48;
+    size_t qsize = 56;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
-    *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 24) = largenumberField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 26) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x1u;
-    *reinterpret_cast<int64_t*>(qbuffer.get() + 40) = gTupleLargenumber;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
+    *reinterpret_cast<int32_t*>(qbuffer.get() + 28) = gTuple1Number;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 32) = largenumberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 34) = 0x1u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 40) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 41) = 0x1u;
+    *reinterpret_cast<int64_t*>(qbuffer.get() + 48) = gTupleLargenumber;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
-    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
 }
 
 /**
@@ -177,25 +178,25 @@ TEST_F(ScanQueryTest, orPredicate) {
     Record::id_t textField;
     ASSERT_TRUE(record.idOf("text", textField)) << "Field not found";
 
-    size_t qsize = 40 + gTuple2Text.length();
+    size_t qsize = 48 + gTuple2Text.length();
     qsize += ((qsize % 8 != 0) ? (8 - (qsize % 8)) : 0);
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
-    *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 24) = textField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 26) = 0x1u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x0u;
-    *reinterpret_cast<uint32_t*>(qbuffer.get() + 36) = gTuple2Text.length();
-    memcpy(qbuffer.get() + 40, gTuple2Text.data(), gTuple2Text.length());
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
+    *reinterpret_cast<int32_t*>(qbuffer.get() + 28) = gTuple1Number;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 32) = textField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 34) = 0x1u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 40) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 41) = 0x0u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 44) = gTuple2Text.length();
+    memcpy(qbuffer.get() + 48, gTuple2Text.data(), gTuple2Text.length());
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
 }
 
 /**
@@ -209,21 +210,41 @@ TEST_F(ScanQueryTest, sameColumnPredicate) {
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
 
-    size_t qsize = 32;
+    size_t qsize = 40;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
     *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 8) = numberField;
-    *reinterpret_cast<uint16_t*>(qbuffer.get() + 10) = 0x2u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 16) = crossbow::to_underlying(PredicateType::EQUAL);
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 17) = 0x0u;
-    *reinterpret_cast<int32_t*>(qbuffer.get() + 20) = gTuple1Number;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
+    *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x2u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 25) = 0x0u;
-    *reinterpret_cast<uint8_t*>(qbuffer.get() + 28) = gTuple2Number;
+    *reinterpret_cast<int32_t*>(qbuffer.get() + 28) = gTuple1Number;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 32) = crossbow::to_underlying(PredicateType::EQUAL);
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 33) = 0x0u;
+    *reinterpret_cast<uint8_t*>(qbuffer.get() + 36) = gTuple2Number;
 
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple1.get(), record));
-    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), mTuple2.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
+}
+
+/**
+ * @class ScanQuery
+ * @test Check if the check succeeds for the key that is in the partition
+ *
+ * The query is equal to "SELECT * WHERE key % 2 = 1".
+ */
+TEST_F(ScanQueryTest, partitioning) {
+    Record record(mSchema);
+
+    size_t qsize = 16;
+    std::unique_ptr<char[]> qbuffer(new char[qsize]);
+    memset(qbuffer.get(), 0, qsize);
+
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 8) = 0x2u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 12) = 0x1u;
+
+    EXPECT_TRUE(checkQuery(qsize, qbuffer.get(), 1, mTuple1.get(), record));
+    EXPECT_FALSE(checkQuery(qsize, qbuffer.get(), 2, mTuple2.get(), record));
 }
 
 } // anonymous namespace

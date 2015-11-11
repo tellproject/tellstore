@@ -281,11 +281,13 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
         return;
     }
 
-    uint32_t selectionLength = 24;
+    uint32_t selectionLength = 32;
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x0u); // Partition key
+    selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);
     selectionWriter.write<uint16_t>(0x1u);
     selectionWriter.align(sizeof(uint64_t));
@@ -371,11 +373,13 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
         return;
     }
 
-    uint32_t selectionLength = 24;
+    uint32_t selectionLength = 32;
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x0u); // Partition key
+    selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(numberField);
     selectionWriter.write<uint16_t>(0x1u);
     selectionWriter.align(sizeof(uint64_t));
@@ -459,11 +463,13 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
         return;
     }
 
-    uint32_t selectionLength = 24;
+    uint32_t selectionLength = 32;
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x0u); // Partition key
+    selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);
     selectionWriter.write<uint16_t>(0x1u);
     selectionWriter.align(sizeof(uint64_t));

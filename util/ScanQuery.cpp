@@ -343,10 +343,18 @@ void ScanQueryProcessor::ensureBufferSpace(uint32_t length) {
     }
 }
 
-bool ScanQueryBatchProcessor::check(const char*& query, const char* data, const Record& record) {
+bool ScanQueryBatchProcessor::check(const char*& query, uint64_t key, const char* data, const Record& record) {
     PredicateBitmap bitmap;
     auto numberOfCols = numberOfColumns(query);
     auto current = query + offsetToFirstColumn();
+    auto moduloK = moduloKey(query);
+    if (moduloK != 0) {
+        auto moduloV = moduloValue(query);
+        if (key % moduloK != moduloV) {
+            query = current;
+            return false;
+        }
+    }
     for (uint64_t i = 0; i < numberOfCols; ++i) {
         auto cId = columnId(current);
         auto predCnt = predicatesCount(current);
@@ -408,7 +416,7 @@ void ScanQueryBatchProcessor::processRecord(const Record& record, uint64_t key, 
     auto query = mQueryBuffer;
     for (auto& impl : mQueries) {
         // Check if the selection string matches the record
-        if (!check(query, data, record)) {
+        if (!check(query, key, data, record)) {
             continue;
         }
 

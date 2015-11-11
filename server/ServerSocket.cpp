@@ -246,7 +246,7 @@ void ServerSocket::handleScan(crossbow::infinio::MessageId messageId, crossbow::
     crossbow::infinio::RemoteMemoryRegion remoteRegion(remoteAddress, remoteLength, remoteKey);
 
     auto selectionLength = request.read<uint32_t>();
-    if (selectionLength % 8u != 0u || selectionLength < 8u) {
+    if (selectionLength % 8u != 0u || selectionLength < 16u) {
         writeErrorResponse(messageId, error::invalid_scan);
         return;
     }

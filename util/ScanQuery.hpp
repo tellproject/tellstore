@@ -420,6 +420,8 @@ void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t val
  *
  * A query has the following form
  * - 8 bytes for the number of columns it has to check
+ * - 4 bytes for the number of total scan partitions (or 0 if no partitioning)
+ * - 4 bytes for the number of the scan partition (if partitioning)
  * - For each column:
  *   - 2 bytes: The column id (called field id in the Record class)
  *   - 2 bytes: The number of predicates it has on the column
@@ -440,10 +442,11 @@ public:
      * After calling this function query points to the end of the query.
      *
      * @param query Reference pointing to the current selection query
+     * @param key Key of the tuple
      * @param data Pointer to the tuple's data
      * @param record Record of the tuple
      */
-    static bool check(const char*& query, const char* data, const Record& record);
+    static bool check(const char*& query, uint64_t key, const char* data, const Record& record);
 
     ScanQueryBatchProcessor(const char* queryBuffer, const std::vector<ScanQuery*>& queryData);
 
@@ -467,13 +470,21 @@ public:
     }
 
 private:
-    constexpr static off_t offsetToFirstColumn() { return 8; }
+    constexpr static off_t offsetToFirstColumn() { return 16; }
     constexpr static off_t offsetToFirstPredicate() { return 8; }
 
     static off_t offsetToNextPredicate(const char* current, const FieldBase& f);
 
     static uint64_t numberOfColumns(const char* query) {
         return *reinterpret_cast<const uint64_t*>(query);
+    }
+
+    static uint32_t moduloKey(const char* query) {
+        return *reinterpret_cast<const uint32_t*>(query + 8);
+    }
+
+    static uint32_t moduloValue(const char* query) {
+        return *reinterpret_cast<const uint32_t*>(query + 12);
     }
 
     static uint16_t columnId(const char* current) {
