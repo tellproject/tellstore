@@ -65,13 +65,13 @@ PageManager::~PageManager() {
 }
 
 void* PageManager::alloc() {
-    void* res = nullptr;
-    __attribute__((unused)) auto success = mPages.pop(res);
+    void* res;
+    auto success = mPages.pop(res);
     LOG_ASSERT(success == (res != nullptr), "Successful pop must not return null pages");
     LOG_ASSERT(!success || (res >= mData && res < reinterpret_cast<char*>(mData) + mSize), "Page points out of bound");
     LOG_ASSERT(!success || (reinterpret_cast<char*>(res) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
             "Pointer points not to beginning of page");
-    return res;
+    return success ? res : nullptr;
 }
 
 void PageManager::free(void* page) {
