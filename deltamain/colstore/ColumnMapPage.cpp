@@ -53,15 +53,26 @@ ColumnMapPageModifier::ColumnMapPageModifier(const ColumnMapContext& context, Pa
           mPageManager(pageManager),
           mMainTableModifier(mainTableModifier),
           mMinVersion(minVersion),
-          mUpdatePage(new (mPageManager.alloc()) ColumnMapMainPage(mContext.fixedSizeCapacity())),
           mUpdateStartIdx(0u),
           mUpdateEndIdx(0u),
           mUpdateIdx(0u),
-          mFillPage(new (mPageManager.alloc()) ColumnMapMainPage()),
-          mFillHeap(mFillPage->heapData()),
           mFillEndIdx(0u),
           mFillIdx(0u),
           mFillSize(0u) {
+    auto page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mUpdatePage = new (page) ColumnMapMainPage(mContext.fixedSizeCapacity());
+
+    page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mFillPage = new (page) ColumnMapMainPage();
+    mFillHeap = mFillPage->heapData();
 }
 
 bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
@@ -554,7 +565,12 @@ void ColumnMapPageModifier::flush() {
         mUpdateIdx = 0u;
     }
 
-    mFillPage = new (mPageManager.alloc()) ColumnMapMainPage();
+    auto page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mFillPage = new (page) ColumnMapMainPage();
     mFillHeap = mFillPage->heapData();
     mFillEndIdx = 0u;
     mFillIdx = 0u;

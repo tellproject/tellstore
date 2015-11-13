@@ -37,7 +37,12 @@ CuckooTable::CuckooTable(PageManager& pageManager)
 {
     mPages.reserve(3);
     for (size_t i = 0; i < 3; ++i) {
-        mPages.emplace_back(reinterpret_cast<EntryT*>(pageManager.alloc()));
+        auto page = pageManager.alloc();
+        if (!page) {
+            LOG_ERROR("PageManager ran out of space");
+            std::terminate();
+        }
+        mPages.emplace_back(reinterpret_cast<EntryT*>(page));
     }
 }
 
@@ -222,7 +227,12 @@ bool Modifier::cow(unsigned h, size_t idx) {
     if (pageWasModified[3*idx + h]) return false;
     pageWasModified[3*idx + h] = true;
     auto oldPage = mPages[3*idx + h];
-    auto newPage = reinterpret_cast<EntryT*>(mTable.mPageManager.alloc());
+    auto page = mTable.mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    auto newPage = reinterpret_cast<EntryT*>(page);
     memcpy(newPage, oldPage, TELL_PAGE_SIZE);
     mToDelete.push_back(oldPage);
     mPages[3*idx + h] = newPage;
@@ -246,7 +256,12 @@ void Modifier::rehash() {
     oldPages.swap(mPages);
     mPages.reserve(numPages);
     for (decltype(numPages) i = 0; i < numPages; ++i) {
-        mPages.emplace_back(reinterpret_cast<EntryT*>(mTable.mPageManager.alloc()));
+        auto page = mTable.mPageManager.alloc();
+        if (!page) {
+            LOG_ERROR("PageManager ran out of space");
+            std::terminate();
+        }
+        mPages.emplace_back(reinterpret_cast<EntryT*>(page));
     }
 
     std::vector<bool> oldPageWasModified(numPages, true);

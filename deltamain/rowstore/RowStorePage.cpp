@@ -179,10 +179,12 @@ void RowStorePageModifier::recycleEntry(Rec& oldRecord, RowStoreMainEntry* newRe
 template <typename Fun>
 RowStoreMainEntry* RowStorePageModifier::internalAppend(Fun fun) {
     if (!mFillPage) {
-        mFillPage = new (mPageManager.alloc()) RowStoreMainPage();
-        if (!mFillPage) {
-            return nullptr;
+        auto page = mPageManager.alloc();
+        if (!page) {
+            LOG_ERROR("PageManager ran out of space");
+            std::terminate();
         }
+        mFillPage = new (page) RowStoreMainPage();
         mPageList.emplace_back(mFillPage);
     }
 
@@ -190,10 +192,12 @@ RowStoreMainEntry* RowStorePageModifier::internalAppend(Fun fun) {
         return newRecord;
     }
 
-    mFillPage = new (mPageManager.alloc()) RowStoreMainPage();
-    if (!mFillPage) {
-        return nullptr;
+    auto page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
     }
+    mFillPage = new (page) RowStoreMainPage();
     mPageList.emplace_back(mFillPage);
 
     if (auto newRecord = fun()) {

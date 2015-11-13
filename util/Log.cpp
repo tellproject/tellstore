@@ -131,6 +131,10 @@ UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
     LOG_ASSERT((reinterpret_cast<uintptr_t>(&mHead) % 16) == 0, "Head is not 16 byte aligned");
     LOG_ASSERT(mHead.is_lock_free(), "LogHead is not lock free");
     LOG_ASSERT(mHead.load().writeHead == mTail.load(), "Head and Tail do not point to the same page");
+    if (!mHead.load().writeHead) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
 }
 
 void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
@@ -251,6 +255,10 @@ OrderedLogImpl::OrderedLogImpl(PageManager& pageManager)
           mTail(LogPosition(mHead.load(), 0)) {
     LOG_ASSERT(mHead.load() == mSealedHead.load().page, "Head and Sealed head do not point to the same page");
     LOG_ASSERT(mHead.load() == mTail.load().page, "Head and Tail do not point to the same page");
+    if (!mHead) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
 }
 
 void OrderedLogImpl::seal(LogEntry* entry) {
