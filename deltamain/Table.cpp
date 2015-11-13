@@ -142,7 +142,7 @@ int Table<Context>::revert(uint64_t key, const commitmanager::SnapshotDescriptor
 
     // Lookup in the insert hash table
     if (auto ptr = getFromInsert(key)) {
-        if (internalRevert<MainRecord>(ptr, snapshot, ec)) {
+        if (internalRevert<InsertRecord>(ptr, snapshot, ec)) {
             return ec;
         }
     }
