@@ -249,6 +249,9 @@ void Modifier::rehash() {
         mPages.emplace_back(reinterpret_cast<EntryT*>(mTable.mPageManager.alloc()));
     }
 
+    std::vector<bool> oldPageWasModified(numPages, true);
+    oldPageWasModified.swap(pageWasModified);
+
     // Allocate hash functions
     auto hashCapacity = (numPages / 3) * ENTRIES_PER_PAGE;
     LOG_ASSERT(isPowerOf2(hashCapacity), "Hash capacity must be power of 2");
@@ -264,14 +267,12 @@ void Modifier::rehash() {
                 insert(page[j].first, page[j].second);
         }
         // If the page was modified it can be freed immediately (only the modifier had access to it)
-        if (pageWasModified[i]) {
+        if (oldPageWasModified[i]) {
             mTable.mPageManager.free(page);
         } else {
             mToDelete.push_back(page);
-            pageWasModified[i] = true;
         }
     }
-    pageWasModified.resize(numPages, true);
 }
 
 size_t Modifier::capacity() const {
