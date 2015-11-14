@@ -44,17 +44,21 @@ constexpr size_t gGcThreshold = 50;
 
 } // anonymous namespace
 
-std::vector<GcScanProcessor> GcScanProcessor::startScan(Table& table, size_t numThreads, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queries) {
+GcScan::GcScan(Table* table, std::vector<ScanQuery*> queries)
+        : QueryBufferScanBase(std::move(queries)),
+          mTable(table) {
+}
+
+std::vector<std::unique_ptr<GcScanProcessor>> GcScan::startScan(size_t numThreads) {
     if (numThreads == 0) {
         return {};
     }
 
-    std::vector<GcScanProcessor> result;
+    std::vector<std::unique_ptr<GcScanProcessor>> result;
     result.reserve(numThreads);
 
-    auto version = table.minVersion();
-    auto& log = table.mLog;
+    auto version = mTable->minVersion();
+    auto& log = mTable->mLog;
 
     auto numPages = log.pages();
     auto begin = log.pageBegin();
@@ -68,20 +72,20 @@ std::vector<GcScanProcessor> GcScanProcessor::startScan(Table& table, size_t num
         for (decltype(step) j = 0; j < step && iter != end; ++j, ++iter) {
         }
 
-        result.emplace_back(table, begin, iter, queryBuffer, queries, version);
+        result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, iter, version, mQueryBuffer.get()));
         begin = iter;
     }
 
     // The last scan takes the remaining pages
-    result.emplace_back(table, begin, end, queryBuffer, queries, version);
+    result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, end, version, mQueryBuffer.get()));
 
     return result;
 }
 
-GcScanProcessor::GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
-        const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion)
-        : mTable(table),
-          mQueries(queryBuffer, queryData),
+GcScanProcessor::GcScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, const PageIterator& begin,
+        const PageIterator& end, uint64_t minVersion, const char* queryBuffer)
+        : QueryBufferScanProcessorBase(table.record(), queries, queryBuffer),
+          mTable(table),
           mMinVersion(minVersion),
           mPagePrev(begin),
           mPageIt(begin),
@@ -93,27 +97,6 @@ GcScanProcessor::GcScanProcessor(Table& table, const LogImpl::PageIterator& begi
           mGarbage(0x0u),
           mSealed(false),
           mRecycle(false) {
-}
-
-GcScanProcessor::GcScanProcessor(GcScanProcessor&& other)
-        : mTable(other.mTable),
-          mQueries(std::move(other.mQueries)),
-          mMinVersion(other.mMinVersion),
-          mPagePrev(std::move(other.mPagePrev)),
-          mPageIt(std::move(other.mPageIt)),
-          mPageEnd(std::move(other.mPageEnd)),
-          mEntryIt(std::move(other.mEntryIt)),
-          mEntryEnd(std::move(other.mEntryEnd)),
-          mRecyclingHead(other.mRecyclingHead),
-          mRecyclingTail(other.mRecyclingTail),
-          mGarbage(other.mGarbage),
-          mSealed(other.mSealed),
-          mRecycle(other.mRecycle) {
-    other.mRecyclingHead = nullptr;
-    other.mRecyclingTail = nullptr;
-    other.mGarbage = 0x0u;
-    other.mSealed = false;
-    other.mRecycle = false;
 }
 
 void GcScanProcessor::process() {
@@ -182,8 +165,7 @@ void GcScanProcessor::process() {
 
         // Process the element
         auto recordLength = mEntryIt->size() - sizeof(ChainedVersionRecord);
-        mQueries.processRecord(mTable.record(), record->key(), record->data(), recordLength, record->validFrom(),
-                context.validTo());
+        processRowRecord(record->key(), record->validFrom(), context.validTo(), record->data(), recordLength);
     } while (advanceEntry());
 
     // Append recycled entries to the log

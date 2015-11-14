@@ -49,7 +49,7 @@ class ConstColumnMapRecord;
  */
 class ColumnMapContext {
 public:
-    using ScanProcessor = ColumnMapScanProcessor;
+    using Scan = ColumnMapScan;
     using Page = ColumnMapMainPage;
     using PageModifier = ColumnMapPageModifier;
 

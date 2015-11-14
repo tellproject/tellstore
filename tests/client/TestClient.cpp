@@ -285,7 +285,8 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x1u); // Number of columns
+    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);
@@ -377,7 +378,8 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x1u); // Number of columns
+    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(numberField);
@@ -467,7 +469,8 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     std::unique_ptr<char[]> selection(new char[selectionLength]);
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
-    selectionWriter.write<uint64_t>(0x1u);
+    selectionWriter.write<uint32_t>(0x1u); // Number of columns
+    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);

@@ -36,17 +36,21 @@ namespace tell {
 namespace store {
 namespace logstructured {
 
-std::vector<HashScanProcessor> HashScanProcessor::startScan(Table& table, size_t numThreads, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queries) {
+HashScan::HashScan(Table* table, std::vector<ScanQuery*> queries)
+        : QueryBufferScanBase(std::move(queries)),
+          mTable(table) {
+}
+
+std::vector<std::unique_ptr<HashScanProcessor>> HashScan::startScan(size_t numThreads) {
     if (numThreads == 0) {
         return {};
     }
 
-    std::vector<HashScanProcessor> result;
+    std::vector<std::unique_ptr<HashScanProcessor>> result;
     result.reserve(numThreads);
 
-    auto version = table.minVersion();
-    auto capacity = table.mHashMap.capacity();
+    auto version = mTable->minVersion();
+    auto capacity = mTable->mHashMap.capacity();
 
     auto step = capacity / numThreads;
     auto mod = capacity % numThreads;
@@ -54,29 +58,19 @@ std::vector<HashScanProcessor> HashScanProcessor::startScan(Table& table, size_t
         auto start = i * step + std::min(i, mod);
         auto end = start + step + (i < mod ? 1 : 0);
 
-        result.emplace_back(table, start, end, queryBuffer, queries, version);
+        result.emplace_back(new HashScanProcessor(*mTable, mQueries, start, end, version, mQueryBuffer.get()));
     }
 
     return result;
 }
 
-HashScanProcessor::HashScanProcessor(Table& table, size_t start, size_t end, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queryData, uint64_t minVersion)
-        : mTable(table),
-          mQueries(queryBuffer, queryData),
+HashScanProcessor::HashScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, size_t start, size_t end,
+        uint64_t minVersion, const char* queryBuffer)
+        : QueryBufferScanProcessorBase(table.record(), queries, queryBuffer),
+          mTable(table),
           mMinVersion(minVersion),
           mStart(start),
           mEnd(end) {
-}
-
-HashScanProcessor::HashScanProcessor(HashScanProcessor&& other)
-        : mTable(other.mTable),
-          mQueries(std::move(other.mQueries)),
-          mMinVersion(other.mMinVersion),
-          mStart(other.mStart),
-          mEnd(other.mEnd) {
-    other.mStart = 0x0u;
-    other.mEnd = 0x0u;
 }
 
 void HashScanProcessor::process() {
@@ -110,7 +104,7 @@ void HashScanProcessor::process() {
             }
 
             auto recordLength = entry->size() - sizeof(ChainedVersionRecord);
-            mQueries.processRecord(mTable.record(), key, record->data(), recordLength, lastVersion, recIter.validTo());
+            processRowRecord(key, lastVersion, recIter.validTo(), record->data(), recordLength);
 
             // Check if the iterator reached the element with minimum version. The remaining older elements have to be
             // superseeded by newer elements in any currently valid Snapshot Descriptor.

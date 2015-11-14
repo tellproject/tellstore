@@ -120,7 +120,7 @@ private:
         //  - the Table object
         //  - the total size
         //  - a vector of queries - that means the query object and the size of the query
-        std::unordered_map<uint64_t, std::tuple<Table*, size_t, std::vector<ScanQuery*>>> queryMap;
+        std::unordered_map<uint64_t, std::tuple<Table*, std::vector<ScanQuery*>>> queryMap;
         auto numQueries = queryQueue.readMultiple(mEnqueuedQueries.begin(), mEnqueuedQueries.end());
         if (numQueries == 0) return false;
 
@@ -131,14 +131,13 @@ private:
             std::tie(tableId, table, query) = mEnqueuedQueries.at(i);
             auto iter = queryMap.find(tableId);
             if (iter == queryMap.end()) {
-                auto res = queryMap.emplace(tableId, std::make_tuple(table, 0, std::vector<ScanQuery*>()));
+                auto res = queryMap.emplace(tableId, std::make_tuple(table, std::vector<ScanQuery*>()));
                 iter = res.first;
             }
             if (!query) {
                 continue;
             }
-            std::get<1>(iter->second) += query->selectionLength();
-            std::get<2>(iter->second).emplace_back(query);
+            std::get<1>(iter->second).emplace_back(query);
         }
         // now we have all queries in a map, so we can start the scans
         for (auto& q : queryMap) {
@@ -146,28 +145,18 @@ private:
             // The QBuffer is the shared object of all scans, it is a byte array containing the combined serialized
             // selection queries of every scan query.
             Table* table;
-            size_t bufferLength;
             std::vector<ScanQuery*> queries;
-            std::tie(table, bufferLength, queries) = std::move(q.second);
+            std::tie(table, queries) = std::move(q.second);
 
-            std::unique_ptr<char[]> queryBuffer(bufferLength == 0u ? nullptr : new char[bufferLength]);
-            auto result = queryBuffer.get();
-            for (auto p : queries) {
-                // Copy the selection query into the qbuffer
-                memcpy(result, p->selection(), p->selectionLength());
-                result += p->selectionLength();
-            }
-
-            crossbow::allocator _;
-
-            // now we generated the QBuffer - we now give it to all the scan threads
-            auto processors = table->startScan(threadObjs.size(), queryBuffer.get(), queries);
+            typename Table::Scan scan(table, std::move(queries));
+            auto processors = scan.startScan(threadObjs.size());
             for (decltype(threadObjs.size()) i = 0; i < threadObjs.size(); ++i) {
                 // we do not need to synchronize here, the scan threads start as soon as the processor is set
-                threadObjs[i].scanProcessor.store(&processors[i]);
+                threadObjs[i].scanProcessor.store(processors[i].get());
             }
             // do the master thread part of the scan
             threadObjs[0].scan();
+
             // now we need to wait until the other threads are done
             for (auto& scan : threadObjs) {
                 // as soon as the thread is done, it will unset the processors - this means that the scan is over and

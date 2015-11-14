@@ -23,8 +23,6 @@
 
 #pragma once
 
-#include "PredicateBitmap.hpp"
-
 #include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -135,6 +133,22 @@ private:
 
 /**
  * @brief Information about a scan query
+ *
+ * A query has the following form
+ * - 4 bytes for the number of columns it has to check
+ * - 4 bytes for the number of conjuncts in the query
+ * - 4 bytes for the number of total scan partitions (or 0 if no partitioning)
+ * - 4 bytes for the number of the scan partition (if partitioning)
+ * - For each column:
+ *   - 2 bytes: The column id (called field id in the Record class)
+ *   - 2 bytes: The number of predicates it has on the column
+ *   - 4 bytes: Padding
+ *   - For each predicate:
+ *     - 1 byte: The type of the predicate
+ *     - 1 byte: Position in the AND-list of queries
+ *     - 2 bytes: The data if its size is between 1 and 2 bytes long padding otherwise
+ *     - 4 bytes: The data if its size is between 2 and 4 bytes long padding otherwise
+ *     - The data if it is larger than 4 bytes or if it is variable size length (padded to 8 bytes)
  */
 class ScanQuery {
 public:
@@ -414,99 +428,6 @@ void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t val
 
     ++mTupleCount;
 }
-
-/**
- * @brief Processor for processing a batch of queries all at once
- *
- * A query has the following form
- * - 8 bytes for the number of columns it has to check
- * - 4 bytes for the number of total scan partitions (or 0 if no partitioning)
- * - 4 bytes for the number of the scan partition (if partitioning)
- * - For each column:
- *   - 2 bytes: The column id (called field id in the Record class)
- *   - 2 bytes: The number of predicates it has on the column
- *   - 4 bytes: Padding
- *   - For each predicate:
- *     - 1 byte: The type of the predicate
- *     - 1 byte: Position in the AND-list of queries
- *     - 2 bytes: The data if its size is between 1 and 2 bytes long padding otherwise
- *     - 4 bytes: The data if its size is between 2 and 4 bytes long padding otherwise
- *     - The data if it is larger than 4 bytes or if it is variable size length (padded to 8 bytes)
- * - 8 bytes: The maximum version of the snapshot
- */
-class ScanQueryBatchProcessor {
-public:
-    /**
-     * @brief Check if the selection query matches for the given tuple
-     *
-     * After calling this function query points to the end of the query.
-     *
-     * @param query Reference pointing to the current selection query
-     * @param key Key of the tuple
-     * @param data Pointer to the tuple's data
-     * @param record Record of the tuple
-     */
-    static bool check(const char*& query, uint64_t key, const char* data, const Record& record);
-
-    ScanQueryBatchProcessor(const char* queryBuffer, const std::vector<ScanQuery*>& queryData);
-
-    /**
-     * @brief Process the record with all associated scan processors
-     *
-     * Checks the tuple against the combined query buffer.
-     *
-     * @param record Record of the tuple
-     * @param key Key of the tuple
-     * @param data Pointer to the tuple's data
-     * @param length Length of the tuple
-     * @param validFrom Valid-From version of the tuple
-     * @param validTo Valid-To version of the tuple
-     */
-    void processRecord(const Record& record, uint64_t key, const char* data, uint32_t length, uint64_t validFrom,
-            uint64_t validTo);
-
-    std::vector<ScanQueryProcessor>& queries() {
-        return mQueries;
-    }
-
-private:
-    constexpr static off_t offsetToFirstColumn() { return 16; }
-    constexpr static off_t offsetToFirstPredicate() { return 8; }
-
-    static off_t offsetToNextPredicate(const char* current, const FieldBase& f);
-
-    static uint64_t numberOfColumns(const char* query) {
-        return *reinterpret_cast<const uint64_t*>(query);
-    }
-
-    static uint32_t moduloKey(const char* query) {
-        return *reinterpret_cast<const uint32_t*>(query + 8);
-    }
-
-    static uint32_t moduloValue(const char* query) {
-        return *reinterpret_cast<const uint32_t*>(query + 12);
-    }
-
-    static uint16_t columnId(const char* current) {
-        return *reinterpret_cast<const uint16_t*>(current);
-    }
-
-    static uint16_t predicatesCount(const char* current) {
-        return *reinterpret_cast<const uint16_t*>(current + 2);
-    }
-
-    static PredicateType getTypeOfPredicate(const char* current) {
-        return crossbow::from_underlying<PredicateType>(*reinterpret_cast<const uint8_t*>(current));
-    }
-
-    static uint8_t posInQuery(const char* current) {
-        return *reinterpret_cast<const uint8_t*>(current + 1);
-    }
-
-    const char* mQueryBuffer;
-
-    std::vector<ScanQueryProcessor> mQueries;
-};
 
 } //namespace store
 } //namespace tell

@@ -24,7 +24,9 @@
 #pragma once
 
 #include <util/Log.hpp>
-#include <util/ScanQuery.hpp>
+#include <util/QueryBufferScan.hpp>
+
+#include <crossbow/allocator.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -42,16 +44,33 @@ struct ColumnMapMainPage;
 struct InsertLogEntry;
 struct UpdateLogEntry;
 
-class ColumnMapScanProcessor {
+template <typename Context>
+class Table;
+
+class ColumnMapScanProcessor;
+
+class ColumnMapScan : public QueryBufferScanBase {
+public:
+    using ScanProcessor = ColumnMapScanProcessor;
+
+    ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
+
+    std::vector<std::unique_ptr<ColumnMapScanProcessor>> startScan(size_t numThreads);
+
 private:
+    Table<ColumnMapContext>* mTable;
+
+    crossbow::allocator mAllocator;
+};
+
+class ColumnMapScanProcessor : public QueryBufferScanProcessorBase {
+public:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<ColumnMapMainPage*>;
 
-public:
-    ColumnMapScanProcessor(const ColumnMapContext& context, const std::shared_ptr<crossbow::allocator>& alloc,
-            const PageList& pages, size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter,
-            const LogIterator& logEnd, const char* queryBuffer, const std::vector<ScanQuery*>& queryData,
-            const Record& record);
+    ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
+            const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
+            const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer);
 
     void process();
 
@@ -66,14 +85,11 @@ private:
 
     const ColumnMapContext& mContext;
 
-    std::shared_ptr<crossbow::allocator> mAllocator;
     const PageList& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
     LogIterator logEnd;
-    ScanQueryBatchProcessor mQuery;
-    const Record& mRecord;
 
     std::vector<char> mResult;
 };

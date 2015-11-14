@@ -8,6 +8,7 @@ set(UTIL_SRCS
     Log.cpp
     OpenAddressingHash.cpp
     PageManager.cpp
+    QueryBufferScan.cpp
     ScanQuery.cpp
 )
 
@@ -20,6 +21,7 @@ set(UTIL_PRIVATE_HDR
     OpenAddressingHash.hpp
     PageManager.hpp
     PredicateBitmap.hpp
+    QueryBufferScan.hpp
     Scan.hpp
     ScanQuery.hpp
     StorageConfig.hpp

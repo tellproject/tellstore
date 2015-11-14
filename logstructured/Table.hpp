@@ -69,14 +69,15 @@ public:
     using LogImpl = Log<UnorderedLogImpl>;
 
 #if defined USE_LOG_SCAN
-    using ScanProcessor = GcScanProcessor;
+    using Scan = GcScan;
 #elif defined USE_HASH_SCAN
-    using ScanProcessor = HashScanProcessor;
+    using Scan = HashScan;
 #else
 #error "Unknown scan processor"
 #endif
 
-    using GarbageCollector = ScanProcessor::GarbageCollector;
+    using ScanProcessor = Scan::ScanProcessor;
+    using GarbageCollector = Scan::GarbageCollector;
 
     Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
             HashTable& hashMap);
@@ -147,21 +148,10 @@ public:
      */
     int revert(uint64_t key, const commitmanager::SnapshotDescriptor& snapshot);
 
-    /**
-     * @brief Start a full scan of this table
-     *
-     * @param numThreads Number of threads to use for the scan
-     * @param queryBuffer The query buffer containing the combined selection buffer of all attached queries
-     * @param queries Queries attaching to this scan
-     * @return A scan processor for each thread
-     */
-    std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queries) {
-        return ScanProcessor::startScan(*this, numThreads, queryBuffer, queries);
-    }
-
 private:
+    friend class GcScan;
     friend class GcScanProcessor;
+    friend class HashScan;
     friend class HashScanProcessor;
     friend class LazyRecordWriter;
     friend class VersionRecordIterator;

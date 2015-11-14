@@ -24,8 +24,9 @@
 #pragma once
 
 #include <util/Log.hpp>
-#include <util/ScanQuery.hpp>
+#include <util/QueryBufferScan.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
@@ -40,24 +41,40 @@ namespace logstructured {
 
 class ChainedVersionRecord;
 class GcScanGarbageCollector;
+class GcScanProcessor;
 class Table;
+
+class GcScan : public QueryBufferScanBase {
+public:
+    using ScanProcessor = GcScanProcessor;
+    using GarbageCollector = GcScanGarbageCollector;
+
+    GcScan(Table* table, std::vector<ScanQuery*> queries);
+
+    /**
+     * @brief Start a full scan of this table
+     *
+     * @param numThreads Number of threads to use for the scan
+     * @return A scan processor for each thread
+     */
+    std::vector<std::unique_ptr<GcScanProcessor>> startScan(size_t numThreads);
+
+private:
+    Table* mTable;
+
+    crossbow::allocator mAllocator;
+};
 
 /**
  * @brief Scan processor for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
  */
-class GcScanProcessor : crossbow::non_copyable {
+class GcScanProcessor : public QueryBufferScanProcessorBase {
 public:
     using LogImpl = Log<UnorderedLogImpl>;
+    using PageIterator = LogImpl::PageIterator;
 
-    using GarbageCollector = GcScanGarbageCollector;
-
-    static std::vector<GcScanProcessor> startScan(Table& table, size_t numThreads, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queries);
-
-    GcScanProcessor(Table& table, const LogImpl::PageIterator& begin, const LogImpl::PageIterator& end,
-            const char* queryBuffer, const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
-
-    GcScanProcessor(GcScanProcessor&& other);
+    GcScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, const PageIterator& begin,
+            const PageIterator& end, uint64_t minVersion, const char* queryBuffer);
 
     /**
      * @brief Scans over all entries in the log
@@ -110,7 +127,6 @@ private:
     bool replaceElement(ChainedVersionRecord* oldElement, ChainedVersionRecord* newElement);
 
     Table& mTable;
-    ScanQueryBatchProcessor mQueries;
     uint64_t mMinVersion;
 
     LogImpl::PageIterator mPagePrev;

@@ -23,8 +23,9 @@
 
 #pragma once
 
-#include <util/ScanQuery.hpp>
+#include <util/QueryBufferScan.hpp>
 
+#include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
@@ -38,22 +39,31 @@ struct LogstructuredMemoryStore;
 namespace logstructured {
 
 class HashScanGarbageCollector;
+class HashScanProcessor;
 class Table;
+
+class HashScan : public QueryBufferScanBase {
+public:
+    using ScanProcessor = HashScanProcessor;
+    using GarbageCollector = HashScanGarbageCollector;
+
+    HashScan(Table* table, std::vector<ScanQuery*> queries);
+
+    std::vector<std::unique_ptr<HashScanProcessor>> startScan(size_t numThreads);
+
+private:
+    Table* mTable;
+
+    crossbow::allocator mAllocator;
+};
 
 /**
  * @brief Scan processor for the Log-Structured Memory approach scanning over the hash table
  */
-class HashScanProcessor : crossbow::non_copyable {
+class HashScanProcessor : public QueryBufferScanProcessorBase {
 public:
-    using GarbageCollector = HashScanGarbageCollector;
-
-    static std::vector<HashScanProcessor> startScan(Table& table, size_t numThreads, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queries);
-
-    HashScanProcessor(Table& table, size_t start, size_t end, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queryData, uint64_t minVersion);
-
-    HashScanProcessor(HashScanProcessor&& other);
+    HashScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, size_t start, size_t end,
+            uint64_t minVersion, const char* queryBuffer);
 
     /**
      * @brief Scans over all entries in the hash table
@@ -64,7 +74,6 @@ public:
 
 private:
     Table& mTable;
-    ScanQueryBatchProcessor mQueries;
     uint64_t mMinVersion;
 
     size_t mStart;

@@ -59,7 +59,8 @@ namespace deltamain {
 template <typename Context>
 class Table {
 public:
-    using ScanProcessor = typename Context::ScanProcessor;
+    using Scan = typename Context::Scan;
+    using ScanProcessor = typename Scan::ScanProcessor;
     using Page = typename Context::Page;
     using PageModifier = typename Context::PageModifier;
 
@@ -103,8 +104,9 @@ public:
      * each thread the same amount (storage) pages and the last thread gets the
      * insert log in addition.
      */
-    std::vector<ScanProcessor> startScan(size_t numThreads, const char* queryBuffer,
-            const std::vector<ScanQuery*>& queries) const;
+    template <typename... Args>
+    std::vector<std::unique_ptr<ScanProcessor>> startScan(size_t numThreads, const std::vector<ScanQuery*>& queries,
+            Args&&... args) const;
 
 private:
     struct PageList {
@@ -193,6 +195,29 @@ int Table<Context>::get(uint64_t key, const commitmanager::SnapshotDescriptor& s
 
     // The element was really not found
     return error::not_found;
+}
+
+template <typename Context>
+template <typename... Args>
+std::vector<std::unique_ptr<typename Table<Context>::ScanProcessor>> Table<Context>::Table::startScan(size_t numThreads,
+        const std::vector<ScanQuery*>& queries, Args&&... args) const {
+    auto pageList = mPages.load();
+    auto insEnd = mInsertLog.end();
+    // TODO Make LogIterator convertible to ConstLogIterator
+    decltype(insEnd) insIter(pageList->insertEnd.page(), pageList->insertEnd.offset());
+    auto numPages = pageList->pages.size();
+    std::vector<std::unique_ptr<ScanProcessor>> result;
+    result.reserve(numThreads);
+    size_t beginIdx = 0;
+    auto mod = numPages % numThreads;
+    for (decltype(numThreads) i = 0; i < numThreads; ++i) {
+        const auto& startIter = (i == numThreads - 1 ? insIter : insEnd);
+        auto endIdx = beginIdx + numPages / numThreads + (i < mod ? 1 : 0);
+        result.emplace_back(new ScanProcessor(mContext, mRecord, queries, pageList->pages, beginIdx, endIdx, startIter,
+                insEnd, std::forward<Args>(args)...));
+        beginIdx = endIdx;
+    }
+    return result;
 }
 
 template <typename Context>

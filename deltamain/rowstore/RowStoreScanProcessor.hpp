@@ -24,8 +24,11 @@
 #pragma once
 
 #include <util/Log.hpp>
-#include <util/ScanQuery.hpp>
+#include <util/QueryBufferScan.hpp>
 
+#include <crossbow/allocator.hpp>
+
+#include <cstdint>
 #include <vector>
 
 namespace tell {
@@ -41,15 +44,33 @@ struct RowStoreMainEntry;
 class RowStoreMainPage;
 struct UpdateLogEntry;
 
-class RowStoreScanProcessor {
+template <typename Context>
+class Table;
+
+class RowStoreScanProcessor;
+
+class RowStoreScan : public QueryBufferScanBase {
+public:
+    using ScanProcessor = RowStoreScanProcessor;
+
+    RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*> queries);
+
+    std::vector<std::unique_ptr<RowStoreScanProcessor>> startScan(size_t numThreads);
+
+private:
+    Table<RowStoreContext>* mTable;
+
+    crossbow::allocator mAllocator;
+};
+
+class RowStoreScanProcessor : public QueryBufferScanProcessorBase {
 public:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<RowStoreMainPage*>;
 
-    RowStoreScanProcessor(const RowStoreContext& context, const std::shared_ptr<crossbow::allocator>& alloc,
+    RowStoreScanProcessor(const RowStoreContext& context, const Record& record, const std::vector<ScanQuery*>& queries,
             const PageList& pages, size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter,
-            const LogIterator& logEnd, const char* queryBuffer, const std::vector<ScanQuery*>& queryData,
-            const Record& record);
+            const LogIterator& logEnd, const char* queryBuffer);
 
     void process();
 
@@ -60,14 +81,11 @@ private:
 
     uint64_t processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo);
 
-    std::shared_ptr<crossbow::allocator> mAllocator;
     const PageList& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
     LogIterator logEnd;
-    ScanQueryBatchProcessor query;
-    const Record& mRecord;
 };
 
 } // namespace deltamain

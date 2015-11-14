@@ -200,29 +200,6 @@ int Table<Context>::genericUpdate(uint64_t key, size_t size, const char* data,
 }
 
 template <typename Context>
-std::vector<typename Table<Context>::ScanProcessor> Table<Context>::Table::startScan(size_t numThreads,
-        const char* queryBuffer, const std::vector<ScanQuery*>& queries) const {
-    auto alloc = std::make_shared<crossbow::allocator>();
-    auto pageList = mPages.load();
-    auto insEnd = mInsertLog.end();
-    // TODO Make LogIterator convertible to ConstLogIterator
-    decltype(insEnd) insIter(pageList->insertEnd.page(), pageList->insertEnd.offset());
-    auto numPages = pageList->pages.size();
-    std::vector<ScanProcessor> result;
-    result.reserve(numThreads);
-    size_t beginIdx = 0;
-    auto mod = numPages % numThreads;
-    for (decltype(numThreads) i = 0; i < numThreads; ++i) {
-        const auto& startIter = (i == numThreads - 1 ? insIter : insEnd);
-        auto endIdx = beginIdx + numPages / numThreads + (i < mod ? 1 : 0);
-        result.emplace_back(mContext, alloc, pageList->pages, beginIdx, endIdx, startIter, insEnd, queryBuffer, queries,
-                mRecord);
-        beginIdx = endIdx;
-    }
-    return result;
-}
-
-template <typename Context>
 const InsertLogEntry* Table<Context>::getFromInsert(uint64_t key, DynamicInsertTableEntry** headList) const {
     auto ptr = mInsertTable.get(key, headList);
     if (!ptr) {

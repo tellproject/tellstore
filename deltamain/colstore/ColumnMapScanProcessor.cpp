@@ -27,24 +27,30 @@
 #include "ColumnMapPage.hpp"
 #include "ColumnMapRecord.hpp"
 
+#include <deltamain/Table.hpp>
+
 namespace tell {
 namespace store {
 namespace deltamain {
 
-ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context,
-        const std::shared_ptr<crossbow::allocator>& alloc, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
-        const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer,
-        const std::vector<ScanQuery*>& queryData, const Record& record)
-    : mContext(context)
-    , mAllocator(alloc)
-    , pages(pages)
-    , pageIdx(pageIdx)
-    , pageEndIdx(pageEndIdx)
-    , logIter(logIter)
-    , logEnd(logEnd)
-    , mQuery(queryBuffer, queryData)
-    , mRecord(record)
-{
+ColumnMapScan::ColumnMapScan(Table<ColumnMapContext> *table, std::vector<ScanQuery *> queries)
+        : QueryBufferScanBase(std::move(queries)),
+          mTable(table) {
+}
+
+std::vector<std::unique_ptr<ColumnMapScanProcessor>> ColumnMapScan::startScan(size_t numThreads) {
+    return mTable->startScan(numThreads, mQueries, mQueryBuffer.get());
+}
+ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
+        const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
+        const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer)
+        : QueryBufferScanProcessorBase(record, queries, queryBuffer),
+          mContext(context),
+          pages(pages),
+          pageIdx(pageIdx),
+          pageEndIdx(pageEndIdx),
+          logIter(logIter),
+          logEnd(logEnd) {
 }
 
 void ColumnMapScanProcessor::process() {
@@ -66,7 +72,7 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page) {
     // TODO Evaluate with LLVM
 
     auto sizeData = page->sizeData();
-    for (auto& con : mQuery.queries()) {
+    for (auto& con : mQueries) {
         for (typename std::remove_const<decltype(page->count)>::type i = 0; i < page->count; ++i) {
             if (mResult[i] == 0u) {
                 continue;
@@ -153,7 +159,7 @@ void ColumnMapScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
         }
     }
     auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
-    mQuery.processRecord(mRecord, ptr->key, ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version, validTo);
+    processRowRecord(ptr->key, ptr->version, validTo, ptr->data(), entry->size() - sizeof(InsertLogEntry));
 }
 
 uint64_t ColumnMapScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion,
@@ -168,8 +174,8 @@ uint64_t ColumnMapScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, 
             continue;
         }
 
-        mQuery.processRecord(mRecord, updateIter->key, updateIter->data(), entry->size() - sizeof(UpdateLogEntry),
-                updateIter->version, validTo);
+        processRowRecord(updateIter->key, updateIter->version, validTo, updateIter->data(),
+                entry->size() - sizeof(UpdateLogEntry));
         validTo = updateIter->version;
     }
     return updateIter.lowestVersion();

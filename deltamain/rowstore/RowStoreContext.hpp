@@ -37,7 +37,7 @@ namespace deltamain {
 
 class RowStoreContext {
 public:
-    using ScanProcessor = RowStoreScanProcessor;
+    using Scan = RowStoreScan;
     using Page = RowStoreMainPage;
     using PageModifier = RowStorePageModifier;
 

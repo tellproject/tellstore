@@ -27,35 +27,33 @@
 #include "RowStoreRecord.hpp"
 
 #include <deltamain/Record.hpp>
+#include <deltamain/Table.hpp>
 
 namespace tell {
 namespace store {
 namespace deltamain {
 
-RowStoreScanProcessor::RowStoreScanProcessor(
-        const RowStoreContext& /* context */,
-        const std::shared_ptr<crossbow::allocator>& alloc,
-        const PageList& pages,
-        size_t pageIdx,
-        size_t pageEndIdx,
-        const LogIterator& logIter,
-        const LogIterator& logEnd,
-        const char* queryBuffer,
-        const std::vector<ScanQuery*>& queryData,
-        const Record& record)
-    : mAllocator(alloc)
-    , pages(pages)
-    , pageIdx(pageIdx)
-    , pageEndIdx(pageEndIdx)
-    , logIter(logIter)
-    , logEnd(logEnd)
-    , query(queryBuffer, queryData)
-    , mRecord(record)
-{
+RowStoreScan::RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*> queries)
+        : QueryBufferScanBase(std::move(queries)),
+          mTable(table) {
 }
 
-void RowStoreScanProcessor::process()
-{
+std::vector<std::unique_ptr<RowStoreScanProcessor>> RowStoreScan::startScan(size_t numThreads) {
+    return mTable->startScan(numThreads, mQueries, mQueryBuffer.get());
+}
+
+RowStoreScanProcessor::RowStoreScanProcessor(const RowStoreContext& /* context */, const Record& record,
+        const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
+        const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer)
+        : QueryBufferScanProcessorBase(record, queries, queryBuffer),
+          pages(pages),
+          pageIdx(pageIdx),
+          pageEndIdx(pageEndIdx),
+          logIter(logIter),
+          logEnd(logEnd) {
+}
+
+void RowStoreScanProcessor::process() {
     for (auto i = pageIdx; i < pageEndIdx; ++i) {
         for (auto& ptr : *pages[i]) {
             processMainRecord(&ptr);
@@ -104,7 +102,7 @@ void RowStoreScanProcessor::processMainRecord(const RowStoreMainEntry* ptr) {
         }
 
         auto data = reinterpret_cast<const char*>(ptr) + offsets[i];
-        query.processRecord(mRecord, ptr->key, data, sz, versions[i], validTo);
+        processRowRecord(ptr->key, versions[i], validTo, data, sz);
         validTo = versions[i];
     }
 }
@@ -132,10 +130,11 @@ void RowStoreScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
     }
 
     auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
-    query.processRecord(mRecord, ptr->key, ptr->data(), entry->size() - sizeof(InsertLogEntry), ptr->version, validTo);
+    processRowRecord(ptr->key, ptr->version, validTo, ptr->data(), entry->size() - sizeof(InsertLogEntry));
 }
 
-uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo) {
+uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion,
+        uint64_t& validTo) {
     UpdateRecordIterator updateIter(ptr, baseVersion);
     for (; !updateIter.done(); updateIter.next()) {
         auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
@@ -146,8 +145,8 @@ uint64_t RowStoreScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, u
             continue;
         }
 
-        query.processRecord(mRecord, updateIter->key, updateIter->data(), entry->size() - sizeof(UpdateLogEntry),
-                updateIter->version, validTo);
+        processRowRecord(updateIter->key, updateIter->version, validTo, updateIter->data(),
+                entry->size() - sizeof(UpdateLogEntry));
         validTo = updateIter->version;
     }
     return updateIter.lowestVersion();

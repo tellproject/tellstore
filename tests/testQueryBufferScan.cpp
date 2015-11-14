@@ -20,7 +20,8 @@
  *     Kevin Bocksrocker <kevin.bocksrocker@gmail.com>
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
-#include <util/ScanQuery.hpp>
+
+#include <util/QueryBufferScan.hpp>
 
 #include <tellstore/Record.hpp>
 
@@ -48,9 +49,9 @@ crossbow::string gTuple2Text = crossbow::string("t-bone chicken prosciutto");
  *
  * Creates a schema with 3 fields and creates two sample tuples.
  */
-class ScanQueryTest : public ::testing::Test {
+class QueryBufferScanTest : public ::testing::Test {
 protected:
-    ScanQueryTest()
+    QueryBufferScanTest()
             : mSchema(TableType::TRANSACTIONAL) {
         mSchema.addField(FieldType::BIGINT, "largenumber", true);
         mSchema.addField(FieldType::INT, "number", true);
@@ -83,10 +84,10 @@ protected:
     std::unique_ptr<char[]> mTuple2;
 };
 
-bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, uint64_t key, const char* tuple,
+bool QueryBufferScanTest::checkQuery(size_t qsize, const char* qbuffer, uint64_t key, const char* tuple,
         const Record& record) {
     auto q = qbuffer;
-    auto res = ScanQueryBatchProcessor::check(q, key, tuple, record);
+    auto res = QueryBufferScanProcessorBase::check(q, key, tuple, record);
     EXPECT_EQ(qbuffer + qsize, q) << "Returned pointer does not point at end of qbuffer";
     return res;
 }
@@ -97,7 +98,7 @@ bool ScanQueryTest::checkQuery(size_t qsize, const char* qbuffer, uint64_t key, 
  *
  * The query is equal to "SELECT *".
  */
-TEST_F(ScanQueryTest, noPredicates) {
+TEST_F(QueryBufferScanTest, noPredicates) {
     Record record(mSchema);
 
     size_t qsize = 16;
@@ -114,7 +115,7 @@ TEST_F(ScanQueryTest, noPredicates) {
  *
  * The query is equal to "SELECT * WHERE number == 12".
  */
-TEST_F(ScanQueryTest, singlePredicate) {
+TEST_F(QueryBufferScanTest, singlePredicate) {
     Record record(mSchema);
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
@@ -122,7 +123,8 @@ TEST_F(ScanQueryTest, singlePredicate) {
     size_t qsize = 32;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
-    *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get()) = 0x1u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 4) = 0x1u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
@@ -139,7 +141,7 @@ TEST_F(ScanQueryTest, singlePredicate) {
  *
  * The query is equal to "SELECT * WHERE number = 12 AND largenumber = 0x7FFFFFFF00000001".
  */
-TEST_F(ScanQueryTest, andPredicate) {
+TEST_F(QueryBufferScanTest, andPredicate) {
     Record record(mSchema);
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
@@ -149,7 +151,8 @@ TEST_F(ScanQueryTest, andPredicate) {
     size_t qsize = 56;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
-    *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get()) = 0x2u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 4) = 0x2u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
@@ -171,7 +174,7 @@ TEST_F(ScanQueryTest, andPredicate) {
  *
  * The query is equal to "SELECT * WHERE number = 12 OR text = 't-bone chicken prosciutto'".
  */
-TEST_F(ScanQueryTest, orPredicate) {
+TEST_F(QueryBufferScanTest, orPredicate) {
     Record record(mSchema);
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
@@ -182,7 +185,8 @@ TEST_F(ScanQueryTest, orPredicate) {
     qsize += ((qsize % 8 != 0) ? (8 - (qsize % 8)) : 0);
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
-    *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x2u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get()) = 0x2u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 4) = 0x1u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x1u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
@@ -205,7 +209,7 @@ TEST_F(ScanQueryTest, orPredicate) {
  *
  * The query is equal to "SELECT * WHERE number = 12 OR number = 13".
  */
-TEST_F(ScanQueryTest, sameColumnPredicate) {
+TEST_F(QueryBufferScanTest, sameColumnPredicate) {
     Record record(mSchema);
     Record::id_t numberField;
     ASSERT_TRUE(record.idOf("number", numberField)) << "Field not found";
@@ -213,7 +217,8 @@ TEST_F(ScanQueryTest, sameColumnPredicate) {
     size_t qsize = 40;
     std::unique_ptr<char[]> qbuffer(new char[qsize]);
     memset(qbuffer.get(), 0, qsize);
-    *reinterpret_cast<uint64_t*>(qbuffer.get()) = 0x1u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get()) = 0x1u;
+    *reinterpret_cast<uint32_t*>(qbuffer.get() + 4) = 0x1u;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 16) = numberField;
     *reinterpret_cast<uint16_t*>(qbuffer.get() + 18) = 0x2u;
     *reinterpret_cast<uint8_t*>(qbuffer.get() + 24) = crossbow::to_underlying(PredicateType::EQUAL);
@@ -233,7 +238,7 @@ TEST_F(ScanQueryTest, sameColumnPredicate) {
  *
  * The query is equal to "SELECT * WHERE key % 2 = 1".
  */
-TEST_F(ScanQueryTest, partitioning) {
+TEST_F(QueryBufferScanTest, partitioning) {
     Record record(mSchema);
 
     size_t qsize = 16;
