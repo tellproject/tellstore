@@ -42,6 +42,7 @@
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Mangler.h>
 
+#include <crossbow/non_copyable.hpp>
 #include <crossbow/singleton.hpp>
 
 #include <memory>
@@ -81,7 +82,7 @@ extern LLVMCompiler llvmCompiler;
 /**
  * @brief JIT based on LLVM
  */
-class LLVMJIT {
+class LLVMJIT : crossbow::non_copyable, crossbow::non_movable {
 public:
     using ObjectLayer = llvm::orc::ObjectLinkingLayer<>;
     using CompileLayer = llvm::orc::IRCompileLayer<ObjectLayer>;
@@ -107,6 +108,15 @@ public:
 
     llvm::orc::JITSymbol findSymbol(const std::string& name) {
         return mCompileLayer.findSymbol(mangle(name), true);
+    }
+
+    template <typename Func>
+    Func findFunction(const std::string& name) {
+        auto func = mCompileLayer.findSymbol(mangle(name), true);
+        if (!func) {
+            throw std::runtime_error("Unknown symbol");
+        }
+        return reinterpret_cast<Func>(func.getAddress());
     }
 
 private:
