@@ -25,17 +25,15 @@
 
 #include <tellstore/Record.hpp>
 
+#include <util/LLVMBuilder.hpp>
 #include <util/PageManager.hpp>
 
 #include <crossbow/logger.hpp>
 
-#include <llvm/ADT/APInt.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
-#include <llvm/IR/Constant.h>
 #include <llvm/IR/Intrinsics.h>
-#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -63,38 +61,6 @@ static const std::array<std::string, 6> gMaterializeParamNames = {{
     "dest",
     "size"
 }};
-
-llvm::Value* creatMulOrShift(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* lhs, uint64_t idx) {
-    using namespace llvm;
-
-    LOG_ASSERT(idx != 0, "");
-    if (idx & (idx - 1)) {
-        return builder.CreateMul(lhs, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, idx)));
-    }
-
-    uint64_t log2 = 0;
-    while ((idx & 0x1u) == 0x0u) {
-        idx >>= 1;
-        ++log2;
-    }
-    return builder.CreateShl(lhs, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, log2)));
-}
-
-llvm::Value* createPointerAlign(llvm::LLVMContext& context, llvm::IRBuilder<>& builder, llvm::Value* value,
-        uintptr_t alignment) {
-    using namespace llvm;
-
-    // -> auto result = reinterpret_cast<uintptr_t>(value);
-    auto result = builder.CreatePtrToInt(value, Type::getIntNTy(context, sizeof(uintptr_t) * 8));
-    // -> result = result - 1u + alignment;
-    result = builder.CreateAdd(result, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, alignment - 1u)));
-    // -> result = result & -alignment;
-    result = builder.CreateAnd(result, ConstantInt::get(context, APInt(sizeof(uintptr_t) * 8, -alignment)));
-    // -> recordData = reinterpret_cast<const char*>(recordDataPtr);
-    result = builder.CreateIntToPtr(result, Type::getInt8PtrTy(context));
-
-    return result;
-}
 
 /**
  * @brief Calculate the additional overhead required by every element in a column map page
@@ -143,11 +109,11 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
         mFieldLengths.emplace_back(static_cast<uint32_t>(record.fixedSize()) - startOffset);
     }
 
-    // Build LLVM
-    mMaterialize = generateMaterializeFunc();
+    // Build and compile Materialize function via LLVM
+    prepareMaterializeFunction();
 }
 
-ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
+void ColumnMapContext::prepareMaterializeFunction() {
     using namespace llvm;
 
 #ifndef NDEBUG
@@ -161,16 +127,18 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     module.setDataLayout(mLLVMJit.getTargetMachine()->createDataLayout());
     module.setTargetTriple(mLLVMJit.getTargetMachine()->getTargetTriple().getTriple());
 
+    LLVMBuilder builder(context);
+
     // Create function
     std::array<Type*, 6> params = {{
-        Type::getInt8PtrTy(context),    // recordData
-        Type::getInt8PtrTy(context),    // heapData
-        Type::getInt64Ty(context),      // count
-        Type::getInt64Ty(context),      // idx
-        Type::getInt8PtrTy(context),    // dest
-        Type::getInt64Ty(context)       // size
+        builder.getInt8PtrTy(), // recordData
+        builder.getInt8PtrTy(), // heapData
+        builder.getInt64Ty(),   // count
+        builder.getInt64Ty(),   // idx
+        builder.getInt8PtrTy(), // dest
+        builder.getInt64Ty()    // size
     }};
-    auto funcType = FunctionType::get(Type::getVoidTy(context), makeArrayRef(&params.front(), params.size()), false);
+    auto funcType = FunctionType::get(builder.getVoidTy(), makeArrayRef(&params.front(), params.size()), false);
     auto func = Function::Create(funcType, Function::ExternalLinkage, gMaterializeFunctionName, &module);
 
     // Set arguments names
@@ -194,7 +162,6 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     func->addFnAttr("target-features", mLLVMJit.getTargetMachine()->getTargetFeatureString());
 
     // Build function
-    IRBuilder<> builder(context);
     auto bb = BasicBlock::Create(context, "entry", func);
     builder.SetInsertPoint(bb);
 
@@ -207,19 +174,17 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     for (auto fieldLength : mFieldLengths) {
         if (lastFieldLength != 0u) {
             // -> dest += fieldLength
-            dest = builder.CreateInBoundsGEP(dest, ConstantInt::get(context, APInt(64, lastFieldLength)));
+            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(lastFieldLength));
 
             // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[2],
-                    lastFieldLength));
+            recordData = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[2], lastFieldLength));
         }
 
         // -> auto src = recordData + idx * fieldLength;
-        auto src = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[3], fieldLength));
+        auto src = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[3], fieldLength));
 
         // -> memcpy(dest, src, fieldLength);
-        builder.CreateMemCpy(dest, src, ConstantInt::get(context, APInt(64, fieldLength)),
-                fieldLength > 8u ? 8u : fieldLength);
+        builder.CreateMemCpy(dest, src, builder.getInt64(fieldLength), fieldLength > 8u ? 8u : fieldLength);
 
         lastFieldLength = fieldLength;
     }
@@ -228,31 +193,28 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     if (mVarSizeFieldCount != 0u) {
         if (lastFieldLength != 0u) {
             // -> dest = crossbow::align(dest + fieldLength, 4u);
-            dest = builder.CreateInBoundsGEP(args[4], ConstantInt::get(context, APInt(64, mVariableSizeOffset)));
+            dest = builder.CreateInBoundsGEP(args[4], builder.getInt64(mVariableSizeOffset));
 
             // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[2],
-                    lastFieldLength));
+            recordData = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[2], lastFieldLength));
 
             if (lastFieldLength < 8u) {
                 // -> recordData = crossbow::align(recordData, 8u);
-                recordData = createPointerAlign(context, builder, recordData, 8u);
+                recordData = builder.createPointerAlign(recordData, 8u);
             }
         }
 
         // -> auto offset = reinterpret_cast<const ColumnMapHeapEntry*>(recordData)[idx].offset;
         static_assert(offsetof(ColumnMapHeapEntry, offset) == 0, "Offset of ColumnMapHeapEntry::offset must be 0");
-        auto heapOffset = builder.CreateInBoundsGEP(recordData, creatMulOrShift(context, builder, args[3],
-                sizeof(ColumnMapHeapEntry)));
-        heapOffset = builder.CreateAlignedLoad(builder.CreateBitCast(heapOffset, Type::getInt32PtrTy(context)), 8u);
+        auto heapOffset = builder.CreateInBoundsGEP(recordData,
+                builder.createConstMul(args[3], sizeof(ColumnMapHeapEntry)));
+        heapOffset = builder.CreateAlignedLoad(builder.CreateBitCast(heapOffset, builder.getInt32PtrTy()), 8u);
 
         // -> auto src = page->heapData() - offset;
-        auto heapOffsetSub = builder.CreateSub(ConstantInt::get(context, APInt(64, 0)), builder.CreateZExt(heapOffset,
-                Type::getInt64Ty(context)));
-        auto src = builder.CreateGEP(args[1], heapOffsetSub);
+        auto src = builder.CreateGEP(args[1], builder.CreateNeg(builder.CreateZExt(heapOffset, builder.getInt64Ty())));
 
         // -> auto length = size - crossbow::align(mFixedSize, 4u);
-        auto length = builder.CreateSub(args[5], ConstantInt::get(context, APInt(64, crossbow::align(mFixedSize, 4u))));
+        auto length = builder.CreateSub(args[5], builder.getInt64(crossbow::align(mFixedSize, 4u)));
 
         // -> memcpy(dest, src, length);
         builder.CreateMemCpy(dest, src, length, 4u);
@@ -301,16 +263,12 @@ ColumnMapContext::MaterializeFunc ColumnMapContext::generateMaterializeFunc() {
     mLLVMJit.addModule(&module);
 
     // Get function pointer for materialization function
-    auto materializeSymbol = mLLVMJit.findSymbol(gMaterializeFunctionName);
-    LOG_ASSERT(materializeSymbol, "Couldn't find function symbol in jit module");
-    auto res = reinterpret_cast<MaterializeFunc>(materializeSymbol.getAddress());
+    mMaterializeFun = mLLVMJit.findFunction<MaterializeFun>(gMaterializeFunctionName);
 
 #ifndef NDEBUG
     auto endTime = std::chrono::steady_clock::now();
     LOG_INFO("Generating LLVM materialize function took %1%ns", (endTime - startTime).count());
 #endif
-
-    return res;
 }
 
 } // namespace deltamain

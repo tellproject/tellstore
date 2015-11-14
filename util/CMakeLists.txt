@@ -3,6 +3,7 @@
 ###################
 set(UTIL_SRCS
     CuckooHash.cpp
+    LLVMBuilder.cpp
     LLVMJIT.cpp
     Log.cpp
     OpenAddressingHash.cpp
@@ -13,6 +14,7 @@ set(UTIL_SRCS
 set(UTIL_PRIVATE_HDR
     CuckooHash.hpp
     functional.hpp
+    LLVMBuilder.hpp
     LLVMJIT.hpp
     Log.hpp
     OpenAddressingHash.hpp

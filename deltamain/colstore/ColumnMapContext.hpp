@@ -130,11 +130,11 @@ public:
      * @brief Materialize the tuple from the page into the destination buffer
      */
     void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-        mMaterialize(page->recordData(), page->heapData(), page->count, idx, dest, size);
+        mMaterializeFun(page->recordData(), page->heapData(), page->count, idx, dest, size);
     }
 
 private:
-    using MaterializeFunc = void (*) (
+    using MaterializeFun = void (*) (
             const char* /* record data */,
             const char* /* heap data */,
             uint64_t /* count */,
@@ -142,7 +142,7 @@ private:
             char* /* dest */,
             size_t /* size */);
 
-    MaterializeFunc generateMaterializeFunc();
+    void prepareMaterializeFunction();
 
     /// Pointer to the start of the page manager data region
     uintptr_t mPageData;
@@ -165,7 +165,7 @@ private:
     /// \copydoc ColumnMapContext::fieldLengths() const
     std::vector<uint32_t> mFieldLengths;
 
-    MaterializeFunc mMaterialize;
+    MaterializeFun mMaterializeFun;
 
     LLVMJIT mLLVMJit;
 };
