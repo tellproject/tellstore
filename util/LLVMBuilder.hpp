@@ -41,14 +41,53 @@ public:
             : llvm::IRBuilder<>(context) {
     }
 
+    llvm::PointerType* getInt16PtrTy(unsigned AddrSpace = 0) {
+        return llvm::Type::getInt16PtrTy(Context, AddrSpace);
+    }
+
     llvm::PointerType* getInt32PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt32PtrTy(Context, AddrSpace);
     }
+
+    llvm::PointerType* getInt64PtrTy(unsigned AddrSpace = 0) {
+        return llvm::Type::getInt64PtrTy(Context, AddrSpace);
+    }
+
+    llvm::Type* getFloatTy() {
+        return llvm::Type::getFloatTy(Context);
+    }
+
+    llvm::PointerType* getFloatPtrTy(unsigned AddrSpace = 0) {
+        return llvm::Type::getFloatPtrTy(Context, AddrSpace);
+    }
+
+    llvm::Constant* getFloat(float C) {
+        return llvm::ConstantFP::get(getFloatTy(), C);
+    }
+
+    llvm::Type* getDoubleTy() {
+        return llvm::Type::getDoubleTy(Context);
+    }
+
+    llvm::PointerType* getDoublePtrTy(unsigned AddrSpace = 0) {
+        return llvm::Type::getDoublePtrTy(Context, AddrSpace);
+    }
+
+    llvm::Constant* getDouble(double C) {
+        return llvm::ConstantFP::get(getDoubleTy(), C);
+    }
+
+    llvm::Type* getFieldTy(FieldType field);
 
     /**
      * @brief Create an optimized multiplication operation with a constant
      */
     llvm::Value* createConstMul(llvm::Value* lhs, uint64_t rhs);
+
+    /**
+     * @brief Create an optimized modulo operation with a constant
+     */
+    llvm::Value* createConstMod(llvm::Value* lhs, uint64_t mod);
 
     /**
      * @brief Create an pointer alignment operation with a constant

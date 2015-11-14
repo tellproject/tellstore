@@ -27,8 +27,6 @@ namespace tell {
 namespace store {
 
 llvm::Value* LLVMBuilder::createConstMul(llvm::Value* lhs, uint64_t rhs) {
-    using namespace llvm;
-
     if (rhs == 0) {
         return getInt64(0);
     }
@@ -47,9 +45,22 @@ llvm::Value* LLVMBuilder::createConstMul(llvm::Value* lhs, uint64_t rhs) {
     return CreateShl(lhs, getInt64(log2));
 }
 
-llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t alignment) {
-    using namespace llvm;
+llvm::Value* LLVMBuilder::createConstMod(llvm::Value *lhs, uint64_t rhs) {
+    if (rhs == 0u) {
+        throw std::invalid_argument("Modulo by 0");
+    }
+    if (rhs == 1u) {
+        return getInt64(0);
+    }
+    auto mask = rhs - 1;
+    if (rhs & mask) {
+        return CreateURem(lhs, getInt64(rhs));
+    }
 
+    return CreateAnd(lhs, mask);
+}
+
+llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t alignment) {
     // -> auto result = reinterpret_cast<uintptr_t>(value);
     auto result = CreatePtrToInt(value, getInt64Ty());
     // -> result = result - 1u + alignment;
@@ -60,6 +71,29 @@ llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t align
     result = CreateIntToPtr(result, getInt8PtrTy());
 
     return result;
+}
+
+llvm::Type* LLVMBuilder::getFieldTy(FieldType field) {
+    switch (field) {
+    case FieldType::SMALLINT:
+        return getInt16PtrTy();
+
+    case FieldType::INT:
+        return getInt32PtrTy();
+
+    case FieldType::BIGINT:
+        return getInt64PtrTy();
+
+    case FieldType::FLOAT:
+        return getFloatPtrTy();
+
+    case FieldType::DOUBLE:
+        return getDoublePtrTy();
+
+    default:
+        LOG_ASSERT(false, "Only fixed size fields are allowed");
+        return nullptr;
+    }
 }
 
 } // namespace store
