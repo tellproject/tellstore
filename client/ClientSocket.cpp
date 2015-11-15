@@ -146,6 +146,9 @@ ScanIterator::ScanIterator(crossbow::infinio::Fiber& fiber, Record record, size_
 }
 
 bool ScanIterator::hasNext() {
+    if (mError) {
+        throw std::system_error(mError);
+    }
     while (mChunkPos == nullptr) {
         auto done = true;
         for (auto& response : mScans) {
