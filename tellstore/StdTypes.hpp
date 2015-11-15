@@ -59,7 +59,7 @@ enum class PredicateType : uint8_t {
 };
 
 enum class AggregationType : uint8_t {
-    MIN,
+    MIN = 1,
     MAX,
     SUM,
     CNT,
