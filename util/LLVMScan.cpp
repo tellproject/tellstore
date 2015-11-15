@@ -59,8 +59,8 @@ static const std::array<std::string, 5> gRowScanParamNames = {{
     "key",
     "validFrom",
     "validTo",
-    "data",
-    "dest"
+    "recordData",
+    "destData"
 }};
 
 struct QueryState {
@@ -169,17 +169,22 @@ void LLVMRowScanBase::finalizeRowScan() {
 void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
     using namespace llvm;
 
+    static constexpr size_t key = 0;
+    static constexpr size_t validFrom = 1;
+    static constexpr size_t validTo = 2;
+    static constexpr size_t recordData = 3;
+    static constexpr size_t destData = 4;
+
     LLVMBuilder builder(mCompilerContext);
 
     // Create function
-    std::array<Type*, 5> params = {{
-        builder.getInt64Ty(),   // key
-        builder.getInt64Ty(),   // valid-from
-        builder.getInt64Ty(),   // valid-to
-        builder.getInt8PtrTy(), // data
-        builder.getInt8PtrTy()  // dest
-    }};
-    auto funcType = FunctionType::get(builder.getVoidTy(), makeArrayRef(&params.front(), params.size()), false);
+    auto funcType = FunctionType::get(builder.getVoidTy(), {
+            builder.getInt64Ty(),   // key
+            builder.getInt64Ty(),   // validFrom
+            builder.getInt64Ty(),   // validTo
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt8PtrTy()  // destData
+    }, false);
     auto func = Function::Create(funcType, Function::ExternalLinkage, gRowScanFunctionName, &mCompilerModule);
 
     // Set arguments names
@@ -194,6 +199,7 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
 
     // Set noalias hints (data pointers are not allowed to overlap)
     func->setDoesNotAlias(4);
+    func->setOnlyReadsMemory(4);
     func->setDoesNotAlias(5);
 
     // Build function
@@ -250,16 +256,19 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
             auto idx = currentColumn / 8u;
             uint8_t mask = (0x1u << (currentColumn % 8u));
 
-            auto nullBitmap = (idx == 0 ? args[3] : builder.CreateInBoundsGEP(args[3], builder.getInt64(idx)));
+            auto nullBitmap = (idx == 0
+                    ? args[recordData]
+                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(idx)));
             nullValue = builder.CreateAnd(builder.CreateLoad(nullBitmap), builder.getInt8(mask));
         }
 
         auto fieldOffset = record.getFieldMeta(currentColumn).second;
         auto fieldAlignment = field.alignOf();
-        auto src = builder.CreateBitCast(
-                (fieldOffset == 0 ? args[3] : builder.CreateInBoundsGEP(args[3], builder.getInt64(fieldOffset))),
-                builder.getFieldTy(field.type()));
-        auto fieldValue = builder.CreateAlignedLoad(src, fieldAlignment);
+        auto src = (fieldOffset == 0
+                    ? args[recordData]
+                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(fieldOffset)));
+        src = builder.CreateBitCast(src, builder.getFieldPtrTy(field.type()));
+        src = builder.CreateAlignedLoad(src, fieldAlignment);
 
         // Process all queries with the next column
         for (decltype(queryBuffers.size()) i = nextQueryIdx; i < queryBuffers.size(); ++i) {
@@ -359,8 +368,8 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
                     }
 
                     comp = (isFloat
-                            ? builder.CreateFCmp(predicate, fieldValue, compareValue)
-                            : builder.CreateICmp(predicate, fieldValue, compareValue));
+                            ? builder.CreateFCmp(predicate, src, compareValue)
+                            : builder.CreateICmp(predicate, src, compareValue));
 
                     if (!field.isNotNull()) {
                         comp = builder.CreateAnd(
@@ -370,12 +379,12 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
                 } break;
                 }
 
-                auto compResult = builder.CreateZExt(comp, builder.getInt8Ty());
+                comp = builder.CreateZExt(comp, builder.getInt8Ty());
 
-                auto conjunctElement = builder.CreateInBoundsGEP(args[4], builder.getInt64(conjunctPosition));
+                auto conjunctElement = builder.CreateInBoundsGEP(args[destData], builder.getInt64(conjunctPosition));
 
                 // -> res[i] = res[i] | comp;
-                auto res = builder.CreateOr(builder.CreateLoad(conjunctElement), compResult);
+                auto res = builder.CreateOr(builder.CreateLoad(conjunctElement), comp);
                 builder.CreateStore(res, conjunctElement);
             }
             if (queryReader.exhausted()) {
@@ -393,25 +402,25 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
 
         // Evaluate validFrom <= version && validTo > baseVersion
         auto res = builder.CreateAnd(
-                builder.CreateICmp(CmpInst::ICMP_ULE, args[1], builder.getInt64(snapshot->version())),
-                builder.CreateICmp(CmpInst::ICMP_UGT, args[2], builder.getInt64(snapshot->baseVersion())));
+                builder.CreateICmp(CmpInst::ICMP_ULE, args[validFrom], builder.getInt64(snapshot->version())),
+                builder.CreateICmp(CmpInst::ICMP_UGT, args[validTo], builder.getInt64(snapshot->baseVersion())));
 
         // Evaluate partitioning key % partitionModulo == partitionNumber
         if (state.partitionModulo != 0u) {
-            auto compResult = builder.CreateICmp(CmpInst::ICMP_EQ,
-                    builder.createConstMod(args[0], state.partitionModulo),
+            auto comp = builder.CreateICmp(CmpInst::ICMP_EQ,
+                    builder.createConstMod(args[key], state.partitionModulo),
                     builder.getInt64(state.partitionNumber));
-            res = builder.CreateAnd(res, compResult);
+            res = builder.CreateAnd(res, comp);
         }
         res = builder.CreateZExt(res, builder.getInt8Ty());
 
         // Evaluate conjuncts
         for (decltype(state.numConjunct) j = 0; j < state.numConjunct; ++j) {
-            auto conjunctBElement = builder.CreateInBoundsGEP(args[4], builder.getInt64(state.conjunctOffset + j));
+            auto conjunctBElement = builder.CreateInBoundsGEP(args[destData], builder.getInt64(state.conjunctOffset + j));
             res = builder.CreateAnd(res, builder.CreateLoad(conjunctBElement));
         }
 
-        builder.CreateStore(res, builder.CreateInBoundsGEP(args[4], builder.getInt64(i)));
+        builder.CreateStore(res, builder.CreateInBoundsGEP(args[destData], builder.getInt64(i)));
     }
 
     // Return

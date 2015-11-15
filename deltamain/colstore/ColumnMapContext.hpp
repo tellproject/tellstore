@@ -135,14 +135,14 @@ public:
 
 private:
     using MaterializeFun = void (*) (
-            const char* /* record data */,
-            const char* /* heap data */,
+            const char* /* recordData */,
+            const char* /* heapData */,
             uint64_t /* count */,
             uint64_t /* idx */,
-            char* /* dest */,
+            char* /* destData */,
             size_t /* size */);
 
-    void prepareMaterializeFunction();
+    void prepareMaterializeFunction(const Record& record);
 
     /// Pointer to the start of the page manager data region
     uintptr_t mPageData;

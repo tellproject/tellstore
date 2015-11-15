@@ -58,7 +58,7 @@ protected:
 class LLVMRowScanBase : public LLVMScanBase {
 public:
     using RowScanFun = void (*) (uint64_t /* key */, uint64_t /* validFrom */, uint64_t /* validTo */,
-            const char* /* data */, char* /* dest */);
+            const char* /* recordData */, char* /* destData */);
 
 protected:
     LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries);

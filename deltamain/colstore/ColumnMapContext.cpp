@@ -58,7 +58,7 @@ static const std::array<std::string, 6> gMaterializeParamNames = {{
     "heapData",
     "count",
     "idx",
-    "dest",
+    "destData",
     "size"
 }};
 
@@ -110,11 +110,18 @@ ColumnMapContext::ColumnMapContext(const PageManager& pageManager, const Record&
     }
 
     // Build and compile Materialize function via LLVM
-    prepareMaterializeFunction();
+    prepareMaterializeFunction(record);
 }
 
-void ColumnMapContext::prepareMaterializeFunction() {
+void ColumnMapContext::prepareMaterializeFunction(const Record& record) {
     using namespace llvm;
+
+    static constexpr size_t recordData = 0;
+    static constexpr size_t heapData = 1;
+    static constexpr size_t count = 2;
+    static constexpr size_t idx = 3;
+    static constexpr size_t destData = 4;
+    static constexpr size_t size = 5;
 
 #ifndef NDEBUG
     LOG_INFO("Generating LLVM materialize function");
@@ -130,15 +137,14 @@ void ColumnMapContext::prepareMaterializeFunction() {
     LLVMBuilder builder(context);
 
     // Create function
-    std::array<Type*, 6> params = {{
-        builder.getInt8PtrTy(), // recordData
-        builder.getInt8PtrTy(), // heapData
-        builder.getInt64Ty(),   // count
-        builder.getInt64Ty(),   // idx
-        builder.getInt8PtrTy(), // dest
-        builder.getInt64Ty()    // size
-    }};
-    auto funcType = FunctionType::get(builder.getVoidTy(), makeArrayRef(&params.front(), params.size()), false);
+    auto funcType = FunctionType::get(builder.getVoidTy(), {
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt8PtrTy(), // heapData
+            builder.getInt64Ty(),   // count
+            builder.getInt64Ty(),   // idx
+            builder.getInt8PtrTy(), // destData
+            builder.getInt64Ty()    // size
+    }, false);
     auto func = Function::Create(funcType, Function::ExternalLinkage, gMaterializeFunctionName, &module);
 
     // Set arguments names
@@ -153,7 +159,9 @@ void ColumnMapContext::prepareMaterializeFunction() {
 
     // Set noalias hints (data pointers are not allowed to overlap)
     func->setDoesNotAlias(1);
+    func->setOnlyReadsMemory(1);
     func->setDoesNotAlias(2);
+    func->setOnlyReadsMemory(2);
     func->setDoesNotAlias(5);
 
     // Add host CPU features
@@ -161,60 +169,87 @@ void ColumnMapContext::prepareMaterializeFunction() {
     func->addFnAttr("target-cpu", mLLVMJit.getTargetMachine()->getTargetCPU());
     func->addFnAttr("target-features", mLLVMJit.getTargetMachine()->getTargetFeatureString());
 
+    // Create ColumnMapHeapEntries struct
+    static_assert(sizeof(ColumnMapHeapEntry) == 8, "Size of ColumnMapHeapEntry must be 8");
+    static_assert(offsetof(ColumnMapHeapEntry, offset) == 0, "Offset of ColumnMapHeapEntry::offset must be 0");
+    static_assert(offsetof(ColumnMapHeapEntry, prefix) == 4, "Offset of ColumnMapHeapEntry::prefix must be 4");
+    auto heapEntriesStructType = StructType::get(context, {
+            builder.getInt32Ty(),   // offset
+            builder.getInt32Ty()    // prefix
+    });
+    heapEntriesStructType->setName("HeapEntries");
+
     // Build function
     auto bb = BasicBlock::Create(context, "entry", func);
     builder.SetInsertPoint(bb);
 
-    // Build function body
-    auto recordData = args[0];
-    auto dest = args[4];
+    // Copy the header (null bitmap) if the record has one
+    if (record.headerSize() != 0) {
+        // -> auto src = page->recordData() + idx * record.headerSize();
+        auto src = builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[idx], record.headerSize()));
 
-    // Copy all fixed size fields including the header (null bitmap) if the record has one
-    typename decltype(mFieldLengths)::value_type lastFieldLength = 0;
-    for (auto fieldLength : mFieldLengths) {
-        if (lastFieldLength != 0u) {
-            // -> dest += fieldLength
-            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(lastFieldLength));
+        // -> memcpy(data, src, record.headerSize());
+        builder.CreateMemCpy(args[destData], src, record.headerSize(), 8u);
+    }
 
-            // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[2], lastFieldLength));
+    // Copy all fixed size fields
+    for (size_t i = 0; i < record.fixedSizeFieldCount(); ++i) {
+        auto& fieldMeta = record.getFieldMeta(i);
+        auto& field = fieldMeta.first;
+        auto fieldOffset = fieldMeta.second;
+        auto fieldAlignment = field.alignOf();
+        auto fieldPtrTy = builder.getFieldPtrTy(field.type());
+
+        // -> auto src = reinterpret_cast<const T*>(page->recordData() + page->count * fieldOffset) + idx;
+        auto src = args[recordData];
+        if (fieldOffset != 0u) {
+            src = builder.CreateInBoundsGEP(src, builder.createConstMul(args[count], fieldOffset));
         }
+        src = builder.CreateInBoundsGEP(builder.CreateBitCast(src, fieldPtrTy), args[idx]);
 
-        // -> auto src = recordData + idx * fieldLength;
-        auto src = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[3], fieldLength));
+        // -> auto dest = reinterpret_cast<const T*>(data + fieldOffset);
+        auto dest = args[destData];
+        if (fieldOffset != 0u) {
+            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(fieldOffset));
+        }
+        dest = builder.CreateBitCast(dest, fieldPtrTy);
 
-        // -> memcpy(dest, src, fieldLength);
-        builder.CreateMemCpy(dest, src, builder.getInt64(fieldLength), fieldLength > 8u ? 8u : fieldLength);
-
-        lastFieldLength = fieldLength;
+        // -> *dest = *src;
+        builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
     }
 
     // Copy all variable size fields in one batch
     if (mVarSizeFieldCount != 0u) {
-        if (lastFieldLength != 0u) {
-            // -> dest = crossbow::align(dest + fieldLength, 4u);
-            dest = builder.CreateInBoundsGEP(args[4], builder.getInt64(mVariableSizeOffset));
-
-            // -> recordData += page->count * fieldLength;
-            recordData = builder.CreateInBoundsGEP(recordData, builder.createConstMul(args[2], lastFieldLength));
-
-            if (lastFieldLength < 8u) {
-                // -> recordData = crossbow::align(recordData, 8u);
-                recordData = builder.createPointerAlign(recordData, 8u);
-            }
+        // -> auto heapEntries = crossbow::align(page->recordData() + page->count * mFixedSize, 8u);
+        auto heapEntries = args[0];
+        if (mFixedSize != 0u) {
+            heapEntries = builder.createPointerAlign(
+                    builder.CreateInBoundsGEP(heapEntries, builder.createConstMul(args[count], mFixedSize)),
+                    8u);
         }
 
-        // -> auto offset = reinterpret_cast<const ColumnMapHeapEntry*>(recordData)[idx].offset;
-        static_assert(offsetof(ColumnMapHeapEntry, offset) == 0, "Offset of ColumnMapHeapEntry::offset must be 0");
-        auto heapOffset = builder.CreateInBoundsGEP(recordData,
-                builder.createConstMul(args[3], sizeof(ColumnMapHeapEntry)));
-        heapOffset = builder.CreateAlignedLoad(builder.CreateBitCast(heapOffset, builder.getInt32PtrTy()), 8u);
+        // -> auto offset = *reinterpret_cast<const ColumnMapHeapEntry*>(heapEntries)[idx].offset;
+        auto offset = builder.CreateInBoundsGEP(
+                builder.CreateBitCast(heapEntries, heapEntriesStructType->getPointerTo()),
+                { args[idx], builder.getInt32(0) });
+        offset = builder.CreateAlignedLoad(offset, 8u);
 
         // -> auto src = page->heapData() - offset;
-        auto src = builder.CreateGEP(args[1], builder.CreateNeg(builder.CreateZExt(heapOffset, builder.getInt64Ty())));
+        auto src = builder.CreateGEP(
+                args[heapData],
+                builder.CreateNeg(builder.CreateZExt(offset, builder.getInt64Ty())));
 
-        // -> auto length = size - crossbow::align(mFixedSize, 4u);
-        auto length = builder.CreateSub(args[5], builder.getInt64(crossbow::align(mFixedSize, 4u)));
+        // -> auto dest = data + mVariableSizeOffset;
+        auto dest = args[destData];
+        if (mVariableSizeOffset != 0u) {
+            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(mVariableSizeOffset));
+        }
+
+        // -> auto length = size - mVariableSizeOffset;
+        auto length = args[size];
+        if (mVariableSizeOffset != 0u) {
+            length = builder.CreateSub(length, builder.getInt64(mVariableSizeOffset));
+        }
 
         // -> memcpy(dest, src, length);
         builder.CreateMemCpy(dest, src, length, 4u);

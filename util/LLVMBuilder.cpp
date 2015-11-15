@@ -73,7 +73,7 @@ llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t align
     return result;
 }
 
-llvm::Type* LLVMBuilder::getFieldTy(FieldType field) {
+llvm::Type* LLVMBuilder::getFieldPtrTy(FieldType field) {
     switch (field) {
     case FieldType::SMALLINT:
         return getInt16PtrTy();
