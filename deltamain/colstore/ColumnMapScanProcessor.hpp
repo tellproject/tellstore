@@ -23,8 +23,8 @@
 
 #pragma once
 
+#include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
-#include <util/QueryBufferScan.hpp>
 
 #include <crossbow/allocator.hpp>
 
@@ -49,35 +49,42 @@ class Table;
 
 class ColumnMapScanProcessor;
 
-class ColumnMapScan : public QueryBufferScanBase {
+class ColumnMapScan : public LLVMRowScanBase {
 public:
     using ScanProcessor = ColumnMapScanProcessor;
+
+    using ColumnScanFun = void (*) (const uint64_t* /* keyData */, const uint64_t* /* validFromData */,
+            const uint64_t* /* validToData */, const char* /* recordData */, const char* /* heapData */,
+            uint64_t /* count */, char* /* resultData */);
 
     ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
 
     std::vector<std::unique_ptr<ColumnMapScanProcessor>> startScan(size_t numThreads);
 
 private:
+    void prepareColumnScanFunction(const Record& record);
+
     Table<ColumnMapContext>* mTable;
+
+    ColumnScanFun mColumnScanFun;
 
     crossbow::allocator mAllocator;
 };
 
-class ColumnMapScanProcessor : public QueryBufferScanProcessorBase {
+class ColumnMapScanProcessor : public LLVMRowScanProcessorBase {
 public:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<ColumnMapMainPage*>;
 
     ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
             const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
-            const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer);
+            const LogIterator& logIter, const LogIterator& logEnd, ColumnMapScan::ColumnScanFun columnScanFun,
+            ColumnMapScan::RowScanFun rowScanFun, uint32_t numConjuncts);
 
     void process();
 
 private:
     void processMainPage(const ColumnMapMainPage* page);
-
-    std::vector<uint64_t> processEntries(const ColumnMapMainEntry* entries, uint32_t count);
 
     void processInsertRecord(const InsertLogEntry* ptr);
 
@@ -85,13 +92,17 @@ private:
 
     const ColumnMapContext& mContext;
 
+    ColumnMapScan::ColumnScanFun mColumnScanFun;
+
     const PageList& pages;
     size_t pageIdx;
     size_t pageEndIdx;
     LogIterator logIter;
     LogIterator logEnd;
 
-    std::vector<char> mResult;
+    std::vector<uint64_t> mKeyData;
+    std::vector<uint64_t> mValidFromData;
+    std::vector<uint64_t> mValidToData;
 };
 
 } // namespace deltamain
