@@ -276,15 +276,18 @@ void ScanQueryProcessor::initAggregationRecord() {
     auto tupleData = mBufferWriter.data();
     mBufferWriter.set(0, mData->minimumLength() - TUPLE_OVERHEAD);
 
-    // Set all fields that can be NULL to NULL
-    // Whenever the first value is written the field will be marked as non-NULL
     auto& record = mData->record();
-    if (!record.schema().allNotNull()) {
-        for (Record::id_t i = 0; i < record.fieldCount(); ++i) {
-            auto& metadata = record.getFieldMeta(i);
-            if (!metadata.first.isNotNull()) {
-                record.setFieldNull(tupleData, i, true);
-            }
+    auto aggIter = mData->aggregationBegin();
+    for (Record::id_t i = 0; i < record.fieldCount(); ++i, ++aggIter) {
+        auto& metadata = record.getFieldMeta(i);
+        auto& field = metadata.first;
+        auto aggType = std::get<1>(*aggIter);
+        field.initAgg(aggType, tupleData + metadata.second);
+
+        // Set all fields that can be NULL to NULL
+        // Whenever the first value is written the field will be marked as non-NULL
+        if (!field.isNotNull()) {
+            record.setFieldNull(tupleData, i, true);
         }
     }
 }
@@ -297,21 +300,13 @@ void ScanQueryProcessor::writeAggregationField(char* ptr, Record::id_t fieldId, 
 
     FieldBase field(type);
     auto& record = mData->record();
-    auto offset = record.getFieldMeta(fieldId).second;
-    if (record.schema().allNotNull()) {
-        // If the schema is all non NULL then initialize the aggregation on the first field written
-        if (mTupleCount == 0u) {
-            field.initAgg(aggType, ptr + offset);
-        }
-    } else {
-        // If the schema can contain NULL values then check if this is the first time we encountered a non NULL value
-        // for the field - Initialize the aggregation with the field data
-        if (record.isFieldNull(ptr, fieldId)) {
-            field.initAgg(aggType, ptr + offset);
-            record.setFieldNull(ptr, fieldId, false);
-        }
+    auto& metadata = record.getFieldMeta(fieldId);
+    // If the schema can contain NULL values then check if this is the first time we encountered a non NULL value for
+    // the field - Initialize the aggregation with the field data
+    if (!metadata.first.isNotNull()) {
+        record.setFieldNull(ptr, fieldId, false);
     }
-    field.agg(aggType, ptr + offset, data);
+    field.agg(aggType, ptr + metadata.second, data);
 }
 
 void ScanQueryProcessor::ensureBufferSpace(uint32_t length) {
