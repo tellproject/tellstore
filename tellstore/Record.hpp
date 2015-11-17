@@ -585,18 +585,15 @@ public:
     }
 
     const Field& getFieldFromName(const crossbow::string& name) const {
-        id_t res = 0;
         for (const auto& field : mFixedSizeFields) {
             if (field.name() == name) {
                 return field;
             }
-            ++res;
         }
         for (const auto& field : mVarSizeFields) {
             if (field.name() == name) {
                 return field;
             }
-            ++res;
         }
         throw std::range_error("field does not exist");
     }
