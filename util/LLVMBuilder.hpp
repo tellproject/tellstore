@@ -77,7 +77,9 @@ public:
         return llvm::ConstantFP::get(getDoubleTy(), C);
     }
 
-    llvm::Type* getFieldPtrTy(FieldType field);
+    llvm::Type* getFieldTy(FieldType field);
+
+    llvm::PointerType* getFieldPtrTy(FieldType field);
 
     /**
      * @brief Create an optimized multiplication operation with a constant

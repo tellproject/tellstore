@@ -50,10 +50,13 @@ Record buildScanRecord(ScanQueryType queryType, const char* queryData, const cha
         Schema schema(TableType::UNKNOWN);
         Record::id_t fieldId = 0u;
         AggregationIterator end(queryDataEnd);
-        for (AggregationIterator i(queryData); i != end; ++i) {
-            auto& field = record.getFieldMeta(std::get<0>(*i)).first;
-            schema.addField(field.type(), crossbow::to_string(fieldId), field.isNotNull());
-            ++fieldId;
+        for (AggregationIterator i(queryData); i != end; ++i, ++fieldId) {
+            Record::id_t id;
+            AggregationType aggType;
+            std::tie(id, aggType) = *i;
+
+            auto& field = record.getFieldMeta(id).first;
+            schema.addField(field.aggType(aggType), crossbow::to_string(fieldId), field.isNotNull());
         }
         return Record(std::move(schema));
     } break;
@@ -262,7 +265,11 @@ void ScanQueryProcessor::writeAggregationRecord(const Record& record, const char
         bool isNull;
         FieldType fieldType;
         auto field = record.data(data, id, isNull, &fieldType);
-        writeAggregationField(tupleData, fieldId, fieldType, aggType, isNull, field);
+
+        uint16_t destFieldIdx;
+        mData->record().idOf(crossbow::to_string(fieldId), destFieldIdx);
+
+        writeAggregationField(tupleData, destFieldIdx, fieldType, aggType, isNull, field);
         ++fieldId;
     }
 
@@ -279,7 +286,9 @@ void ScanQueryProcessor::initAggregationRecord() {
     auto& record = mData->record();
     auto aggIter = mData->aggregationBegin();
     for (Record::id_t i = 0; i < record.fieldCount(); ++i, ++aggIter) {
-        auto& metadata = record.getFieldMeta(i);
+        uint16_t destFieldIdx;
+        record.idOf(crossbow::to_string(i), destFieldIdx);
+        auto& metadata = record.getFieldMeta(destFieldIdx);
         auto& field = metadata.first;
         auto aggType = std::get<1>(*aggIter);
         field.initAgg(aggType, tupleData + metadata.second);

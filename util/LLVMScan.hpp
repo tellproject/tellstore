@@ -35,12 +35,29 @@
 #include <memory>
 #include <vector>
 
+struct LLVMScanQueryProcessor {
+    char* bufferPos;
+
+    const char* bufferEnd;
+
+    size_t length;
+};
+
+extern "C" void queryProcessorAcquireBuffer(LLVMScanQueryProcessor* data);
+
+
 namespace tell {
 namespace store {
 
 class Record;
 
 class LLVMScanBase {
+public:
+    template <typename Fun>
+    Fun findFunction(const std::string& name) {
+        return mCompiler.findFunction<Fun>(name);
+    }
+
 protected:
     LLVMScanBase();
 
@@ -60,6 +77,8 @@ public:
     using RowScanFun = void (*) (uint64_t /* key */, uint64_t /* validFrom */, uint64_t /* validTo */,
             const char* /* recordData */, char* /* destData */);
 
+    using RowMaterializeFun = uint32_t (*) (const char* /* srcData */, uint32_t /* length */, char* /* destData */);
+
 protected:
     LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries);
 
@@ -71,16 +90,23 @@ protected:
 
     RowScanFun mRowScanFun;
 
+    std::vector<RowMaterializeFun> mRowMaterializeFuns;
+
     uint32_t mNumConjuncts;
 
 private:
     void prepareRowScanFunction(const Record& record);
+
+    void prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
+
+    void prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
 };
 
 class LLVMRowScanProcessorBase {
 protected:
     LLVMRowScanProcessorBase(const Record& record, const std::vector<ScanQuery*>& queries,
-            LLVMRowScanBase::RowScanFun rowScanFunc, uint32_t numConjuncts);
+            LLVMRowScanBase::RowScanFun rowScanFunc,
+            const std::vector<LLVMRowScanBase::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     ~LLVMRowScanProcessorBase() = default;
 
@@ -102,6 +128,8 @@ protected:
     std::vector<ScanQueryProcessor> mQueries;
 
     LLVMRowScanBase::RowScanFun mRowScanFun;
+
+    std::vector<LLVMRowScanBase::RowMaterializeFun> mRowMaterializeFuns;
 
     uint32_t mNumConjuncts;
 

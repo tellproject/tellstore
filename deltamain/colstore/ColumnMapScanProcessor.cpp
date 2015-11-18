@@ -48,6 +48,8 @@
 #include <llvm/Transforms/Vectorize.h>
 
 #include <array>
+#include <sstream>
+#include <string>
 
 namespace tell {
 namespace store {
@@ -56,14 +58,36 @@ namespace {
 
 static const std::string gColumnScanFunctionName = "columnScan";
 
-static const std::array<std::string, 7> gColumnScanParamNames = {{
+static const std::array<std::string, 9> gColumnScanParamNames = {{
     "keyData",
     "validFromData",
     "validToData",
     "recordData",
     "heapData",
     "count",
+    "startIdx",
+    "endIdx",
     "resultData"
+}};
+
+static const std::string gColumnMaterializeFunctionName = "columnMaterialize.";
+
+static const std::array<std::string, 5> gColumnProjectionParamNames = {{
+    "recordData",
+    "heapData",
+    "count",
+    "idx",
+    "destData"
+}};
+
+static const std::array<std::string, 7> gColumnAggregationParamNames = {{
+    "recordData",
+    "heapData",
+    "count",
+    "startIdx",
+    "endIdx",
+    "resultData",
+    "destData"
 }};
 
 struct QueryState {
@@ -100,12 +124,54 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
           mColumnScanFun(nullptr) {
     prepareColumnScanFunction(table->record());
 
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        auto q = mQueries[i];
+        switch (q->queryType()) {
+        case ScanQueryType::PROJECTION: {
+            prepareColumnProjectionFunction(table->record(), q, i);
+        } break;
+
+        case ScanQueryType::AGGREGATION: {
+            prepareColumnAggregationFunction(table->record(), q, i);
+        } break;
+        default:
+            break;
+        }
+    }
+
     finalizeRowScan();
+
     mColumnScanFun = mCompiler.findFunction<ColumnScanFun>(gColumnScanFunctionName);
+
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        switch (mQueries[i]->queryType()) {
+        case ScanQueryType::FULL: {
+            mColumnProjectionFuns.emplace_back(nullptr);
+            mColumnAggregationFuns.emplace_back(nullptr);
+        } break;
+
+        case ScanQueryType::PROJECTION: {
+            std::stringstream ss;
+            ss << gColumnMaterializeFunctionName << i;
+            auto fun = mCompiler.findFunction<ColumnProjectionFun>(ss.str());
+            mColumnProjectionFuns.emplace_back(fun);
+            mColumnAggregationFuns.emplace_back(nullptr);
+        } break;
+
+        case ScanQueryType::AGGREGATION: {
+            std::stringstream ss;
+            ss << gColumnMaterializeFunctionName << i;
+            auto fun = mCompiler.findFunction<ColumnAggregationFun>(ss.str());
+            mColumnAggregationFuns.emplace_back(fun);
+            mColumnProjectionFuns.emplace_back(nullptr);
+        } break;
+        }
+    }
 }
 
 std::vector<std::unique_ptr<ColumnMapScanProcessor>> ColumnMapScan::startScan(size_t numThreads) {
-    return mTable->startScan(numThreads, mQueries, mColumnScanFun, mRowScanFun, mNumConjuncts);
+    return mTable->startScan(numThreads, mQueries, mColumnScanFun, mColumnProjectionFuns, mColumnAggregationFuns,
+            mRowScanFun, mRowMaterializeFuns, mNumConjuncts);
 }
 
 void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
@@ -117,7 +183,9 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     static constexpr size_t recordData = 3;
     static constexpr size_t heapData = 4;
     static constexpr size_t count = 5;
-    static constexpr size_t resultData = 6;
+    static constexpr size_t startIdx = 6;
+    static constexpr size_t endIdx = 7;
+    static constexpr size_t resultData = 8;
 
     LLVMBuilder builder(mCompilerContext);
 
@@ -129,12 +197,14 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             builder.getInt8PtrTy(),     // recordData
             builder.getInt8PtrTy(),     // heapData
             builder.getInt64Ty(),       // count
-            builder.getInt8PtrTy()      // destData
+            builder.getInt64Ty(),       // startIdx
+            builder.getInt64Ty(),       // endIdx
+            builder.getInt8PtrTy()      // resultData
     }, false);
     auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnScanFunctionName, &mCompilerModule);
 
     // Set arguments names
-    std::array<Value*, 7> args;
+    std::array<Value*, 9> args;
     {
         decltype(gColumnScanParamNames.size()) idx = 0;
         for (auto iter = func->arg_begin(); idx != gColumnScanParamNames.size(); ++iter, ++idx) {
@@ -154,7 +224,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     func->setOnlyReadsMemory(4);
     func->setDoesNotAlias(5);
     func->setOnlyReadsMemory(5);
-    func->setDoesNotAlias(7);
+    func->setDoesNotAlias(9);
 
     // Build function
     auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
@@ -214,8 +284,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], fieldOffset)));
         src = builder.CreateBitCast(src, builder.getFieldPtrTy(field.type()));
 
-        // i = 0u;
-        builder.CreateAlignedStore(builder.getInt64(0u), loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
 
         // Loop generation
         auto loopBB = BasicBlock::Create(mCompilerContext, "col." + Twine(currentColumn), func);
@@ -338,8 +408,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
         builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
 
-        // i < page->count
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[count]);
+        // i < endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endcol." + Twine(currentColumn), func);
@@ -350,8 +420,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     }
 
     {
-        // i = 0u;
-        builder.CreateAlignedStore(builder.getInt64(0u), loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
 
         auto loopBB = BasicBlock::Create(mCompilerContext, "check", func);
         builder.CreateBr(loopBB);
@@ -391,8 +461,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
         builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
 
-        // i < page->count
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[count]);
+        // i < endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endcheck", func);
@@ -409,8 +479,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         for (decltype(state.numConjunct) j = state.numConjunct - 1u; j > 0u; --j) {
             auto conjunctPosition = state.conjunctOffset + j - 1u;
 
-            // i = 0u;
-            builder.CreateAlignedStore(builder.getInt64(0u), loopCounterAlloc, 8u);
+            // -> auto i = startIdx;
+            builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
 
             auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(conjunctPosition), func);
             builder.CreateBr(loopBB);
@@ -434,8 +504,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1u));
             builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
 
-            // i < page->count
-            auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[count]);
+            // i < endIdx
+            auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
 
             // Create the loop
             auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(conjunctPosition), func);
@@ -443,8 +513,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             builder.SetInsertPoint(afterBB);
         }
 
-        // i = 0u;
-        builder.CreateAlignedStore(builder.getInt64(0u), loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
 
         auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(i), func);
         builder.CreateBr(loopBB);
@@ -470,8 +540,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1u));
         builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
 
-        // i < page->count
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[count]);
+        // i < endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(i), func);
@@ -483,13 +553,284 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     builder.CreateRetVoid();
 }
 
+void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+    using namespace llvm;
+
+    static constexpr size_t recordData = 0;
+    static constexpr size_t heapData = 1;
+    static constexpr size_t count = 2;
+    static constexpr size_t idx = 3;
+    static constexpr size_t destData = 4;
+
+    LLVMBuilder builder(mCompilerContext);
+
+    // Create function
+    auto funcType = FunctionType::get(builder.getInt32Ty(), {
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt8PtrTy(), // heapData
+            builder.getInt64Ty(),   // count
+            builder.getInt64Ty(),   // idx
+            builder.getInt8PtrTy()  // destData
+    }, false);
+    auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnMaterializeFunctionName + Twine(index),
+            &mCompilerModule);
+
+    // Set arguments names
+    std::array<Value*, 5> args;
+    {
+        decltype(gColumnProjectionParamNames.size()) idx = 0;
+        for (auto iter = func->arg_begin(); idx != gColumnProjectionParamNames.size(); ++iter, ++idx) {
+            iter->setName(gColumnProjectionParamNames[idx]);
+            args[idx] = iter.operator ->();
+        }
+    }
+
+    // Set noalias hints (data pointers are not allowed to overlap)
+    func->setDoesNotAlias(1);
+    func->setOnlyReadsMemory(1);
+    func->setDoesNotAlias(2);
+    func->setOnlyReadsMemory(2);
+    func->setDoesNotAlias(5);
+
+    // Build function
+    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(bb);
+
+    if (query->headerLength() != 0u) {
+        builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
+    }
+
+    auto& destRecord = query->record();
+    Record::id_t destFieldIdx = 0u;
+    auto end = query->projectionEnd();
+    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
+        auto srcFieldIdx = *i;
+        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
+        auto& field = srcFieldMeta.first;
+
+        if (!field.isNotNull()) {
+            auto srcIdx = srcFieldIdx / 8u;
+            auto srcBitIdx = srcFieldIdx % 8u;
+            uint8_t srcMask = (0x1u << srcBitIdx);
+
+            auto srcNullBitmap = builder.CreateInBoundsGEP(
+                    args[recordData],
+                    builder.createConstMul(args[idx], query->headerLength()));
+            if (srcIdx != 0) {
+                srcNullBitmap = builder.CreateInBoundsGEP(srcNullBitmap, builder.getInt64(srcIdx));
+            }
+            srcNullBitmap = builder.CreateAnd(builder.CreateLoad(srcNullBitmap), builder.getInt8(srcMask));
+
+            auto destIdx = destFieldIdx / 8u;
+            auto destBitIdx = destFieldIdx % 8u;
+
+            if (destBitIdx > srcBitIdx) {
+                srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
+            } else if (destBitIdx < srcBitIdx) {
+                srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
+            }
+
+            auto destNullBitmap = (destIdx == 0
+                    ? args[destData]
+                    : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
+
+            auto res = builder.CreateOr(builder.CreateLoad(destNullBitmap), srcNullBitmap);
+            builder.CreateStore(res, destNullBitmap);
+        }
+
+        auto srcFieldOffset = srcFieldMeta.second;
+        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).second;
+        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+
+        auto fieldAlignment = field.alignOf();
+        auto fieldPtrType = builder.getFieldPtrTy(field.type());
+        auto src = (srcFieldOffset == 0
+                ? args[recordData]
+                : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
+        src = builder.CreateBitCast(src, fieldPtrType);
+        src = builder.CreateInBoundsGEP(src, args[idx]);
+
+        auto dest = (destFieldOffset == 0
+                ? args[destData]
+                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        dest = builder.CreateBitCast(dest, fieldPtrType);
+        builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
+    }
+
+    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+}
+
+void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+    using namespace llvm;
+
+    static constexpr size_t recordData = 0;
+    static constexpr size_t heapData = 1;
+    static constexpr size_t count = 2;
+    static constexpr size_t startIdx = 3;
+    static constexpr size_t endIdx = 4;
+    static constexpr size_t resultData = 5;
+    static constexpr size_t destData = 6;
+
+    LLVMBuilder builder(mCompilerContext);
+
+    // Create function
+    auto funcType = FunctionType::get(builder.getInt32Ty(), {
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt8PtrTy(), // heapData
+            builder.getInt64Ty(),   // count
+            builder.getInt64Ty(),   // startIdx
+            builder.getInt64Ty(),   // endIdx
+            builder.getInt8PtrTy(), // resultData
+            builder.getInt8PtrTy()  // destData
+    }, false);
+    auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnMaterializeFunctionName + Twine(index),
+            &mCompilerModule);
+
+    // Set arguments names
+    std::array<Value*, 7> args;
+    {
+        decltype(gColumnAggregationParamNames.size()) idx = 0;
+        for (auto iter = func->arg_begin(); idx != gColumnAggregationParamNames.size(); ++iter, ++idx) {
+            iter->setName(gColumnAggregationParamNames[idx]);
+            args[idx] = iter.operator ->();
+        }
+    }
+
+    // Set noalias hints (data pointers are not allowed to overlap)
+    func->setDoesNotAlias(1);
+    func->setOnlyReadsMemory(1);
+    func->setDoesNotAlias(2);
+    func->setOnlyReadsMemory(2);
+    func->setDoesNotAlias(6);
+    func->setOnlyReadsMemory(6);
+    func->setDoesNotAlias(7);
+
+    // Build function
+    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(bb);
+
+    auto loopCounterAlloc = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "i");
+
+    auto& destRecord = query->record();
+    Record::id_t j = 0u;
+    auto end = query->aggregationEnd();
+    for (auto i = query->aggregationBegin(); i != end; ++i, ++j) {
+        uint16_t srcFieldIdx;
+        AggregationType aggregationType;
+        std::tie(srcFieldIdx, aggregationType) = *i;
+        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
+        auto& srcField = srcFieldMeta.first;
+        auto srcFieldAlignment = srcField.alignOf();
+        auto srcFieldPtrType = builder.getFieldPtrTy(srcField.type());
+        auto srcFieldOffset = srcFieldMeta.second;
+
+        uint16_t destFieldIdx;
+        destRecord.idOf(crossbow::to_string(j), destFieldIdx);
+        auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
+        auto& destField = destFieldMeta.first;
+        auto destFieldAlignment = destField.alignOf();
+        auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
+        auto destFieldOffset = destFieldMeta.second;
+        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+
+
+        // -> auto src = page->recordData() + page->count * mFieldOffsets[idx];
+        auto srcPtr = (srcFieldOffset == 0
+                ? args[recordData]
+                : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
+        srcPtr = builder.CreateBitCast(srcPtr, srcFieldPtrType);
+
+        auto destPtr = (destFieldOffset == 0
+                ? args[destData]
+                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
+
+        // -> auto i = startIdx;
+        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
+
+        // Loop generation
+        auto loopBB = BasicBlock::Create(mCompilerContext, "agg." + Twine(destFieldIdx), func);
+        builder.CreateBr(loopBB);
+        builder.SetInsertPoint(loopBB);
+
+        auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+
+        Value* src = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(srcPtr, loopCounter), srcFieldAlignment);
+
+        Value* dest = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
+
+        auto result = builder.CreateLoad(builder.CreateInBoundsGEP(args[resultData], loopCounter));
+
+        auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
+
+        switch (aggregationType) {
+        case AggregationType::MIN: {
+            auto cond = (isFloat
+                    ? builder.CreateFCmp(CmpInst::FCMP_OLT, src, dest)
+                    : builder.CreateICmp(CmpInst::ICMP_SLT, src, dest));
+            cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
+            dest = builder.CreateSelect(cond, src, dest);
+        } break;
+
+        case AggregationType::MAX: {
+            auto cond = (isFloat
+                    ? builder.CreateFCmp(CmpInst::FCMP_OGT, src, dest)
+                    : builder.CreateICmp(CmpInst::ICMP_SGT, src, dest));
+            cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
+            dest = builder.CreateSelect(cond, src, dest);
+        } break;
+
+        case AggregationType::SUM: {
+            if (srcField.type() == FieldType::SMALLINT || srcField.type() == FieldType::INT) {
+                src = builder.CreateSExt(src, builder.getInt64Ty());
+            } else if (srcField.type() == FieldType::FLOAT) {
+                src = builder.CreateFPExt(src, builder.getDoubleTy());
+            }
+
+            auto res = (isFloat
+                    ? builder.CreateFAdd(dest, src)
+                    : builder.CreateAdd(dest, src));
+            dest = builder.CreateSelect(builder.CreateTrunc(result, builder.getInt1Ty()), res, dest);
+        } break;
+
+        case AggregationType::CNT: {
+            dest = builder.CreateAdd(dest, builder.CreateZExt(result, builder.getInt64Ty()));
+        } break;
+
+        default:
+            break;
+        }
+
+        builder.CreateAlignedStore(dest, destPtr, destFieldAlignment);
+
+        // -> i += 1;
+        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
+        builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+
+        // i < endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+
+        // Create the loop
+        auto afterBB = BasicBlock::Create(mCompilerContext, "endagg." + Twine(destFieldIdx), func);
+        builder.CreateCondBr(endCond, loopBB, afterBB);
+        builder.SetInsertPoint(afterBB);
+    }
+
+    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+}
+
 ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
         const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
         const LogIterator& logIter, const LogIterator& logEnd, ColumnMapScan::ColumnScanFun columnScanFun,
-        ColumnMapScan::RowScanFun rowScanFun, uint32_t numConjuncts)
-        : LLVMRowScanProcessorBase(record, queries, rowScanFun, numConjuncts),
+        const std::vector<ColumnMapScan::ColumnProjectionFun>& columnProjectionFuns,
+        const std::vector<ColumnMapScan::ColumnAggregationFun>& columnAggregationFuns,
+        ColumnMapScan::RowScanFun rowScanFun, const std::vector<ColumnMapScan::RowMaterializeFun>& rowMaterializeFuns,
+        uint32_t numConjuncts)
+        : LLVMRowScanProcessorBase(record, queries, rowScanFun, rowMaterializeFuns, numConjuncts),
           mContext(context),
           mColumnScanFun(columnScanFun),
+          mColumnProjectionFuns(columnProjectionFuns),
+          mColumnAggregationFuns(columnAggregationFuns),
           pages(pages),
           pageIdx(pageIdx),
           pageEndIdx(pageEndIdx),
@@ -499,48 +840,144 @@ ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context, 
 
 void ColumnMapScanProcessor::process() {
     for (auto i = pageIdx; i < pageEndIdx; ++i) {
-        processMainPage(pages[i]);
+        processMainPage(pages[i], 0, pages[i]->count);
     }
-    for (auto insIter = logIter; insIter != logEnd; ++insIter) {
+
+    auto insIter = logIter;
+    while (insIter != logEnd) {
         if (!insIter->sealed()) {
+            ++insIter;
             continue;
         }
-        processInsertRecord(reinterpret_cast<const InsertLogEntry*>(insIter->data()));
+
+        auto ptr = reinterpret_cast<const InsertLogEntry*>(insIter->data());
+        ConstInsertRecord record(ptr);
+        if (!record.valid()) {
+            ++insIter;
+            continue;
+        }
+
+        if (auto relocated = reinterpret_cast<const ColumnMapMainEntry*>(newestMainRecord(record.newest()))) {
+            auto relocatedPage = mContext.pageFromEntry(relocated);
+            auto relocatedStartIdx = ColumnMapContext::pageIndex(relocatedPage, relocated);
+            auto relocatedEndIdx = relocatedStartIdx;
+
+            for (++insIter; insIter != logEnd; ++insIter) {
+                if (!insIter->sealed()) {
+                    continue;
+                }
+
+                ptr = reinterpret_cast<const InsertLogEntry*>(insIter->data());
+                record = ConstInsertRecord(ptr);
+
+                relocated = reinterpret_cast<const ColumnMapMainEntry*>(newestMainRecord(record.newest()));
+                if (relocated) {
+                    if (mContext.pageFromEntry(relocated) != relocatedPage) {
+                        break;
+                    }
+                    relocatedEndIdx = ColumnMapContext::pageIndex(relocatedPage, relocated);
+                } else if (!record.valid()) {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            auto relocatedEntries = relocatedPage->entryData();
+            auto key = relocatedEntries[relocatedEndIdx].key;
+            for (++relocatedEndIdx; relocatedEndIdx < relocatedPage->count && relocatedEntries[relocatedEndIdx].key == key; ++relocatedEndIdx);
+
+            processMainPage(relocatedPage, relocatedStartIdx, relocatedEndIdx);
+
+            continue;
+        }
+
+        auto validTo = std::numeric_limits<uint64_t>::max();
+        if (record.newest() != 0u) {
+            auto lowestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
+                    record.baseVersion(), validTo);
+
+            if (ptr->version >= lowestVersion) {
+                ++insIter;
+                continue;
+            }
+        }
+        auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
+        processRowRecord(ptr->key, ptr->version, validTo, ptr->data(), entry->size() - sizeof(InsertLogEntry));
+        ++insIter;
     }
 }
 
-void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page) {
-    mKeyData.reserve(page->count);
-    mValidFromData.reserve(page->count);
-    mValidToData.reserve(page->count);
+void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint64_t startIdx, uint64_t endIdx) {
+    mKeyData.resize(page->count, 0u);
+    mValidFromData.resize(page->count, 0u);
+    mValidToData.resize(page->count, 0u);
     mResult.resize(mNumConjuncts * page->count, 0u);
 
     auto entries = page->entryData();
-    typename std::remove_const<decltype(page->count)>::type i = 0;
-    while (i < page->count) {
+
+    auto i = startIdx;
+    while (i < endIdx) {
         auto key = entries[i].key;
         auto newest = entries[i].newest.load();
         auto validTo = std::numeric_limits<uint64_t>::max();
         if (newest != 0u) {
             if ((newest & crossbow::to_underlying(NewestPointerTag::INVALID)) != 0x0u) {
-                // Set the valid-to version to 0 so the queries ignore the tuple
-                for (; i < page->count && entries[i].key == key; ++i) {
-                    mKeyData.emplace_back(0u);
-                    mValidFromData.emplace_back(0u);
-                    mValidToData.emplace_back(0u);
+                // Skip to element with next key
+                auto j = i;
+                for (++i; i < endIdx && entries[i].key == key; ++i);
+                if (startIdx == j) {
+                    startIdx = i;
                 }
                 continue;
             }
-            if (auto main = newestMainRecord(newest)) {
-                LOG_ERROR("TODO Process relocated main entry");
-                std::terminate();
-
-                // Set the valid-to version to 0 so the queries ignore the tuple
-                for (; i < page->count && entries[i].key == key; ++i) {
-                    mKeyData.emplace_back(0u);
-                    mValidFromData.emplace_back(0u);
-                    mValidToData.emplace_back(0u);
+            if (auto relocated = reinterpret_cast<const ColumnMapMainEntry*>(newestMainRecord(newest))) {
+                if (i > startIdx) {
+                    evaluateMainQueries(page, startIdx, i);
                 }
+
+                auto relocatedPage = mContext.pageFromEntry(relocated);
+                auto relocatedStartIdx = ColumnMapContext::pageIndex(relocatedPage, relocated);
+                auto relocatedEndIdx = relocatedStartIdx;
+
+                while (true) {
+                    for (++i; i < endIdx && entries[i].key == key; ++i);
+                    if (i < endIdx) {
+                        break;
+                    }
+
+                    key = entries[i].key;
+                    newest = entries[i].newest.load();
+
+                    relocated = reinterpret_cast<const ColumnMapMainEntry*>(newestMainRecord(newest));
+                    if (relocated) {
+                        if (mContext.pageFromEntry(relocated) != relocatedPage) {
+                            break;
+                        }
+                        relocatedEndIdx = ColumnMapContext::pageIndex(relocatedPage, relocated);
+                    } else if ((newest & crossbow::to_underlying(NewestPointerTag::INVALID)) != 0x0u) {
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+
+                auto relocatedEntries = relocatedPage->entryData();
+                key = relocatedEntries[relocatedEndIdx].key;
+                for (++relocatedEndIdx; relocatedEndIdx < relocatedPage->count && relocatedEntries[relocatedEndIdx].key == key; ++relocatedEndIdx);
+
+                processMainPage(relocatedPage, relocatedStartIdx, relocatedEndIdx);
+
+                if (i >= endIdx) {
+                    return;
+                }
+
+                mKeyData.resize(page->count, 0u);
+                mValidFromData.resize(page->count, 0u);
+                mValidToData.resize(page->count, 0u);
+                mResult.resize(mNumConjuncts * page->count, 0u);
+
+                startIdx = i;
                 continue;
             }
 
@@ -549,40 +986,71 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page) {
 
             // Skip elements with version above lowest version and set the valid-to version to 0 to exclude them from
             // the query processing
-            for (; i < page->count && entries[i].key == key && entries[i].version >= lowestVersion; ++i) {
-                mKeyData.emplace_back(0u);
-                mValidFromData.emplace_back(0u);
-                mValidToData.emplace_back(0u);
+            auto j = i;
+            for (; i < endIdx && entries[i].key == key && entries[i].version >= lowestVersion; ++i);
+            if (startIdx == j) {
+                startIdx = i;
             }
         }
 
         // Set valid-to version for every element of the same key to the valid-from version of the previous
-        for (; i < page->count && entries[i].key == key; ++i) {
-            mKeyData.emplace_back(key);
-            mValidFromData.emplace_back(entries[i].version);
-            mValidToData.emplace_back(validTo);
+        for (; i < endIdx && entries[i].key == key; ++i) {
+            mKeyData[i] = key;
+            mValidFromData[i] = entries[i].version;
+            mValidToData[i] = validTo;
             validTo = entries[i].version;
         }
     }
+    if (startIdx < endIdx) {
+        evaluateMainQueries(page, startIdx, endIdx);
+    }
+}
+
+void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, uint64_t startIdx, uint64_t endIdx) {
     LOG_ASSERT(mKeyData.size() == page->count, "Size of key array does not match the page size");
     LOG_ASSERT(mValidFromData.size() == page->count, "Size of valid-from array does not match the page size");
     LOG_ASSERT(mValidToData.size() == page->count, "Size of valid-to array does not match the page size");
 
     mColumnScanFun(&mKeyData.front(), &mValidFromData.front(), &mValidToData.front(), page->recordData(),
-            page->heapData(), page->count, &mResult.front());
+            page->heapData(), page->count, startIdx, endIdx, &mResult.front());
 
+    auto entries = page->entryData();
     auto sizeData = page->sizeData();
     auto result = &mResult.front();
-    for (auto& con : mQueries) {
-        for (typename std::remove_const<decltype(page->count)>::type i = 0; i < page->count; ++i) {
-            if (result[i] == 0u) {
-                continue;
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        switch (mQueries[i].data()->queryType()) {
+        case ScanQueryType::FULL: {
+            for (decltype(startIdx) j = startIdx; j < endIdx; ++j) {
+                if (result[j] == 0u) {
+                    continue;
+                }
+                auto length = sizeData[j];
+                mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
+                        [this, page, j, length] (char* dest) {
+                    mContext.materialize(page, j, dest, length);
+                    return length;
+                });
             }
-            auto length = sizeData[i];
-            con.writeRecord(entries[i].key, length, entries[i].version, mValidToData[i],
-                    [this, page, i, length] (char* dest) {
-                mContext.materialize(page, i, dest, length);
-            });
+        } break;
+
+        case ScanQueryType::PROJECTION: {
+            for (decltype(startIdx) j = startIdx; j < endIdx; ++j) {
+                if (result[j] == 0u) {
+                    continue;
+                }
+                auto length = sizeData[j];
+                mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
+                        [this, page, i, j] (char* dest) {
+                    return mColumnProjectionFuns[i](page->recordData(), page->heapData(), page->count, j, dest);
+                });
+            }
+        } break;
+
+        case ScanQueryType::AGGREGATION: {
+            mColumnAggregationFuns[i](page->recordData(), page->heapData(), page->count, startIdx, endIdx, result,
+                    mQueries[i].mBuffer + 8);
+        } break;
+
         }
         result += page->count;
     }
@@ -591,30 +1059,6 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page) {
     mValidFromData.clear();
     mValidToData.clear();
     mResult.clear();
-}
-
-void ColumnMapScanProcessor::processInsertRecord(const InsertLogEntry* ptr) {
-    ConstInsertRecord record(ptr);
-    if (!record.valid()) {
-        return;
-    }
-
-    if (auto main = newestMainRecord(record.newest())) {
-        LOG_ERROR("TODO Process relocated main entry");
-        std::terminate();
-    }
-
-    auto validTo = std::numeric_limits<uint64_t>::max();
-    if (record.newest() != 0u) {
-        auto lowestVersion = processUpdateRecord(reinterpret_cast<const UpdateLogEntry*>(record.newest()),
-                record.baseVersion(), validTo);
-
-        if (ptr->version >= lowestVersion) {
-            return;
-        }
-    }
-    auto entry = LogEntry::entryFromData(reinterpret_cast<const char*>(ptr));
-    processRowRecord(ptr->key, ptr->version, validTo, ptr->data(), entry->size() - sizeof(InsertLogEntry));
 }
 
 uint64_t ColumnMapScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion,

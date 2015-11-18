@@ -37,8 +37,9 @@ namespace store {
 namespace logstructured {
 
 HashScan::HashScan(Table* table, std::vector<ScanQuery*> queries)
-        : QueryBufferScanBase(std::move(queries)),
+        : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
+    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<HashScanProcessor>> HashScan::startScan(size_t numThreads) {
@@ -58,15 +59,17 @@ std::vector<std::unique_ptr<HashScanProcessor>> HashScan::startScan(size_t numTh
         auto start = i * step + std::min(i, mod);
         auto end = start + step + (i < mod ? 1 : 0);
 
-        result.emplace_back(new HashScanProcessor(*mTable, mQueries, start, end, version, mQueryBuffer.get()));
+        result.emplace_back(new HashScanProcessor(*mTable, mQueries, start, end, version, mRowScanFun,
+                mRowMaterializeFuns, mNumConjuncts));
     }
 
     return result;
 }
 
 HashScanProcessor::HashScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, size_t start, size_t end,
-        uint64_t minVersion, const char* queryBuffer)
-        : QueryBufferScanProcessorBase(table.record(), queries, queryBuffer),
+        uint64_t minVersion, HashScan::RowScanFun rowScanFun,
+        const std::vector<HashScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts)
+        : LLVMRowScanProcessorBase(table.record(), queries, rowScanFun, rowMaterializeFuns, numConjuncts),
           mTable(table),
           mMinVersion(minVersion),
           mStart(start),

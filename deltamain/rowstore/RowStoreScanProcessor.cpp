@@ -34,18 +34,20 @@ namespace store {
 namespace deltamain {
 
 RowStoreScan::RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*> queries)
-        : QueryBufferScanBase(std::move(queries)),
+        : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
+    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<RowStoreScanProcessor>> RowStoreScan::startScan(size_t numThreads) {
-    return mTable->startScan(numThreads, mQueries, mQueryBuffer.get());
+    return mTable->startScan(numThreads, mQueries, mRowScanFun, mRowMaterializeFuns, mNumConjuncts);
 }
 
 RowStoreScanProcessor::RowStoreScanProcessor(const RowStoreContext& /* context */, const Record& record,
         const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
-        const LogIterator& logIter, const LogIterator& logEnd, const char* queryBuffer)
-        : QueryBufferScanProcessorBase(record, queries, queryBuffer),
+        const LogIterator& logIter, const LogIterator& logEnd, RowStoreScan::RowScanFun rowScanFun,
+        const std::vector<RowStoreScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts)
+        : LLVMRowScanProcessorBase(record, queries, rowScanFun, rowMaterializeFuns, numConjuncts),
           pages(pages),
           pageIdx(pageIdx),
           pageEndIdx(pageEndIdx),

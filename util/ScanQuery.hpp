@@ -299,6 +299,10 @@ public:
 
     ScanQueryProcessor& operator=(ScanQueryProcessor&& other);
 
+    const ScanQuery* data() const {
+        return mData;
+    }
+
     /**
      * @brief Process the tuple according to the query data associated with this processor
      *
@@ -325,7 +329,14 @@ public:
     template <typename Fun>
     void writeRecord(uint64_t key, uint32_t length, uint64_t validFrom, uint64_t validTo, Fun fun);
 
-private:
+    /**
+     * @brief Initializes the aggregation tuple
+     *
+     * Reserves space for the aggregations in the buffer and initializes them to zero.
+     */
+    void initAggregationRecord();
+
+//private:
     /**
      * @brief Write the full tuple to the scan buffer
      *
@@ -367,13 +378,6 @@ private:
     void writeAggregationRecord(const Record& record, const char* data);
 
     /**
-     * @brief Initializes the aggregation tuple
-     *
-     * Reserves space for the aggregations in the buffer and initializes them to zero.
-     */
-    void initAggregationRecord();
-
-    /**
      * @brief Update the aggregation of the field to the scan buffer
      *
      * @param ptr Pointer to the start of the current tuple
@@ -410,23 +414,25 @@ private:
 
 template <typename Fun>
 void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t validFrom, uint64_t validTo, Fun fun) {
-    LOG_ASSERT(mData->queryType() == ScanQueryType::FULL, "Only full record supported");
-
     auto snapshot = mData->snapshot();
     if (snapshot && !snapshot->inReadSet(validFrom, validTo)) {
         return;
     }
 
-    ensureBufferSpace(length + TUPLE_OVERHEAD);
+    if (mData->queryType() == ScanQueryType::AGGREGATION) {
+        fun(mBuffer + 8);
+    } else {
+        ensureBufferSpace(length + TUPLE_OVERHEAD);
 
-    // Write key
-    mBufferWriter.write<uint64_t>(key);
+        // Write key
+        mBufferWriter.write<uint64_t>(key);
 
-    // Write complete tuple
-    fun(mBufferWriter.data());
-    mBufferWriter.advance(length);
+        // Write complete tuple
+        auto bytesWritten = fun(mBufferWriter.data());
+        mBufferWriter.advance(crossbow::align(bytesWritten, 8u));
 
-    ++mTupleCount;
+        ++mTupleCount;
+    }
 }
 
 } //namespace store

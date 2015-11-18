@@ -23,8 +23,9 @@
 
 #pragma once
 
+#include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
-#include <util/QueryBufferScan.hpp>
+#include <util/ScanQuery.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
@@ -44,7 +45,7 @@ class GcScanGarbageCollector;
 class GcScanProcessor;
 class Table;
 
-class GcScan : public QueryBufferScanBase {
+class GcScan : public LLVMRowScanBase {
 public:
     using ScanProcessor = GcScanProcessor;
     using GarbageCollector = GcScanGarbageCollector;
@@ -68,13 +69,14 @@ private:
 /**
  * @brief Scan processor for the Log-Structured Memory approach that performs Garbage Collection as part of its scan
  */
-class GcScanProcessor : public QueryBufferScanProcessorBase {
+class GcScanProcessor : public LLVMRowScanProcessorBase {
 public:
     using LogImpl = Log<UnorderedLogImpl>;
     using PageIterator = LogImpl::PageIterator;
 
     GcScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, const PageIterator& begin,
-            const PageIterator& end, uint64_t minVersion, const char* queryBuffer);
+            const PageIterator& end, uint64_t minVersion, GcScan::RowScanFun rowScanFun,
+            const std::vector<GcScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     /**
      * @brief Scans over all entries in the log

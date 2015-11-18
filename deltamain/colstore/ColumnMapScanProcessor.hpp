@@ -55,7 +55,13 @@ public:
 
     using ColumnScanFun = void (*) (const uint64_t* /* keyData */, const uint64_t* /* validFromData */,
             const uint64_t* /* validToData */, const char* /* recordData */, const char* /* heapData */,
-            uint64_t /* count */, char* /* resultData */);
+            uint64_t /* count */, uint64_t /* startIdx */, uint64_t /* endIdx */, char* /* resultData */);
+
+    using ColumnProjectionFun = uint32_t (*) (const char* /* recordData */, const char* /* heapData */,
+            uint64_t /* count */, uint64_t /* idx */, char* /* destData */);
+
+    using ColumnAggregationFun = uint32_t (*) (const char* /* recordData */, const char* /* heapData */,
+            uint64_t /* count */, uint64_t /* startIdx */, uint64_t /* endIdx */, const char* /* resultData */, char* /* destData */);
 
     ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
 
@@ -64,9 +70,17 @@ public:
 private:
     void prepareColumnScanFunction(const Record& record);
 
+    void prepareColumnProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
+
+    void prepareColumnAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
+
     Table<ColumnMapContext>* mTable;
 
     ColumnScanFun mColumnScanFun;
+
+    std::vector<ColumnProjectionFun> mColumnProjectionFuns;
+
+    std::vector<ColumnAggregationFun> mColumnAggregationFuns;
 
     crossbow::allocator mAllocator;
 };
@@ -79,20 +93,27 @@ public:
     ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
             const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
             const LogIterator& logIter, const LogIterator& logEnd, ColumnMapScan::ColumnScanFun columnScanFun,
-            ColumnMapScan::RowScanFun rowScanFun, uint32_t numConjuncts);
+            const std::vector<ColumnMapScan::ColumnProjectionFun>& columnProjectionFuns,
+            const std::vector<ColumnMapScan::ColumnAggregationFun>& columnAggregationFuns,
+            ColumnMapScan::RowScanFun rowScanFun,
+            const std::vector<ColumnMapScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     void process();
 
 private:
-    void processMainPage(const ColumnMapMainPage* page);
+    void processMainPage(const ColumnMapMainPage* page, uint64_t startIdx, uint64_t endIdx);
 
-    void processInsertRecord(const InsertLogEntry* ptr);
+    void evaluateMainQueries(const ColumnMapMainPage* page, uint64_t startIdx, uint64_t endIdx);
 
     uint64_t processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion, uint64_t& validTo);
 
     const ColumnMapContext& mContext;
 
     ColumnMapScan::ColumnScanFun mColumnScanFun;
+
+    std::vector<ColumnMapScan::ColumnProjectionFun> mColumnProjectionFuns;
+
+    std::vector<ColumnMapScan::ColumnAggregationFun> mColumnAggregationFuns;
 
     const PageList& pages;
     size_t pageIdx;

@@ -23,8 +23,9 @@
 
 #pragma once
 
+#include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
-#include <util/QueryBufferScan.hpp>
+#include <util/ScanQuery.hpp>
 
 #include <crossbow/allocator.hpp>
 
@@ -49,7 +50,7 @@ class Table;
 
 class RowStoreScanProcessor;
 
-class RowStoreScan : public QueryBufferScanBase {
+class RowStoreScan : public LLVMRowScanBase {
 public:
     using ScanProcessor = RowStoreScanProcessor;
 
@@ -63,14 +64,15 @@ private:
     crossbow::allocator mAllocator;
 };
 
-class RowStoreScanProcessor : public QueryBufferScanProcessorBase {
+class RowStoreScanProcessor : public LLVMRowScanProcessorBase {
 public:
     using LogIterator = Log<OrderedLogImpl>::ConstLogIterator;
     using PageList = std::vector<RowStoreMainPage*>;
 
     RowStoreScanProcessor(const RowStoreContext& context, const Record& record, const std::vector<ScanQuery*>& queries,
             const PageList& pages, size_t pageIdx, size_t pageEndIdx, const LogIterator& logIter,
-            const LogIterator& logEnd, const char* queryBuffer);
+            const LogIterator& logEnd, RowStoreScan::RowScanFun rowScanFun,
+            const std::vector<RowStoreScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     void process();
 

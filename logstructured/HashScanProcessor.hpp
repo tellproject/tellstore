@@ -23,7 +23,8 @@
 
 #pragma once
 
-#include <util/QueryBufferScan.hpp>
+#include <util/LLVMScan.hpp>
+#include <util/ScanQuery.hpp>
 
 #include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
@@ -42,7 +43,7 @@ class HashScanGarbageCollector;
 class HashScanProcessor;
 class Table;
 
-class HashScan : public QueryBufferScanBase {
+class HashScan : public LLVMRowScanBase {
 public:
     using ScanProcessor = HashScanProcessor;
     using GarbageCollector = HashScanGarbageCollector;
@@ -60,10 +61,11 @@ private:
 /**
  * @brief Scan processor for the Log-Structured Memory approach scanning over the hash table
  */
-class HashScanProcessor : public QueryBufferScanProcessorBase {
+class HashScanProcessor : public LLVMRowScanProcessorBase {
 public:
     HashScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, size_t start, size_t end,
-            uint64_t minVersion, const char* queryBuffer);
+            uint64_t minVersion, HashScan::RowScanFun rowScanFun,
+            const std::vector<HashScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     /**
      * @brief Scans over all entries in the hash table

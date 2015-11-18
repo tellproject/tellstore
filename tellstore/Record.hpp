@@ -53,29 +53,32 @@ int cmp(NumberType left, NumberType right) {
 }
 
 template <class NumberType>
-void agg(AggregationType type, NumberType* result, NumberType value) {
+void agg(AggregationType type, char* result, NumberType value) {
     static_assert(std::is_floating_point<NumberType>::value ||
             std::is_integral<NumberType>::value, "agg is only supported for number types");
 
     switch (type) {
     case AggregationType::MIN: {
-        if (*result > value) {
-            *result = value;
+        auto res = reinterpret_cast<NumberType*>(result);
+        if (*res > value) {
+            *res = value;
         }
     } break;
 
     case AggregationType::MAX: {
-        if (*result < value) {
-            *result = value;
+        auto res = reinterpret_cast<NumberType*>(result);
+        if (*res < value) {
+            *res = value;
         }
     } break;
 
     case AggregationType::SUM: {
-        *result += value;
+        using SumType = typename std::conditional<std::is_floating_point<NumberType>::value, double, int64_t>::type;
+        *reinterpret_cast<SumType*>(result) += value;
     } break;
 
     case AggregationType::CNT: {
-        *result += 1;
+        *reinterpret_cast<int64_t*>(result) += 1;
     } break;
 
     default: {
@@ -382,26 +385,26 @@ NUMBER_COMPARE:
         }
     }
 
-    void agg(AggregationType type, char* left, const char* right) {
+    void agg(AggregationType type, char* left, const char* right) const {
         switch (mType) {
         case FieldType::SMALLINT: {
-            tell::store::agg(type, reinterpret_cast<int16_t*>(left), *reinterpret_cast<const int16_t*>(right));
+            tell::store::agg(type, left, *reinterpret_cast<const int16_t*>(right));
         } break;
 
         case FieldType::INT: {
-            tell::store::agg(type, reinterpret_cast<int32_t*>(left), *reinterpret_cast<const int32_t*>(right));
+            tell::store::agg(type, left, *reinterpret_cast<const int32_t*>(right));
         } break;
 
         case FieldType::BIGINT: {
-            tell::store::agg(type, reinterpret_cast<int64_t*>(left), *reinterpret_cast<const int64_t*>(right));
+            tell::store::agg(type, left, *reinterpret_cast<const int64_t*>(right));
         } break;
 
         case FieldType::FLOAT: {
-            tell::store::agg(type, reinterpret_cast<float*>(left), *reinterpret_cast<const float*>(right));
+            tell::store::agg(type, left, *reinterpret_cast<const float*>(right));
         } break;
 
         case FieldType::DOUBLE: {
-            tell::store::agg(type, reinterpret_cast<double*>(left), *reinterpret_cast<const double*>(right));
+            tell::store::agg(type, left, *reinterpret_cast<const double*>(right));
         } break;
 
         case FieldType::TEXT:
@@ -415,7 +418,7 @@ NUMBER_COMPARE:
         }
     }
 
-    void initAgg(AggregationType type, char* data) {
+    void initAgg(AggregationType type, char* data) const {
         switch (mType) {
         case FieldType::SMALLINT: {
             tell::store::initAgg(type, reinterpret_cast<int16_t*>(data));
@@ -440,6 +443,32 @@ NUMBER_COMPARE:
         case FieldType::TEXT:
         case FieldType::BLOB: {
             LOG_ASSERT(false, "Can not do this kind of aggregation on non-numeric types");
+        } break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown type");
+        }
+        }
+    }
+
+    FieldType aggType(AggregationType type) const {
+        switch (type) {
+        case AggregationType::MIN:
+        case AggregationType::MAX: {
+            return mType;
+        } break;
+
+        case AggregationType::SUM: {
+            auto isFloat = (mType == FieldType::FLOAT) || (mType == FieldType::DOUBLE);
+            if (isFloat) {
+                return FieldType::DOUBLE;
+            } else {
+                return FieldType::BIGINT;
+            }
+        } break;
+
+        case AggregationType::CNT: {
+            return FieldType::BIGINT;
         } break;
 
         default: {

@@ -136,7 +136,11 @@ void ServerScanQuery::writeLast(std::error_code& ec) {
 ScanQueryProcessor ServerScanQuery::createProcessor() {
     typename decltype(mSendMutex)::scoped_lock _(mSendMutex);
     ++mActive;
-    return ScanQueryProcessor(this);
+    ScanQueryProcessor processor(this);
+    if (queryType() == ScanQueryType::AGGREGATION) {
+        processor.initAggregationRecord();
+    }
+    return processor;
 }
 
 void ServerScanQuery::doWrite(const char* start, const char* end, ScanStatusIndicator status, std::error_code& ec) {

@@ -47,6 +47,7 @@
 #include <llvm/Transforms/Vectorize.h>
 
 #include <array>
+#include <sstream>
 #include <string>
 
 namespace tell {
@@ -60,6 +61,14 @@ static const std::array<std::string, 5> gRowScanParamNames = {{
     "validFrom",
     "validTo",
     "recordData",
+    "destData"
+}};
+
+static const std::string gRowMaterializeFunctionName = "rowMaterialize.";
+
+static const std::array<std::string, 3> gRowMaterializeParamNames = {{
+    "recordData",
+    "length",
     "destData"
 }};
 
@@ -88,6 +97,11 @@ struct QueryState {
 
     uint16_t currentColumn;
 };
+
+uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
+    memcpy(dest, src, length);
+    return length;
+}
 
 } // anonymous namespace
 
@@ -158,12 +172,38 @@ LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> q
           mRowScanFun(nullptr),
           mNumConjuncts(0u) {
     prepareRowScanFunction(record);
+
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        auto q = mQueries[i];
+        switch (q->queryType()) {
+        case ScanQueryType::PROJECTION: {
+            prepareRowProjectionFunction(record, q, i);
+        } break;
+
+        case ScanQueryType::AGGREGATION: {
+            prepareRowAggregationFunction(record, q, i);
+        } break;
+        default:
+            break;
+        }
+    }
 }
 
 void LLVMRowScanBase::finalizeRowScan() {
     LOG_ASSERT(!mRowScanFun, "Scan already finalized");
     finalizeScan();
     mRowScanFun = mCompiler.findFunction<RowScanFun>(gRowScanFunctionName);
+
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        if (mQueries[i]->queryType() == ScanQueryType::FULL) {
+            mRowMaterializeFuns.emplace_back(&memcpyWrapper);
+        } else {
+            std::stringstream ss;
+            ss << gRowMaterializeFunctionName << i;
+            auto fun = mCompiler.findFunction<RowMaterializeFun>(ss.str());
+            mRowMaterializeFuns.emplace_back(fun);
+        }
+    }
 }
 
 void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
@@ -427,10 +467,268 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
     builder.CreateRetVoid();
 }
 
+void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+    using namespace llvm;
+
+    static constexpr size_t recordData = 0;
+    static constexpr size_t destData = 2;
+
+    LLVMBuilder builder(mCompilerContext);
+
+    // Create function
+    auto funcType = FunctionType::get(builder.getInt32Ty(), {
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt32Ty(),   // length
+            builder.getInt8PtrTy()  // destData
+    }, false);
+    auto func = Function::Create(funcType, Function::ExternalLinkage, gRowMaterializeFunctionName + Twine(index),
+            &mCompilerModule);
+
+    // Set arguments names
+    std::array<Value*, 3> args;
+    {
+        decltype(gRowMaterializeParamNames.size()) idx = 0;
+        for (auto iter = func->arg_begin(); idx != gRowMaterializeParamNames.size(); ++iter, ++idx) {
+            iter->setName(gRowMaterializeParamNames[idx]);
+            args[idx] = iter.operator ->();
+        }
+    }
+
+    // Set noalias hints (data pointers are not allowed to overlap)
+    func->setDoesNotAlias(1);
+    func->setOnlyReadsMemory(1);
+    func->setDoesNotAlias(3);
+
+    // Build function
+    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(bb);
+
+    if (query->headerLength() != 0u) {
+        builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
+    }
+
+    auto& destRecord = query->record();
+    Record::id_t destFieldIdx = 0u;
+    auto end = query->projectionEnd();
+    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
+        auto srcFieldIdx = *i;
+        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
+        auto& field = srcFieldMeta.first;
+
+        if (!field.isNotNull()) {
+            auto srcIdx = srcFieldIdx / 8u;
+            auto srcBitIdx = srcFieldIdx % 8u;
+            uint8_t srcMask = (0x1u << srcBitIdx);
+
+            auto srcNullBitmap = (srcIdx == 0
+                    ? args[recordData]
+                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcIdx)));
+            srcNullBitmap = builder.CreateAnd(builder.CreateLoad(srcNullBitmap), builder.getInt8(srcMask));
+
+            auto destIdx = destFieldIdx / 8u;
+            auto destBitIdx = destFieldIdx % 8u;
+
+            if (destBitIdx > srcBitIdx) {
+                srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
+            } else if (destBitIdx < srcBitIdx) {
+                srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
+            }
+
+            auto destNullBitmap = (destIdx == 0
+                    ? args[destData]
+                    : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
+
+            auto res = builder.CreateOr(builder.CreateLoad(destNullBitmap), srcNullBitmap);
+            builder.CreateStore(res, destNullBitmap);
+        }
+
+        auto srcFieldOffset = srcFieldMeta.second;
+        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).second;
+        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+
+        auto fieldAlignment = field.alignOf();
+        auto fieldPtrType = builder.getFieldPtrTy(field.type());
+        auto src = (srcFieldOffset == 0
+                ? args[recordData]
+                : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcFieldOffset)));
+        src = builder.CreateBitCast(src, fieldPtrType);
+
+        auto dest = (destFieldOffset == 0
+                ? args[destData]
+                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        dest = builder.CreateBitCast(dest, fieldPtrType);
+        builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
+    }
+
+    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+}
+
+void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+    using namespace llvm;
+
+    static constexpr size_t recordData = 0;
+    static constexpr size_t destData = 2;
+
+    LLVMBuilder builder(mCompilerContext);
+
+    // Create function
+    auto funcType = FunctionType::get(builder.getInt32Ty(), {
+            builder.getInt8PtrTy(), // recordData
+            builder.getInt32Ty(),   // length
+            builder.getInt8PtrTy()  // destData
+    }, false);
+    auto func = Function::Create(funcType, Function::ExternalLinkage, gRowMaterializeFunctionName + Twine(index),
+            &mCompilerModule);
+
+    // Set arguments names
+    std::array<Value*, 3> args;
+    {
+        decltype(gRowMaterializeParamNames.size()) idx = 0;
+        for (auto iter = func->arg_begin(); idx != gRowMaterializeParamNames.size(); ++iter, ++idx) {
+            iter->setName(gRowMaterializeParamNames[idx]);
+            args[idx] = iter.operator ->();
+        }
+    }
+
+    // Set noalias hints (data pointers are not allowed to overlap)
+    func->setDoesNotAlias(1);
+    func->setOnlyReadsMemory(1);
+    func->setDoesNotAlias(3);
+
+    // Build function
+    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(bb);
+
+    auto& destRecord = query->record();
+    Record::id_t j = 0u;
+    auto end = query->aggregationEnd();
+    for (auto i = query->aggregationBegin(); i != end; ++i, ++j) {
+
+        uint16_t srcFieldIdx;
+        AggregationType aggregationType;
+        std::tie(srcFieldIdx, aggregationType) = *i;
+        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
+        auto& srcField = srcFieldMeta.first;
+        auto srcFieldAlignment = srcField.alignOf();
+        auto srcFieldPtrType = builder.getFieldPtrTy(srcField.type());
+        auto srcFieldOffset = srcFieldMeta.second;
+
+        uint16_t destFieldIdx;
+        destRecord.idOf(crossbow::to_string(j), destFieldIdx);
+        auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
+        auto& destField = destFieldMeta.first;
+        auto destFieldAlignment = destField.alignOf();
+        auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
+        auto destFieldOffset = destFieldMeta.second;
+        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+
+        Value* srcNullBitmap;
+        if (!srcField.isNotNull()) {
+            auto srcIdx = srcFieldIdx / 8u;
+            auto srcBitIdx = srcFieldIdx % 8u;
+            uint8_t srcMask = (0x1u << srcBitIdx);
+
+            srcNullBitmap = (srcIdx == 0
+                    ? args[recordData]
+                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcIdx)));
+            srcNullBitmap = builder.CreateAnd(builder.CreateLoad(srcNullBitmap), builder.getInt8(srcMask));
+
+            auto destIdx = destFieldIdx / 8u;
+            auto destBitIdx = destFieldIdx % 8u;
+
+            if (destBitIdx > srcBitIdx) {
+                srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
+            } else if (destBitIdx < srcBitIdx) {
+                srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
+            }
+
+            auto destNullBitmap = (destIdx == 0
+                    ? args[destData]
+                    : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
+
+            auto res = builder.CreateAnd(builder.CreateLoad(destNullBitmap), builder.CreateNeg(srcNullBitmap));
+            builder.CreateStore(res, destNullBitmap);
+        }
+
+        Value* src = (srcFieldOffset == 0
+                ? args[recordData]
+                : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcFieldOffset)));
+        src = builder.CreateAlignedLoad(builder.CreateBitCast(src, srcFieldPtrType), srcFieldAlignment);
+
+        auto destPtr = (destFieldOffset == 0
+                ? args[destData]
+                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
+        Value* dest = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
+
+        if (!srcField.isNotNull()) {
+            srcNullBitmap = builder.CreateICmp(CmpInst::ICMP_EQ, srcNullBitmap, builder.getInt8(0));
+        }
+
+        auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
+
+        switch (aggregationType) {
+        case AggregationType::MIN: {
+            auto cond = (isFloat
+                    ? builder.CreateFCmp(CmpInst::FCMP_OLT, src, dest)
+                    : builder.CreateICmp(CmpInst::ICMP_SLT, src, dest));
+            if (!srcField.isNotNull()) {
+                cond = builder.CreateAnd(cond, srcNullBitmap);
+            }
+            dest = builder.CreateSelect(cond, src, dest);
+        } break;
+
+        case AggregationType::MAX: {
+            auto cond = (isFloat
+                    ? builder.CreateFCmp(CmpInst::FCMP_OGT, src, dest)
+                    : builder.CreateICmp(CmpInst::ICMP_SGT, src, dest));
+            if (!srcField.isNotNull()) {
+                cond = builder.CreateAnd(cond, srcNullBitmap);
+            }
+            dest = builder.CreateSelect(cond, src, dest);
+        } break;
+
+        case AggregationType::SUM: {
+            if (srcField.type() == FieldType::SMALLINT || srcField.type() == FieldType::INT) {
+                src = builder.CreateSExt(src, builder.getInt64Ty());
+            } else if (srcField.type() == FieldType::FLOAT) {
+                src = builder.CreateFPExt(src, builder.getDoubleTy());
+            }
+
+            auto res = (isFloat
+                    ? builder.CreateFAdd(dest, src)
+                    : builder.CreateAdd(dest, src));
+            if (!srcField.isNotNull()) {
+                dest = builder.CreateSelect(srcNullBitmap, res, dest);
+            } else {
+                dest = res;
+            }
+        } break;
+
+        case AggregationType::CNT: {
+            if (!srcField.isNotNull()) {
+                dest = builder.CreateAdd(dest, builder.CreateZExt(srcNullBitmap, builder.getInt64Ty()));
+            } else {
+                dest = builder.CreateAdd(dest, builder.getInt64(1));
+            }
+        } break;
+
+        default:
+            break;
+        }
+
+        builder.CreateAlignedStore(dest, destPtr, destFieldAlignment);
+    }
+
+    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+}
+
 LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const std::vector<ScanQuery*>& queries,
-        LLVMRowScanBase::RowScanFun rowScanFunc, uint32_t numConjuncts)
+        LLVMRowScanBase::RowScanFun rowScanFunc,
+        const std::vector<LLVMRowScanBase::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts)
         : mRecord(record),
           mRowScanFun(rowScanFunc),
+          mRowMaterializeFuns(rowMaterializeFuns),
           mNumConjuncts(numConjuncts) {
     LOG_ASSERT(mNumConjuncts >= queries.size(), "More queries than conjuncts");
 
@@ -450,7 +748,12 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
         if (mResult[i] == 0) {
             continue;
         }
-        mQueries[i].processRecord(mRecord, key, data, length, validFrom, validTo);
+
+        // TODO Snapshot Descriptor check
+
+        mQueries[i].writeRecord(key, length, validFrom, validTo, [this, i, data, length] (char* dest) {
+            return mRowMaterializeFuns[i](data, length, dest);
+        });
     }
     mResult.clear();
 }

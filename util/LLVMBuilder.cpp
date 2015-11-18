@@ -73,7 +73,30 @@ llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t align
     return result;
 }
 
-llvm::Type* LLVMBuilder::getFieldPtrTy(FieldType field) {
+llvm::Type* LLVMBuilder::getFieldTy(FieldType field) {
+    switch (field) {
+    case FieldType::SMALLINT:
+        return getInt16Ty();
+
+    case FieldType::INT:
+        return getInt32Ty();
+
+    case FieldType::BIGINT:
+        return getInt64Ty();
+
+    case FieldType::FLOAT:
+        return getFloatTy();
+
+    case FieldType::DOUBLE:
+        return getDoubleTy();
+
+    default:
+        LOG_ASSERT(false, "Only fixed size fields are allowed");
+        return nullptr;
+    }
+}
+
+llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field) {
     switch (field) {
     case FieldType::SMALLINT:
         return getInt16PtrTy();

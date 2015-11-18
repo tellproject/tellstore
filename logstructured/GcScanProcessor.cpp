@@ -45,8 +45,9 @@ constexpr size_t gGcThreshold = 50;
 } // anonymous namespace
 
 GcScan::GcScan(Table* table, std::vector<ScanQuery*> queries)
-        : QueryBufferScanBase(std::move(queries)),
+        : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
+    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<GcScanProcessor>> GcScan::startScan(size_t numThreads) {
@@ -72,19 +73,22 @@ std::vector<std::unique_ptr<GcScanProcessor>> GcScan::startScan(size_t numThread
         for (decltype(step) j = 0; j < step && iter != end; ++j, ++iter) {
         }
 
-        result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, iter, version, mQueryBuffer.get()));
+        result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, iter, version, mRowScanFun,
+                mRowMaterializeFuns, mNumConjuncts));
         begin = iter;
     }
 
     // The last scan takes the remaining pages
-    result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, end, version, mQueryBuffer.get()));
+    result.emplace_back(new GcScanProcessor (*mTable, mQueries, begin, end, version, mRowScanFun, mRowMaterializeFuns,
+            mNumConjuncts));
 
     return result;
 }
 
 GcScanProcessor::GcScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, const PageIterator& begin,
-        const PageIterator& end, uint64_t minVersion, const char* queryBuffer)
-        : QueryBufferScanProcessorBase(table.record(), queries, queryBuffer),
+        const PageIterator& end, uint64_t minVersion, GcScan::RowScanFun rowScanFun,
+        const std::vector<GcScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts)
+        : LLVMRowScanProcessorBase(table.record(), queries, rowScanFun, rowMaterializeFuns, numConjuncts),
           mTable(table),
           mMinVersion(minVersion),
           mPagePrev(begin),
