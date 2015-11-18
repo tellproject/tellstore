@@ -240,7 +240,6 @@ void Table<Context>::runGC(uint64_t minVersion) {
 
     auto insBegin = oldPageList->insertEnd;
     auto insEnd = mInsertLog.end();
-    pageList->insertEnd = insEnd;
 
     for (auto insIter = insBegin; insIter != insEnd; ++insIter) {
         // Busy wait until the entry is sealed
@@ -262,6 +261,8 @@ void Table<Context>::runGC(uint64_t minVersion) {
     LOG_ASSERT(insertRes, "Truncating insert log did not succeed");
     __attribute__((unused)) auto updateRes = mUpdateLog.truncateLog(mUpdateLog.begin(), oldPageList->updateEnd);
     LOG_ASSERT(updateRes, "Truncating update log did not succeed");
+
+    pageList->insertEnd = insEnd;
 
     mMainTable.store(mainTableModifier.done());
     crossbow::allocator::destroy(oldMainTable);
