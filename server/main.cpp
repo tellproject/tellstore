@@ -66,12 +66,11 @@ int main(int argc, const char** argv) {
     }
 
     crossbow::infinio::InfinibandLimits infinibandLimits;
-    infinibandLimits.receiveBufferCount = 256;
+    infinibandLimits.receiveBufferCount = 1024;
     infinibandLimits.sendBufferCount = 256;
     infinibandLimits.bufferLength = 128 * 1024;
     infinibandLimits.sendQueueLength = 128;
-    infinibandLimits.completionQueueLength = 512;
-
+    infinibandLimits.completionQueueLength = 2048;
 
     crossbow::logger::logger->config.level = crossbow::logger::logLevelFromString(logLevel);
 

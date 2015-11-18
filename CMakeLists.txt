@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(TellStore)
 
-set(PAGE_SIZE "0x800000" CACHE STRING "The pagesize to use in bytes")
+set(PAGE_SIZE "0x200000" CACHE STRING "The pagesize to use in bytes")
 set(TOTAL_MEMORY "0x80000000" CACHE STRING "The pagesize to use in bytes")
 set(MAX_QUERY_SHARING "1024" CACHE STRING "The maximal number of queries a scan query accepts")
 set(HASHMAP_CAPACITY "0x800000" CACHE STRING "Number of elements to allocate for the hashmap")

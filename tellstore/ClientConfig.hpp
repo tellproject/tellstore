@@ -40,7 +40,7 @@ struct ClientConfig {
     static inline std::vector<crossbow::infinio::Endpoint> parseTellStore(const crossbow::string& host);
 
     ClientConfig()
-            : maxPendingResponses(100ull),
+            : maxPendingResponses(48ull),
               maxBatchSize(16ull),
               numNetworkThreads(2ull) {
         infinibandConfig.receiveBufferCount = 256;
