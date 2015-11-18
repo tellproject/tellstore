@@ -163,8 +163,10 @@ void ServerScanQuery::doWrite(const char* start, const char* end, ScanStatusIndi
     if (mProgressRequest) {
         mProgressRequest = false;
         auto offset = mOffset;
-        mSocket.execute([this, offset] () {
-            mSocket.writeScanProgress(mScanId, false, offset);
+        auto socket = &mSocket;
+        auto scanId = mScanId;
+        mSocket.execute([socket, offset, scanId] () {
+            socket->writeScanProgress(scanId, false, offset);
         });
     }
 }
