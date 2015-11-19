@@ -942,7 +942,7 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint
 
                 while (true) {
                     for (++i; i < endIdx && entries[i].key == key; ++i);
-                    if (i < endIdx) {
+                    if (i >= endIdx) {
                         break;
                     }
 
