@@ -111,6 +111,10 @@ LLVMScanBase::LLVMScanBase()
     mCompilerModule.setTargetTriple(mCompiler.getTargetMachine()->getTargetTriple().getTriple());
 }
 
+LLVMScanBase::~LLVMScanBase() {
+    mCompiler.removeModule(mCompilerHandle);
+}
+
 void LLVMScanBase::finalizeScan() {
     using namespace llvm;
 
@@ -132,16 +136,44 @@ void LLVMScanBase::finalizeScan() {
 #endif
     functionPass.add(createTargetTransformInfoWrapperPass(mCompiler.getTargetMachine()->getTargetIRAnalysis()));
 
-    PassManagerBuilder optimizationBuilder;
-    optimizationBuilder.OptLevel = 3;
-    optimizationBuilder.BBVectorize = true;
-    optimizationBuilder.SLPVectorize = true;
-    optimizationBuilder.LoopVectorize = true;
-    optimizationBuilder.RerollLoops = true;
-    optimizationBuilder.LoadCombine = true;
-    optimizationBuilder.populateFunctionPassManager(functionPass);
-    optimizationBuilder.populateModulePassManager(modulePass);
-    optimizationBuilder.populateLTOPassManager(modulePass);
+    modulePass.add(createTypeBasedAliasAnalysisPass());
+    modulePass.add(createScopedNoAliasAAPass());
+    modulePass.add(createBasicAliasAnalysisPass());
+
+    modulePass.add(createInstructionCombiningPass());
+    modulePass.add(createCFGSimplificationPass());
+    modulePass.add(createReassociatePass());
+    modulePass.add(createLoopRotatePass(-1));
+    modulePass.add(createLICMPass());
+    modulePass.add(createLoopUnswitchPass(false));
+    modulePass.add(createInstructionCombiningPass());
+    modulePass.add(createIndVarSimplifyPass());
+    modulePass.add(createLoopIdiomPass());
+    modulePass.add(createLoopDeletionPass());
+    modulePass.add(createLoopInterchangePass());
+    modulePass.add(createCFGSimplificationPass());
+    modulePass.add(createSimpleLoopUnrollPass());
+    modulePass.add(createMergedLoadStoreMotionPass());
+    modulePass.add(createGVNPass(false));
+    modulePass.add(createMemCpyOptPass());
+    modulePass.add(createSCCPPass());
+    modulePass.add(createLoopIdiomPass());
+
+    modulePass.add(createSLPVectorizerPass());
+
+    modulePass.add(createBBVectorizePass());
+    modulePass.add(createInstructionCombiningPass());
+    modulePass.add(createGVNPass(false));
+
+    modulePass.add(createLoopUnrollPass());
+    modulePass.add(createCFGSimplificationPass());
+    modulePass.add(createInstructionCombiningPass());
+
+    modulePass.add(createLoopRotatePass(-1));
+
+    modulePass.add(createLoopDistributePass());
+
+    modulePass.add(createLoopVectorizePass());
 
     functionPass.doInitialization();
     for (auto& func : mCompilerModule) {
@@ -163,7 +195,7 @@ void LLVMScanBase::finalizeScan() {
 #endif
 
     // Compile the module
-    mCompiler.addModule(&mCompilerModule);
+    mCompilerHandle = mCompiler.addModule(&mCompilerModule);
 }
 
 
@@ -622,7 +654,7 @@ void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, Sca
         auto destFieldOffset = destFieldMeta.second;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
-        Value* srcNullBitmap;
+        Value* srcNullBitmap = nullptr;
         if (!srcField.isNotNull()) {
             auto srcIdx = srcFieldIdx / 8u;
             auto srcBitIdx = srcFieldIdx % 8u;

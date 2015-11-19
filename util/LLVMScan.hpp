@@ -61,7 +61,7 @@ public:
 protected:
     LLVMScanBase();
 
-    ~LLVMScanBase() = default;
+    ~LLVMScanBase();
 
     void finalizeScan();
 
@@ -70,6 +70,8 @@ protected:
     llvm::LLVMContext mCompilerContext;
 
     llvm::Module mCompilerModule;
+
+    LLVMJIT::ModuleHandle mCompilerHandle;
 };
 
 class LLVMRowScanBase : public LLVMScanBase {

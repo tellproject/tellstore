@@ -148,7 +148,11 @@ private:
             std::vector<ScanQuery*> queries;
             std::tie(table, queries) = std::move(q.second);
 
+            auto queryCount = queries.size();
+            auto startTime = std::chrono::steady_clock::now();
             typename Table::Scan scan(table, std::move(queries));
+            auto prepareTime = std::chrono::steady_clock::now();
+
             auto processors = scan.startScan(threadObjs.size());
             for (decltype(threadObjs.size()) i = 0; i < threadObjs.size(); ++i) {
                 // we do not need to synchronize here, the scan threads start as soon as the processor is set
@@ -163,6 +167,13 @@ private:
                 // the master can delete the processors savely (which will be done as soon as the scope is left).
                 while (scan.scanProcessor) std::this_thread::yield();
             }
+            auto endTime = std::chrono::steady_clock::now();
+
+            auto prepareDuration = std::chrono::duration_cast<std::chrono::milliseconds>(prepareTime - startTime);
+            auto processDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - prepareTime);
+            auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+            LOG_INFO("Scan took %1%ms for %2% queries [prepare = %3%, process = %4%]",
+                    totalDuration.count(), queryCount, prepareDuration.count(), processDuration.count());
         }
         return true;
     }
