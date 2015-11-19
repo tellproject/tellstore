@@ -145,14 +145,19 @@ public:
         crossbow::allocator __;
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
-        auto res = mNames.insert(std::make_pair(name, idx));
-        if (!res.second) {
-            return false;
+        {
+            auto res = mNames.insert(std::make_pair(name, idx));
+            if (!res.second) {
+                return false;
+            }
         }
 
-        auto ptr = crossbow::allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
-        LOG_ASSERT(ptr, "Unable to allocate table");
-        mTables[idx] = ptr;
+        {
+            auto ptr = crossbow::allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
+            LOG_ASSERT(ptr, "Unable to allocate table");
+            __attribute__((unused)) auto res = mTables.insert(std::make_pair(idx, ptr));
+            LOG_ASSERT(res.second, "Insert with unique id failed");
+        }
         return true;
     }
 
