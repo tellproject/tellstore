@@ -306,6 +306,8 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
         mNumConjuncts += state.numConjunct;
     }
 
+    std::vector<uint8_t> conjunctsGenerated(mNumConjuncts, false);
+
     auto currentColumn = std::numeric_limits<uint16_t>::max();
     decltype(queryBuffers.size()) nextQueryIdx = 0;
     while (true) {
@@ -456,8 +458,12 @@ void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
                 auto conjunctElement = builder.CreateInBoundsGEP(args[destData], builder.getInt64(conjunctPosition));
 
                 // -> res[i] = res[i] | comp;
-                auto res = builder.CreateOr(builder.CreateLoad(conjunctElement), comp);
-                builder.CreateStore(res, conjunctElement);
+                if (conjunctsGenerated[conjunctPosition]) {
+                    comp = builder.CreateOr(builder.CreateLoad(conjunctElement), comp);
+                } else {
+                    conjunctsGenerated[conjunctPosition] = true;
+                }
+                builder.CreateStore(comp, conjunctElement);
             }
             if (queryReader.exhausted()) {
                 state.currentColumn = std::numeric_limits<uint16_t>::max();

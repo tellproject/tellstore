@@ -258,6 +258,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     }
     LOG_ASSERT(mNumConjuncts == numConjuncts, "Number of conjuncts differ from row scan function");
 
+    std::vector<uint8_t> conjunctsGenerated(mNumConjuncts, false);
+
     auto currentColumn = std::numeric_limits<uint16_t>::max();
     decltype(queryBuffers.size()) nextQueryIdx = 0;
     while (true) {
@@ -390,8 +392,12 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 auto conjunctElement = builder.CreateInBoundsGEP(args[resultData], conjunctIndex);
 
                 // -> res[i] = res[i] | comp;
-                auto res = builder.CreateOr(builder.CreateLoad(conjunctElement), compResult);
-                builder.CreateStore(res, conjunctElement);
+                if (conjunctsGenerated[conjunctPosition]) {
+                    compResult = builder.CreateOr(builder.CreateLoad(conjunctElement), compResult);
+                } else {
+                    conjunctsGenerated[conjunctPosition] = true;
+                }
+                builder.CreateStore(compResult, conjunctElement);
             }
 
             if (queryReader.exhausted()) {
