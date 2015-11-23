@@ -778,7 +778,9 @@ LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const s
 
 void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom, uint64_t validTo, const char* data,
         uint32_t length) {
-    mResult.resize(mNumConjuncts, 0);
+    if (mResult.size() < mNumConjuncts) {
+        mResult.resize(mNumConjuncts, 0u);
+    }
     mRowScanFun(key, validFrom, validTo, data, &mResult.front());
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
@@ -793,7 +795,6 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
             return mRowMaterializeFuns[i](data, length, dest);
         });
     }
-    mResult.clear();
 }
 
 } // namespace store

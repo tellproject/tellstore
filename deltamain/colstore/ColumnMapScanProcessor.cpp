@@ -913,7 +913,10 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint
     mKeyData.resize(page->count, 0u);
     mValidFromData.resize(page->count, 0u);
     mValidToData.resize(page->count, 0u);
-    mResult.resize(mNumConjuncts * page->count, 0u);
+    auto resultSize = mNumConjuncts * page->count;
+    if (mResult.size() < resultSize) {
+        mResult.resize(resultSize, 0u);
+    }
 
     auto entries = page->entryData();
 
@@ -976,7 +979,6 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint
                 mKeyData.resize(page->count, 0u);
                 mValidFromData.resize(page->count, 0u);
                 mValidToData.resize(page->count, 0u);
-                mResult.resize(mNumConjuncts * page->count, 0u);
 
                 startIdx = i;
                 continue;
@@ -1059,7 +1061,6 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
     mKeyData.clear();
     mValidFromData.clear();
     mValidToData.clear();
-    mResult.clear();
 }
 
 uint64_t ColumnMapScanProcessor::processUpdateRecord(const UpdateLogEntry* ptr, uint64_t baseVersion,
