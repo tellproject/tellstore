@@ -234,8 +234,6 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         builder.CreateRetVoid();
         return;
     }
-    auto loopCounterAlloc = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "i");
-
     std::vector<QueryState> queryBuffers;
     queryBuffers.reserve(mQueries.size());
 
@@ -284,15 +282,14 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], fieldOffset)));
         src = builder.CreateBitCast(src, builder.getFieldPtrTy(field.type()));
 
-        // -> auto i = startIdx;
-        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
-
         // Loop generation
         auto loopBB = BasicBlock::Create(mCompilerContext, "col." + Twine(currentColumn), func);
         builder.CreateBr(loopBB);
         builder.SetInsertPoint(loopBB);
 
-        auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        loopCounter->addIncoming(args[startIdx], bb);
 
         auto fieldValue = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(src, loopCounter), fieldAlignment);
 
@@ -406,10 +403,10 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
 
         // -> i += 1;
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+        loopCounter->addIncoming(nextVar, loopBB);
 
-        // i < endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+        // i != endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endcol." + Twine(currentColumn), func);
@@ -420,14 +417,14 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     }
 
     {
-        // -> auto i = startIdx;
-        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
-
+        auto previousBlock = builder.GetInsertBlock();
         auto loopBB = BasicBlock::Create(mCompilerContext, "check", func);
         builder.CreateBr(loopBB);
         builder.SetInsertPoint(loopBB);
 
-        auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        loopCounter->addIncoming(args[startIdx], previousBlock);
 
         for (decltype(queryBuffers.size()) i = 0; i < queryBuffers.size(); ++i) {
             auto& state = queryBuffers.at(i);
@@ -457,12 +454,13 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             }
             builder.CreateStore(res, builder.CreateInBoundsGEP(args[resultData], conjunctIndex));
         }
+
         // -> i += 1;
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+        loopCounter->addIncoming(nextVar, loopBB);
 
-        // i < endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+        // i != endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endcheck", func);
@@ -479,14 +477,14 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         for (decltype(state.numConjunct) j = state.numConjunct - 1u; j > 0u; --j) {
             auto conjunctPosition = state.conjunctOffset + j - 1u;
 
-            // -> auto i = startIdx;
-            builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
-
+            auto previousBlock = builder.GetInsertBlock();
             auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(conjunctPosition), func);
             builder.CreateBr(loopBB);
             builder.SetInsertPoint(loopBB);
 
-            auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+            // -> auto i = startIdx;
+            auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+            loopCounter->addIncoming(args[startIdx], previousBlock);
 
             auto conjunctAIndex = builder.CreateAdd(
                     builder.createConstMul(args[count], conjunctPosition),
@@ -501,11 +499,11 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             builder.CreateStore(res, conjunctAElement);
 
             // -> i += 1;
-            auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1u));
-            builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+            auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
+            loopCounter->addIncoming(nextVar, loopBB);
 
-            // i < endIdx
-            auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+            // i != endIdx
+            auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
 
             // Create the loop
             auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(conjunctPosition), func);
@@ -513,14 +511,14 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
             builder.SetInsertPoint(afterBB);
         }
 
-        // -> auto i = startIdx;
-        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
-
+        auto previousBlock = builder.GetInsertBlock();
         auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(i), func);
         builder.CreateBr(loopBB);
         builder.SetInsertPoint(loopBB);
 
-        auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        loopCounter->addIncoming(args[startIdx], previousBlock);
 
         Value* conjunctAIndex = loopCounter;
         if (i > 0) {
@@ -537,11 +535,11 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         builder.CreateStore(res, conjunctAElement);
 
         // -> i += 1;
-        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1u));
-        builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
+        loopCounter->addIncoming(nextVar, loopBB);
 
-        // i < endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+        // i != endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(i), func);
@@ -709,8 +707,6 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
     auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
     builder.SetInsertPoint(bb);
 
-    auto loopCounterAlloc = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "i");
-
     auto& destRecord = query->record();
     Record::id_t j = 0u;
     auto end = query->aggregationEnd();
@@ -745,15 +741,14 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
                 : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
         destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
 
-        // -> auto i = startIdx;
-        builder.CreateAlignedStore(args[startIdx], loopCounterAlloc, 8u);
-
         // Loop generation
         auto loopBB = BasicBlock::Create(mCompilerContext, "agg." + Twine(destFieldIdx), func);
         builder.CreateBr(loopBB);
         builder.SetInsertPoint(loopBB);
 
-        auto loopCounter = builder.CreateAlignedLoad(loopCounterAlloc, 8u);
+        // -> auto i = startIdx;
+        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        loopCounter->addIncoming(args[startIdx], bb);
 
         Value* src = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(srcPtr, loopCounter), srcFieldAlignment);
 
@@ -805,10 +800,10 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
 
         // -> i += 1;
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        builder.CreateAlignedStore(nextVar, loopCounterAlloc, 8u);
+        loopCounter->addIncoming(nextVar, loopBB);
 
-        // i < endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_ULT, nextVar, args[endIdx]);
+        // i != endIdx
+        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
 
         // Create the loop
         auto afterBB = BasicBlock::Create(mCompilerContext, "endagg." + Twine(destFieldIdx), func);
