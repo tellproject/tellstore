@@ -41,6 +41,14 @@ public:
             : llvm::IRBuilder<>(context) {
     }
 
+    llvm::Type* getInt8VectorTy(uint64_t vectorSize) {
+        return llvm::VectorType::get(getInt8Ty(), vectorSize);
+    }
+
+    llvm::PointerType* getInt8VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
+        return getInt8VectorTy(vectorSize)->getPointerTo(AddrSpace);
+    }
+
     llvm::PointerType* getInt16PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt16PtrTy(Context, AddrSpace);
     }
@@ -51,6 +59,14 @@ public:
 
     llvm::PointerType* getInt64PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt64PtrTy(Context, AddrSpace);
+    }
+
+    llvm::PointerType* getInt64VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
+        return llvm::VectorType::get(getInt64Ty(), vectorSize)->getPointerTo(AddrSpace);
+    }
+
+    llvm::Constant* getInt64Vector(uint64_t vectorSize, uint64_t C) {
+        return llvm::ConstantVector::getSplat(vectorSize, getInt64(C));
     }
 
     llvm::Type* getFloatTy() {
@@ -79,7 +95,11 @@ public:
 
     llvm::Type* getFieldTy(FieldType field);
 
-    llvm::PointerType* getFieldPtrTy(FieldType field);
+    llvm::PointerType* getFieldPtrTy(FieldType field, unsigned AddrSpace = 0);
+
+    llvm::PointerType* getFieldVectorPtrTy(FieldType field, uint64_t vectorSize, unsigned AddrSpace = 0) {
+        return llvm::VectorType::get(getFieldTy(field), vectorSize)->getPointerTo(AddrSpace);
+    }
 
     /**
      * @brief Create an optimized multiplication operation with a constant
@@ -89,7 +109,7 @@ public:
     /**
      * @brief Create an optimized modulo operation with a constant
      */
-    llvm::Value* createConstMod(llvm::Value* lhs, uint64_t mod);
+    llvm::Value* createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize = 0);
 
     /**
      * @brief Create an pointer alignment operation with a constant

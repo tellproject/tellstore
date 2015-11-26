@@ -203,6 +203,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     }, false);
     auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnScanFunctionName, &mCompilerModule);
 
+    auto targetInfo = mCompiler.getTargetMachine()->getTargetIRAnalysis().run(*func);
+
     // Set arguments names
     std::array<Value*, 9> args;
     {
@@ -227,8 +229,8 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
     func->setDoesNotAlias(9);
 
     // Build function
-    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(bb);
+    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(entryBlock);
 
     if (mQueries.size() == 0) {
         builder.CreateRetVoid();
@@ -284,16 +286,36 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], fieldOffset)));
         src = builder.CreateBitCast(src, builder.getFieldPtrTy(field.type()));
 
-        // Loop generation
-        auto loopBB = BasicBlock::Create(mCompilerContext, "col." + Twine(currentColumn), func);
-        builder.CreateBr(loopBB);
-        builder.SetInsertPoint(loopBB);
+        auto vectorSize = static_cast<uint64_t>(targetInfo.getRegisterBitWidth(true)) / (field.staticSize() * 8);
 
-        // -> auto i = startIdx;
-        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-        loopCounter->addIncoming(args[startIdx], bb);
+        auto vectorCount = builder.CreateSub(args[endIdx], args[startIdx]);
+        vectorCount = builder.CreateAnd(vectorCount, builder.getInt64(-vectorSize));
+        auto vectorEndIdx = builder.CreateAdd(args[startIdx], vectorCount);
 
-        auto fieldValue = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(src, loopCounter), fieldAlignment);
+        auto previousBlock = builder.GetInsertBlock();
+        auto vectorBodyBlock = BasicBlock::Create(mCompilerContext, "col.vectorbody." + Twine(currentColumn), func);
+        auto vectorEndBlock = BasicBlock::Create(mCompilerContext, "col.vectorend." + Twine(currentColumn), func);
+        auto scalarBodyBlock = BasicBlock::Create(mCompilerContext, "col.scalarbody." + Twine(currentColumn), func);
+        auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "col.scalarend." + Twine(currentColumn), func);
+        builder.CreateCondBr(builder.CreateICmp(CmpInst::ICMP_NE, vectorCount, builder.getInt64(0)),
+                vectorBodyBlock, vectorEndBlock);
+
+        // Scalar -> auto i = startIdx;
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        scalarLoopCounter->addIncoming(vectorEndIdx, vectorEndBlock);
+
+        auto scalarSrc = builder.CreateInBoundsGEP(src, scalarLoopCounter);
+        auto scalarFieldValue = builder.CreateAlignedLoad(scalarSrc, fieldAlignment);
+
+        // Vector -> auto i = startIdx;
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        vectorLoopCounter->addIncoming(args[startIdx], previousBlock);
+
+        auto vectorSrc = builder.CreateInBoundsGEP(src, vectorLoopCounter);
+        vectorSrc = builder.CreateBitCast(vectorSrc, builder.getFieldVectorPtrTy(field.type(), vectorSize));
+        auto vectorFieldValue = builder.CreateAlignedLoad(vectorSrc, fieldAlignment);
 
         for (decltype(queryBuffers.size()) i = nextQueryIdx; i < queryBuffers.size(); ++i) {
             auto& state = queryBuffers.at(i);
@@ -310,7 +332,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 auto conjunctPosition = state.conjunctOffset + queryReader.read<uint8_t>();
 
                 bool isFloat;
-                Value* compareValue;
+                Constant* compareValue;
                 switch (field.type()) {
                 case FieldType::SMALLINT: {
                     isFloat = false;
@@ -381,23 +403,48 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 } break;
                 }
 
-                auto comp = (isFloat
-                        ? builder.CreateFCmp(predicate, fieldValue, compareValue)
-                        : builder.CreateICmp(predicate, fieldValue, compareValue));
-                auto compResult = builder.CreateZExt(comp, builder.getInt8Ty());
+                // Scalar -> Compare
+                builder.SetInsertPoint(scalarBodyBlock);
+                auto scalarComp = (isFloat
+                        ? builder.CreateFCmp(predicate, scalarFieldValue, compareValue)
+                        : builder.CreateICmp(predicate, scalarFieldValue, compareValue));
+                scalarComp = builder.CreateZExt(scalarComp, builder.getInt8Ty());
 
-                auto conjunctIndex = builder.CreateAdd(
+                auto scalarConjunctIndex = builder.CreateAdd(
                         builder.createConstMul(args[count], conjunctPosition),
-                        loopCounter);
-                auto conjunctElement = builder.CreateInBoundsGEP(args[resultData], conjunctIndex);
+                        scalarLoopCounter);
+                auto scalarConjunctElement = builder.CreateInBoundsGEP(args[resultData], scalarConjunctIndex);
+
+                // Vector -> Compare
+                builder.SetInsertPoint(vectorBodyBlock);
+                auto vectorCompareValue = ConstantVector::getSplat(vectorSize, compareValue);
+                auto vectorComp = (isFloat
+                        ? builder.CreateFCmp(predicate, vectorFieldValue, vectorCompareValue)
+                        : builder.CreateICmp(predicate, vectorFieldValue, vectorCompareValue));
+                vectorComp = builder.CreateZExt(vectorComp, VectorType::get(builder.getInt8Ty(), vectorSize));
+
+                auto vectorConjunctIndex = builder.CreateAdd(
+                        builder.createConstMul(args[count], conjunctPosition),
+                        vectorLoopCounter);
+                auto vectorConjunctElement = builder.CreateInBoundsGEP(args[resultData], vectorConjunctIndex);
+                vectorConjunctElement = builder.CreateBitCast(vectorConjunctElement,
+                        builder.getInt8VectorPtrTy(vectorSize));
 
                 // -> res[i] = res[i] | comp;
                 if (conjunctsGenerated[conjunctPosition]) {
-                    compResult = builder.CreateOr(builder.CreateLoad(conjunctElement), compResult);
+                    builder.SetInsertPoint(scalarBodyBlock);
+                    scalarComp = builder.CreateOr(builder.CreateAlignedLoad(scalarConjunctElement, 1u), scalarComp);
+
+                    builder.SetInsertPoint(vectorBodyBlock);
+                    vectorComp = builder.CreateOr(builder.CreateAlignedLoad(vectorConjunctElement, 1u), vectorComp);
                 } else {
                     conjunctsGenerated[conjunctPosition] = true;
                 }
-                builder.CreateStore(compResult, conjunctElement);
+                builder.SetInsertPoint(scalarBodyBlock);
+                builder.CreateAlignedStore(scalarComp, scalarConjunctElement, 1u);
+
+                builder.SetInsertPoint(vectorBodyBlock);
+                builder.CreateAlignedStore(vectorComp, vectorConjunctElement, 1u);
             }
 
             if (queryReader.exhausted()) {
@@ -408,71 +455,161 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         }
 
         // -> i += 1;
-        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        loopCounter->addIncoming(nextVar, loopBB);
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarNextVar = builder.CreateAdd(scalarLoopCounter, builder.getInt64(1));
+        scalarLoopCounter->addIncoming(scalarNextVar, scalarBodyBlock);
+
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorNextVar = builder.CreateAdd(vectorLoopCounter, builder.getInt64(vectorSize));
+        vectorLoopCounter->addIncoming(vectorNextVar, vectorBodyBlock);
 
         // i != endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
+        builder.SetInsertPoint(scalarBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, scalarNextVar, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
 
-        // Create the loop
-        auto afterBB = BasicBlock::Create(mCompilerContext, "endcol." + Twine(currentColumn), func);
-        builder.CreateCondBr(endCond, loopBB, afterBB);
-        builder.SetInsertPoint(afterBB);
+        builder.SetInsertPoint(vectorBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorNextVar, vectorEndIdx),
+                vectorBodyBlock, vectorEndBlock);
+
+        builder.SetInsertPoint(vectorEndBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorEndIdx, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
+
+        builder.SetInsertPoint(scalarEndBlock);
 
         currentColumn = std::numeric_limits<uint16_t>::max();
     }
 
     {
         auto previousBlock = builder.GetInsertBlock();
-        auto loopBB = BasicBlock::Create(mCompilerContext, "check", func);
-        builder.CreateBr(loopBB);
-        builder.SetInsertPoint(loopBB);
+
+        auto vectorSize = static_cast<uint64_t>(targetInfo.getRegisterBitWidth(true)) / (sizeof(uint64_t) * 8);
+
+        auto vectorCount = builder.CreateSub(args[endIdx], args[startIdx]);
+        vectorCount = builder.CreateAnd(vectorCount, builder.getInt64(-vectorSize));
+        auto vectorEndIdx = builder.CreateAdd(args[startIdx], vectorCount);
+
+        auto vectorBodyBlock = BasicBlock::Create(mCompilerContext, "check.vectorbody", func);
+        auto vectorEndBlock = BasicBlock::Create(mCompilerContext, "check.vectorend", func);
+        auto scalarBodyBlock = BasicBlock::Create(mCompilerContext, "check.scalarbody", func);
+        auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "check.scalarend", func);
+        builder.CreateCondBr(builder.CreateICmp(CmpInst::ICMP_NE, vectorCount, builder.getInt64(0)),
+                vectorBodyBlock, vectorEndBlock);
 
         // -> auto i = startIdx;
-        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-        loopCounter->addIncoming(args[startIdx], previousBlock);
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        scalarLoopCounter->addIncoming(vectorEndIdx, vectorEndBlock);
+
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        vectorLoopCounter->addIncoming(args[startIdx], previousBlock);
 
         for (decltype(queryBuffers.size()) i = 0; i < queryBuffers.size(); ++i) {
             auto& state = queryBuffers.at(i);
             auto snapshot = state.snapshot;
 
-            // Evaluate validFrom <= version && validTo > baseVersion
-            auto validFrom = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(args[validFromData], loopCounter), 8u);
-            auto validTo = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(args[validToData], loopCounter), 8u);
+            // Scalar -> validFrom <= version && validTo > baseVersion
+            builder.SetInsertPoint(scalarBodyBlock);
+            auto scalarValidFrom = builder.CreateInBoundsGEP(args[validFromData], scalarLoopCounter);
+            scalarValidFrom = builder.CreateAlignedLoad(scalarValidFrom, 8u);
+            scalarValidFrom = builder.CreateICmp(CmpInst::ICMP_ULE, scalarValidFrom,
+                    builder.getInt64(snapshot->version()));
 
-            auto res = builder.CreateAnd(
-                    builder.CreateICmp(CmpInst::ICMP_ULE, validFrom, builder.getInt64(snapshot->version())),
-                    builder.CreateICmp(CmpInst::ICMP_UGT, validTo, builder.getInt64(snapshot->baseVersion())));
+            auto scalarValidTo = builder.CreateInBoundsGEP(args[validToData], scalarLoopCounter);
+            scalarValidTo = builder.CreateAlignedLoad(scalarValidTo, 8u);
+            scalarValidTo = builder.CreateICmp(CmpInst::ICMP_UGT, scalarValidTo,
+                    builder.getInt64(snapshot->baseVersion()));
+
+            auto scalarResult = builder.CreateAnd(scalarValidFrom, scalarValidTo);
 
             // Evaluate partitioning key % partitionModulo == partitionNumber
             if (state.partitionModulo != 0u) {
-                auto key = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(args[keyData], loopCounter), 8u);
-                auto compResult = builder.CreateICmp(CmpInst::ICMP_EQ,
-                        builder.createConstMod(key, state.partitionModulo),
-                        builder.getInt64(state.partitionNumber));
-                res = builder.CreateAnd(res, compResult);
-            }
-            res = builder.CreateZExt(res, builder.getInt8Ty());
+                auto scalarKey = builder.CreateInBoundsGEP(args[keyData], scalarLoopCounter);
+                scalarKey = builder.CreateAlignedLoad(scalarKey, 8u);
 
-            Value* conjunctIndex = loopCounter;
-            if (i > 0) {
-                conjunctIndex = builder.CreateAdd(conjunctIndex, builder.createConstMul(args[count], i));
+                auto scalarComp = builder.CreateICmp(CmpInst::ICMP_EQ,
+                        builder.createConstMod(scalarKey, state.partitionModulo),
+                        builder.getInt64(state.partitionNumber));
+                scalarResult = builder.CreateAnd(scalarResult, scalarComp);
             }
-            builder.CreateStore(res, builder.CreateInBoundsGEP(args[resultData], conjunctIndex));
+            scalarResult = builder.CreateZExt(scalarResult, builder.getInt8Ty());
+
+            Value* scalarConjunct = scalarLoopCounter;
+            if (i > 0) {
+                scalarConjunct = builder.CreateAdd(scalarConjunct, builder.createConstMul(args[count], i));
+            }
+            scalarConjunct = builder.CreateInBoundsGEP(args[resultData], scalarConjunct);
+            builder.CreateAlignedStore(scalarResult, scalarConjunct, 1u);
+
+            // Vector -> validFrom <= version && validTo > baseVersion
+            builder.SetInsertPoint(vectorBodyBlock);
+            auto vectorValidFrom = builder.CreateInBoundsGEP(args[validFromData], vectorLoopCounter);
+            vectorValidFrom = builder.CreateBitCast(vectorValidFrom, builder.getInt64VectorPtrTy(vectorSize));
+            vectorValidFrom = builder.CreateAlignedLoad(vectorValidFrom, 8u);
+            vectorValidFrom = builder.CreateICmp(CmpInst::ICMP_ULE, vectorValidFrom,
+                    builder.getInt64Vector(vectorSize, snapshot->version()));
+
+            auto vectorValidTo = builder.CreateInBoundsGEP(args[validToData], vectorLoopCounter);
+            vectorValidTo = builder.CreateBitCast(vectorValidTo, builder.getInt64VectorPtrTy(vectorSize));
+            vectorValidTo = builder.CreateAlignedLoad(vectorValidTo, 8u);
+            vectorValidTo = builder.CreateICmp(CmpInst::ICMP_UGT, vectorValidTo,
+                    builder.getInt64Vector(vectorSize, snapshot->baseVersion()));
+
+            auto vectorResult = builder.CreateAnd(vectorValidFrom, vectorValidTo);
+
+            // Evaluate partitioning key % partitionModulo == partitionNumber
+            if (state.partitionModulo != 0u) {
+                auto vectorKey = builder.CreateInBoundsGEP(args[keyData], vectorLoopCounter);
+                vectorKey = builder.CreateBitCast(vectorKey, builder.getInt64VectorPtrTy(vectorSize));
+                vectorKey = builder.CreateAlignedLoad(vectorKey, 8u);
+                auto vectorComp = builder.CreateICmp(CmpInst::ICMP_EQ,
+                        builder.createConstMod(vectorKey, state.partitionModulo, vectorSize),
+                        builder.getInt64Vector(vectorSize, state.partitionNumber));
+                vectorResult = builder.CreateAnd(vectorResult, vectorComp);
+            }
+            vectorResult = builder.CreateZExt(vectorResult, builder.getInt8VectorTy(vectorSize));
+
+            Value* vectorConjunct = vectorLoopCounter;
+            if (i > 0) {
+                vectorConjunct = builder.CreateAdd(vectorConjunct, builder.createConstMul(args[count], i));
+            }
+            vectorConjunct = builder.CreateInBoundsGEP(args[resultData], vectorConjunct);
+            vectorConjunct = builder.CreateBitCast(vectorConjunct, builder.getInt8VectorPtrTy(vectorSize));
+            builder.CreateAlignedStore(vectorResult, vectorConjunct, 1u);
         }
 
         // -> i += 1;
-        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        loopCounter->addIncoming(nextVar, loopBB);
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarNextVar = builder.CreateAdd(scalarLoopCounter, builder.getInt64(1));
+        scalarLoopCounter->addIncoming(scalarNextVar, scalarBodyBlock);
+
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorNextVar = builder.CreateAdd(vectorLoopCounter, builder.getInt64(vectorSize));
+        vectorLoopCounter->addIncoming(vectorNextVar, vectorBodyBlock);
 
         // i != endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
+        builder.SetInsertPoint(scalarBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, scalarNextVar, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
 
-        // Create the loop
-        auto afterBB = BasicBlock::Create(mCompilerContext, "endcheck", func);
-        builder.CreateCondBr(endCond, loopBB, afterBB);
-        builder.SetInsertPoint(afterBB);
+        builder.SetInsertPoint(vectorBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorNextVar, vectorEndIdx),
+                vectorBodyBlock, vectorEndBlock);
+
+        builder.SetInsertPoint(vectorEndBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorEndIdx, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
+
+        builder.SetInsertPoint(scalarEndBlock);
     }
+
+    auto vectorSize = static_cast<uint64_t>(targetInfo.getRegisterBitWidth(true)) / 8;
+
+    auto vectorCount = builder.CreateSub(args[endIdx], args[startIdx]);
+    vectorCount = builder.CreateAnd(vectorCount, builder.getInt64(-vectorSize));
+    auto vectorEndIdx = builder.CreateAdd(args[startIdx], vectorCount);
 
     for (decltype(queryBuffers.size()) i = 0; i < queryBuffers.size(); ++i) {
         auto& state = queryBuffers.at(i);
@@ -481,76 +618,164 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         }
 
         for (decltype(state.numConjunct) j = state.numConjunct - 1u; j > 0u; --j) {
-            auto conjunctPosition = state.conjunctOffset + j - 1u;
+            auto conjunctPos = state.conjunctOffset + j - 1u;
 
             auto previousBlock = builder.GetInsertBlock();
-            auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(conjunctPosition), func);
-            builder.CreateBr(loopBB);
-            builder.SetInsertPoint(loopBB);
+            auto vectorBodyBlock = BasicBlock::Create(mCompilerContext, "conj.vectorbody." + Twine(conjunctPos), func);
+            auto vectorEndBlock = BasicBlock::Create(mCompilerContext, "conj.vectorend." + Twine(conjunctPos), func);
+            auto scalarBodyBlock = BasicBlock::Create(mCompilerContext, "conj.scalarbody." + Twine(conjunctPos), func);
+            auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "conj.scalarend." + Twine(conjunctPos), func);
+            builder.CreateCondBr(builder.CreateICmp(CmpInst::ICMP_NE, vectorCount, builder.getInt64(0)),
+                    vectorBodyBlock, vectorEndBlock);
 
             // -> auto i = startIdx;
-            auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-            loopCounter->addIncoming(args[startIdx], previousBlock);
+            builder.SetInsertPoint(scalarBodyBlock);
+            auto scalarLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+            scalarLoopCounter->addIncoming(vectorEndIdx, vectorEndBlock);
 
-            auto conjunctAIndex = builder.CreateAdd(
-                    builder.createConstMul(args[count], conjunctPosition),
-                    loopCounter);
-            auto conjunctAElement = builder.CreateInBoundsGEP(args[resultData], conjunctAIndex);
-            auto conjunctBIndex = builder.CreateAdd(
-                    builder.createConstMul(args[count], conjunctPosition + 1),
-                    loopCounter);
-            auto conjunctBElement = builder.CreateInBoundsGEP(args[resultData], conjunctBIndex);
+            builder.SetInsertPoint(vectorBodyBlock);
+            auto vectorLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+            vectorLoopCounter->addIncoming(args[startIdx], previousBlock);
 
-            auto res = builder.CreateAnd(builder.CreateLoad(conjunctAElement), builder.CreateLoad(conjunctBElement));
-            builder.CreateStore(res, conjunctAElement);
+            // Scalar
+            builder.SetInsertPoint(scalarBodyBlock);
+            auto scalarConjunctA = builder.CreateAdd(
+                    builder.createConstMul(args[count], conjunctPos),
+                    scalarLoopCounter);
+            scalarConjunctA = builder.CreateInBoundsGEP(args[resultData], scalarConjunctA);
+            auto scalarConjunctAValue = builder.CreateAlignedLoad(scalarConjunctA, 1u);
+
+            auto scalarConjunctB = builder.CreateAdd(
+                    builder.createConstMul(args[count], conjunctPos + 1),
+                    scalarLoopCounter);
+            scalarConjunctB = builder.CreateInBoundsGEP(args[resultData], scalarConjunctB);
+            auto scalarConjunctBValue = builder.CreateAlignedLoad(scalarConjunctB, 1u);
+
+            auto scalarResult = builder.CreateAnd(scalarConjunctAValue, scalarConjunctBValue);
+            builder.CreateAlignedStore(scalarResult, scalarConjunctA, 1u);
+
+            // Vector
+            builder.SetInsertPoint(vectorBodyBlock);
+            auto vectorConjunctA = builder.CreateAdd(
+                    builder.createConstMul(args[count], conjunctPos),
+                    vectorLoopCounter);
+            vectorConjunctA = builder.CreateInBoundsGEP(args[resultData], vectorConjunctA);
+            vectorConjunctA = builder.CreateBitCast(vectorConjunctA, builder.getInt8VectorPtrTy(vectorSize));
+            auto vectorConjunctAValue = builder.CreateAlignedLoad(vectorConjunctA, 1u);
+
+            auto vectorConjunctB = builder.CreateAdd(
+                    builder.createConstMul(args[count], conjunctPos + 1),
+                    vectorLoopCounter);
+            vectorConjunctB = builder.CreateInBoundsGEP(args[resultData], vectorConjunctB);
+            vectorConjunctB = builder.CreateBitCast(vectorConjunctB, builder.getInt8VectorPtrTy(vectorSize));
+            auto vectorConjunctBValue = builder.CreateAlignedLoad(vectorConjunctB, 1u);
+
+            auto vectorResult = builder.CreateAnd(vectorConjunctAValue, vectorConjunctBValue);
+            builder.CreateAlignedStore(vectorResult, vectorConjunctA, 1u);
 
             // -> i += 1;
-            auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-            loopCounter->addIncoming(nextVar, loopBB);
+            builder.SetInsertPoint(scalarBodyBlock);
+            auto scalarNextVar = builder.CreateAdd(scalarLoopCounter, builder.getInt64(1));
+            scalarLoopCounter->addIncoming(scalarNextVar, scalarBodyBlock);
+
+            builder.SetInsertPoint(vectorBodyBlock);
+            auto vectorNextVar = builder.CreateAdd(vectorLoopCounter, builder.getInt64(vectorSize));
+            vectorLoopCounter->addIncoming(vectorNextVar, vectorBodyBlock);
 
             // i != endIdx
-            auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
+            builder.SetInsertPoint(scalarBodyBlock);
+            builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, scalarNextVar, args[endIdx]),
+                    scalarBodyBlock, scalarEndBlock);
 
-            // Create the loop
-            auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(conjunctPosition), func);
-            builder.CreateCondBr(endCond, loopBB, afterBB);
-            builder.SetInsertPoint(afterBB);
+            builder.SetInsertPoint(vectorBodyBlock);
+            builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorNextVar, vectorEndIdx),
+                    vectorBodyBlock, vectorEndBlock);
+
+            builder.SetInsertPoint(vectorEndBlock);
+            builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorEndIdx, args[endIdx]),
+                    scalarBodyBlock, scalarEndBlock);
+
+            builder.SetInsertPoint(scalarEndBlock);
         }
 
         auto previousBlock = builder.GetInsertBlock();
-        auto loopBB = BasicBlock::Create(mCompilerContext, "conj." + Twine(i), func);
-        builder.CreateBr(loopBB);
-        builder.SetInsertPoint(loopBB);
+        auto vectorBodyBlock = BasicBlock::Create(mCompilerContext, "conj.vectorbody." + Twine(i), func);
+        auto vectorEndBlock = BasicBlock::Create(mCompilerContext, "conj.vectorend." + Twine(i), func);
+        auto scalarBodyBlock = BasicBlock::Create(mCompilerContext, "conj.scalarbody." + Twine(i), func);
+        auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "conj.scalarend." + Twine(i), func);
+        builder.CreateCondBr(builder.CreateICmp(CmpInst::ICMP_NE, vectorCount, builder.getInt64(0)),
+                vectorBodyBlock, vectorEndBlock);
 
         // -> auto i = startIdx;
-        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-        loopCounter->addIncoming(args[startIdx], previousBlock);
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        scalarLoopCounter->addIncoming(vectorEndIdx, vectorEndBlock);
 
-        Value* conjunctAIndex = loopCounter;
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorLoopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
+        vectorLoopCounter->addIncoming(args[startIdx], previousBlock);
+
+        // Scalar
+        builder.SetInsertPoint(scalarBodyBlock);
+        Value* scalarConjunctA = scalarLoopCounter;
         if (i > 0) {
-            conjunctAIndex = builder.CreateAdd(conjunctAIndex, builder.createConstMul(args[count], i));
+            scalarConjunctA = builder.CreateAdd(scalarConjunctA, builder.createConstMul(args[count], i));
         }
-        auto conjunctAElement = builder.CreateInBoundsGEP(args[resultData], conjunctAIndex);
+        scalarConjunctA = builder.CreateInBoundsGEP(args[resultData], scalarConjunctA);
+        auto scalarConjunctAValue = builder.CreateAlignedLoad(scalarConjunctA, 1u);
 
-        auto conjunctBIndex = builder.CreateAdd(
+        auto scalarConjunctB = builder.CreateAdd(
                 builder.createConstMul(args[count], state.conjunctOffset),
-                loopCounter);
-        auto conjunctBElement = builder.CreateInBoundsGEP(args[resultData], conjunctBIndex);
+                scalarLoopCounter);
+        scalarConjunctB = builder.CreateInBoundsGEP(args[resultData], scalarConjunctB);
+        auto scalarConjunctBValue = builder.CreateAlignedLoad(scalarConjunctB, 1u);
 
-        auto res = builder.CreateAnd(builder.CreateLoad(conjunctAElement), builder.CreateLoad(conjunctBElement));
-        builder.CreateStore(res, conjunctAElement);
+        auto scalarResult = builder.CreateAnd(scalarConjunctAValue, scalarConjunctBValue);
+        builder.CreateAlignedStore(scalarResult, scalarConjunctA, 1u);
+
+        // Vector
+        builder.SetInsertPoint(vectorBodyBlock);
+        Value* vectorConjunctA = vectorLoopCounter;
+        if (i > 0) {
+            vectorConjunctA = builder.CreateAdd(vectorConjunctA, builder.createConstMul(args[count], i));
+        }
+        vectorConjunctA = builder.CreateInBoundsGEP(args[resultData], vectorConjunctA);
+        vectorConjunctA = builder.CreateBitCast(vectorConjunctA, builder.getInt8VectorPtrTy(vectorSize));
+        auto vectorConjunctAValue = builder.CreateAlignedLoad(vectorConjunctA, 1u);
+
+        auto vectorConjunctB = builder.CreateAdd(
+                builder.createConstMul(args[count], state.conjunctOffset),
+                vectorLoopCounter);
+        vectorConjunctB = builder.CreateInBoundsGEP(args[resultData], vectorConjunctB);
+        vectorConjunctB = builder.CreateBitCast(vectorConjunctB, builder.getInt8VectorPtrTy(vectorSize));
+        auto vectorConjunctBValue = builder.CreateAlignedLoad(vectorConjunctB, 1u);
+
+        auto vectorResult = builder.CreateAnd(vectorConjunctAValue, vectorConjunctBValue);
+        builder.CreateAlignedStore(vectorResult, vectorConjunctA, 1u);
 
         // -> i += 1;
-        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        loopCounter->addIncoming(nextVar, loopBB);
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarNextVar = builder.CreateAdd(scalarLoopCounter, builder.getInt64(1));
+        scalarLoopCounter->addIncoming(scalarNextVar, scalarBodyBlock);
+
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorNextVar = builder.CreateAdd(vectorLoopCounter, builder.getInt64(vectorSize));
+        vectorLoopCounter->addIncoming(vectorNextVar, vectorBodyBlock);
 
         // i != endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
+        builder.SetInsertPoint(scalarBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, scalarNextVar, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
 
-        // Create the loop
-        auto afterBB = BasicBlock::Create(mCompilerContext, "endconj." + Twine(i), func);
-        builder.CreateCondBr(endCond, loopBB, afterBB);
-        builder.SetInsertPoint(afterBB);
+        builder.SetInsertPoint(vectorBodyBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorNextVar, vectorEndIdx),
+                vectorBodyBlock, vectorEndBlock);
+
+        builder.SetInsertPoint(vectorEndBlock);
+        builder.CreateCondBr(builder.CreateICmp(ICmpInst::ICMP_NE, vectorEndIdx, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
+
+        builder.SetInsertPoint(scalarEndBlock);
     }
 
     // Return

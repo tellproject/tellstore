@@ -45,19 +45,19 @@ llvm::Value* LLVMBuilder::createConstMul(llvm::Value* lhs, uint64_t rhs) {
     return CreateShl(lhs, getInt64(log2));
 }
 
-llvm::Value* LLVMBuilder::createConstMod(llvm::Value *lhs, uint64_t rhs) {
+llvm::Value* LLVMBuilder::createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize /* = 0 */) {
     if (rhs == 0u) {
         throw std::invalid_argument("Modulo by 0");
     }
     if (rhs == 1u) {
-        return getInt64(0);
+        return (vectorSize == 0 ? getInt64(0) : getInt64Vector(vectorSize, 0));
     }
     auto mask = rhs - 1;
     if (rhs & mask) {
-        return CreateURem(lhs, getInt64(rhs));
+        return CreateURem(lhs, (vectorSize == 0 ? getInt64(rhs) : getInt64Vector(vectorSize, rhs)));
     }
 
-    return CreateAnd(lhs, mask);
+    return CreateAnd(lhs, (vectorSize == 0 ? getInt64(mask) : getInt64Vector(vectorSize, mask)));
 }
 
 llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t alignment) {
@@ -96,22 +96,22 @@ llvm::Type* LLVMBuilder::getFieldTy(FieldType field) {
     }
 }
 
-llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field) {
+llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field, unsigned AddrSpace /* = 0 */) {
     switch (field) {
     case FieldType::SMALLINT:
-        return getInt16PtrTy();
+        return getInt16PtrTy(AddrSpace);
 
     case FieldType::INT:
-        return getInt32PtrTy();
+        return getInt32PtrTy(AddrSpace);
 
     case FieldType::BIGINT:
-        return getInt64PtrTy();
+        return getInt64PtrTy(AddrSpace);
 
     case FieldType::FLOAT:
-        return getFloatPtrTy();
+        return getFloatPtrTy(AddrSpace);
 
     case FieldType::DOUBLE:
-        return getDoublePtrTy();
+        return getDoublePtrTy(AddrSpace);
 
     default:
         LOG_ASSERT(false, "Only fixed size fields are allowed");
