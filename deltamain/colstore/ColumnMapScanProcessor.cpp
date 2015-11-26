@@ -731,46 +731,57 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
         auto& destField = destFieldMeta.first;
         auto destFieldAlignment = destField.alignOf();
+        auto destFieldType = builder.getFieldTy(destField.type());
         auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
         auto destFieldOffset = destFieldMeta.second;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
 
         // -> auto src = page->recordData() + page->count * mFieldOffsets[idx];
-        auto srcPtr = (srcFieldOffset == 0
-                ? args[recordData]
-                : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
-        srcPtr = builder.CreateBitCast(srcPtr, srcFieldPtrType);
+        Value* srcPtr;
+        if (aggregationType != AggregationType::CNT) {
+            srcPtr = (srcFieldOffset == 0
+                    ? args[recordData]
+                    : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
+            srcPtr = builder.CreateBitCast(srcPtr, srcFieldPtrType);
+        }
 
         auto destPtr = (destFieldOffset == 0
                 ? args[destData]
                 : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
         destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
+        auto destValue = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
 
         // Loop generation
+        auto previousBlock = builder.GetInsertBlock();
         auto loopBB = BasicBlock::Create(mCompilerContext, "agg." + Twine(destFieldIdx), func);
         builder.CreateBr(loopBB);
         builder.SetInsertPoint(loopBB);
 
         // -> auto i = startIdx;
         auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-        loopCounter->addIncoming(args[startIdx], bb);
+        loopCounter->addIncoming(args[startIdx], previousBlock);
 
-        Value* src = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(srcPtr, loopCounter), srcFieldAlignment);
+        auto dest = builder.CreatePHI(destFieldType, 2);
+        dest->addIncoming(destValue, previousBlock);
 
-        Value* dest = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
+        Value* src;
+        if (aggregationType != AggregationType::CNT) {
+            src = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(srcPtr, loopCounter), srcFieldAlignment);
+        }
 
-        auto result = builder.CreateLoad(builder.CreateInBoundsGEP(args[resultData], loopCounter));
+        auto result = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(args[resultData], loopCounter), 1u);
 
         auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
 
+        Value* aggValue;
         switch (aggregationType) {
         case AggregationType::MIN: {
             auto cond = (isFloat
                     ? builder.CreateFCmp(CmpInst::FCMP_OLT, src, dest)
                     : builder.CreateICmp(CmpInst::ICMP_SLT, src, dest));
             cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
-            dest = builder.CreateSelect(cond, src, dest);
+            aggValue = builder.CreateSelect(cond, src, dest);
         } break;
 
         case AggregationType::MAX: {
@@ -778,7 +789,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
                     ? builder.CreateFCmp(CmpInst::FCMP_OGT, src, dest)
                     : builder.CreateICmp(CmpInst::ICMP_SGT, src, dest));
             cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
-            dest = builder.CreateSelect(cond, src, dest);
+            aggValue = builder.CreateSelect(cond, src, dest);
         } break;
 
         case AggregationType::SUM: {
@@ -791,18 +802,18 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
             auto res = (isFloat
                     ? builder.CreateFAdd(dest, src)
                     : builder.CreateAdd(dest, src));
-            dest = builder.CreateSelect(builder.CreateTrunc(result, builder.getInt1Ty()), res, dest);
+            aggValue = builder.CreateSelect(builder.CreateTrunc(result, builder.getInt1Ty()), res, dest);
         } break;
 
         case AggregationType::CNT: {
-            dest = builder.CreateAdd(dest, builder.CreateZExt(result, builder.getInt64Ty()));
+            aggValue = builder.CreateAdd(dest, builder.CreateZExt(result, builder.getInt64Ty()));
         } break;
 
         default:
             break;
         }
 
-        builder.CreateAlignedStore(dest, destPtr, destFieldAlignment);
+        dest->addIncoming(aggValue, loopBB);
 
         // -> i += 1;
         auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
@@ -815,6 +826,8 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         auto afterBB = BasicBlock::Create(mCompilerContext, "endagg." + Twine(destFieldIdx), func);
         builder.CreateCondBr(endCond, loopBB, afterBB);
         builder.SetInsertPoint(afterBB);
+
+        builder.CreateAlignedStore(aggValue, destPtr, destFieldAlignment);
     }
 
     builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
