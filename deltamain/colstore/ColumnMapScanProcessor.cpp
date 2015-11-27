@@ -1316,6 +1316,7 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint
     }
 
     auto entries = page->entryData();
+    auto sizeData = page->sizeData();
 
     auto i = startIdx;
     while (i < endIdx) {
@@ -1394,10 +1395,13 @@ void ColumnMapScanProcessor::processMainPage(const ColumnMapMainPage* page, uint
         }
 
         // Set valid-to version for every element of the same key to the valid-from version of the previous
+        // If the element marks a deletion set the valid-to version to 0 to exclude them from the query processing.
         for (; i < endIdx && entries[i].key == key; ++i) {
-            mKeyData[i] = key;
-            mValidFromData[i] = entries[i].version;
-            mValidToData[i] = validTo;
+            if (sizeData[i] != 0) {
+                mKeyData[i] = key;
+                mValidFromData[i] = entries[i].version;
+                mValidToData[i] = validTo;
+            }
             validTo = entries[i].version;
         }
     }
