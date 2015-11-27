@@ -136,45 +136,6 @@ void LLVMScanBase::finalizeScan() {
 #endif
     functionPass.add(createTargetTransformInfoWrapperPass(mCompiler.getTargetMachine()->getTargetIRAnalysis()));
 
-    modulePass.add(createTypeBasedAliasAnalysisPass());
-    modulePass.add(createScopedNoAliasAAPass());
-    modulePass.add(createBasicAliasAnalysisPass());
-
-    modulePass.add(createInstructionCombiningPass());
-    modulePass.add(createCFGSimplificationPass());
-    modulePass.add(createReassociatePass());
-    modulePass.add(createLoopRotatePass(-1));
-    modulePass.add(createLICMPass());
-    modulePass.add(createLoopUnswitchPass(false));
-    modulePass.add(createInstructionCombiningPass());
-    modulePass.add(createIndVarSimplifyPass());
-    modulePass.add(createLoopIdiomPass());
-    modulePass.add(createLoopDeletionPass());
-    modulePass.add(createLoopInterchangePass());
-    modulePass.add(createCFGSimplificationPass());
-    modulePass.add(createSimpleLoopUnrollPass());
-    modulePass.add(createMergedLoadStoreMotionPass());
-    modulePass.add(createGVNPass(false));
-    modulePass.add(createMemCpyOptPass());
-    modulePass.add(createSCCPPass());
-    modulePass.add(createLoopIdiomPass());
-
-    modulePass.add(createSLPVectorizerPass());
-
-    modulePass.add(createBBVectorizePass());
-    modulePass.add(createInstructionCombiningPass());
-    modulePass.add(createGVNPass(false));
-
-    modulePass.add(createLoopUnrollPass());
-    modulePass.add(createCFGSimplificationPass());
-    modulePass.add(createInstructionCombiningPass());
-
-    modulePass.add(createLoopRotatePass(-1));
-
-    modulePass.add(createLoopDistributePass());
-
-    modulePass.add(createLoopVectorizePass());
-
     functionPass.doInitialization();
     for (auto& func : mCompilerModule) {
         // Add host CPU features
