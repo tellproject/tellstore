@@ -314,7 +314,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
         vectorLoopCounter->addIncoming(args[startIdx], previousBlock);
 
         auto vectorSrc = builder.CreateInBoundsGEP(src, vectorLoopCounter);
-        vectorSrc = builder.CreateBitCast(vectorSrc, builder.getFieldVectorPtrTy(field.type(), vectorSize));
+        vectorSrc = builder.CreateBitCast(vectorSrc, builder.getFieldVectorPtrTy(vectorSize, field.type()));
         auto vectorFieldValue = builder.CreateAlignedLoad(vectorSrc, fieldAlignment);
 
         for (decltype(queryBuffers.size()) i = nextQueryIdx; i < queryBuffers.size(); ++i) {
@@ -408,7 +408,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 auto scalarComp = (isFloat
                         ? builder.CreateFCmp(predicate, scalarFieldValue, compareValue)
                         : builder.CreateICmp(predicate, scalarFieldValue, compareValue));
-                scalarComp = builder.CreateZExt(scalarComp, builder.getInt8Ty());
+                scalarComp = builder.CreateZExtOrBitCast(scalarComp, builder.getInt8Ty());
 
                 auto scalarConjunctIndex = builder.CreateAdd(
                         builder.createConstMul(args[count], conjunctPosition),
@@ -421,7 +421,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                 auto vectorComp = (isFloat
                         ? builder.CreateFCmp(predicate, vectorFieldValue, vectorCompareValue)
                         : builder.CreateICmp(predicate, vectorFieldValue, vectorCompareValue));
-                vectorComp = builder.CreateZExt(vectorComp, VectorType::get(builder.getInt8Ty(), vectorSize));
+                vectorComp = builder.CreateZExtOrBitCast(vectorComp, VectorType::get(builder.getInt8Ty(), vectorSize));
 
                 auto vectorConjunctIndex = builder.CreateAdd(
                         builder.createConstMul(args[count], conjunctPosition),
@@ -534,7 +534,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                         builder.getInt64(state.partitionNumber));
                 scalarResult = builder.CreateAnd(scalarResult, scalarComp);
             }
-            scalarResult = builder.CreateZExt(scalarResult, builder.getInt8Ty());
+            scalarResult = builder.CreateZExtOrBitCast(scalarResult, builder.getInt8Ty());
 
             Value* scalarConjunct = scalarLoopCounter;
             if (i > 0) {
@@ -569,7 +569,7 @@ void ColumnMapScan::prepareColumnScanFunction(const Record& record) {
                         builder.getInt64Vector(vectorSize, state.partitionNumber));
                 vectorResult = builder.CreateAnd(vectorResult, vectorComp);
             }
-            vectorResult = builder.CreateZExt(vectorResult, builder.getInt8VectorTy(vectorSize));
+            vectorResult = builder.CreateZExtOrBitCast(vectorResult, builder.getInt8VectorTy(vectorSize));
 
             Value* vectorConjunct = vectorLoopCounter;
             if (i > 0) {
@@ -848,7 +848,7 @@ void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, Sca
             if (srcIdx != 0) {
                 srcNullBitmap = builder.CreateInBoundsGEP(srcNullBitmap, builder.getInt64(srcIdx));
             }
-            srcNullBitmap = builder.CreateAnd(builder.CreateLoad(srcNullBitmap), builder.getInt8(srcMask));
+            srcNullBitmap = builder.CreateAnd(builder.CreateAlignedLoad(srcNullBitmap, 1u), builder.getInt8(srcMask));
 
             auto destIdx = destFieldIdx / 8u;
             auto destBitIdx = destFieldIdx % 8u;
@@ -863,8 +863,8 @@ void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, Sca
                     ? args[destData]
                     : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
 
-            auto res = builder.CreateOr(builder.CreateLoad(destNullBitmap), srcNullBitmap);
-            builder.CreateStore(res, destNullBitmap);
+            auto res = builder.CreateOr(builder.CreateAlignedLoad(destNullBitmap, 1u), srcNullBitmap);
+            builder.CreateAlignedStore(res, destNullBitmap, 1u);
         }
 
         auto srcFieldOffset = srcFieldMeta.second;
@@ -915,6 +915,8 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
     auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnMaterializeFunctionName + Twine(index),
             &mCompilerModule);
 
+    auto targetInfo = mCompiler.getTargetMachine()->getTargetIRAnalysis().run(*func);
+
     // Set arguments names
     std::array<Value*, 7> args;
     {
@@ -935,8 +937,8 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
     func->setDoesNotAlias(7);
 
     // Build function
-    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(bb);
+    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(entryBlock);
 
     auto& destRecord = query->record();
     Record::id_t j = 0u;
@@ -956,13 +958,70 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
         auto& destField = destFieldMeta.first;
         auto destFieldAlignment = destField.alignOf();
+        auto destFieldSize = destField.staticSize();
         auto destFieldType = builder.getFieldTy(destField.type());
+        auto vectorSize = static_cast<uint64_t>(targetInfo.getRegisterBitWidth(true)) / (destFieldSize * 8);
+        auto destFieldVectorType = VectorType::get(destFieldType, vectorSize);
         auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
         auto destFieldOffset = destFieldMeta.second;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
+        auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
 
-        // -> auto src = page->recordData() + page->count * mFieldOffsets[idx];
+        // Aggregation function used by the vector and scalar code paths
+        auto builderAggregation = [&builder, &srcField, isFloat, aggregationType]
+                (Value* src, Value* dest, Value* result) {
+            switch (aggregationType) {
+            case AggregationType::MIN: {
+                auto cond = (isFloat
+                        ? builder.CreateFCmp(CmpInst::FCMP_OLT, src, dest)
+                        : builder.CreateICmp(CmpInst::ICMP_SLT, src, dest));
+                cond = builder.CreateAnd(result, cond);
+                return builder.CreateSelect(cond, src, dest);
+            } break;
+
+            case AggregationType::MAX: {
+                auto cond = (isFloat
+                        ? builder.CreateFCmp(CmpInst::FCMP_OGT, src, dest)
+                        : builder.CreateICmp(CmpInst::ICMP_SGT, src, dest));
+                cond = builder.CreateAnd(result, cond);
+                return builder.CreateSelect(cond, src, dest);
+            } break;
+
+            case AggregationType::SUM: {
+                if (srcField.type() == FieldType::SMALLINT || srcField.type() == FieldType::INT) {
+                    src = builder.CreateSExt(src, dest->getType());
+                } else if (srcField.type() == FieldType::FLOAT) {
+                    src = builder.CreateFPExt(src, dest->getType());
+                }
+
+                auto res = (isFloat
+                        ? builder.CreateFAdd(dest, src)
+                        : builder.CreateAdd(dest, src));
+                return builder.CreateSelect(result, res, dest);
+            } break;
+
+            case AggregationType::CNT: {
+                return builder.CreateAdd(dest, builder.CreateZExt(result, dest->getType()));
+            } break;
+
+            default: {
+                LOG_ASSERT(false, "Unknown aggregation type");
+                return static_cast<Value*>(nullptr);
+            } break;
+            }
+        };
+
+        // Create code blocks
+        auto previousBlock = builder.GetInsertBlock();
+        auto vectorHeaderBlock = BasicBlock::Create(mCompilerContext, "agg.vectorheader." + Twine(destFieldIdx), func);
+        auto vectorBodyBlock = BasicBlock::Create(mCompilerContext, "agg.vectorbody." + Twine(destFieldIdx), func);
+        auto vectorMergeBlock = BasicBlock::Create(mCompilerContext, "agg.vectormerge." + Twine(destFieldIdx), func);
+        auto vectorEndBlock = BasicBlock::Create(mCompilerContext, "agg.vectorend." + Twine(destFieldIdx), func);
+        auto scalarBodyBlock = BasicBlock::Create(mCompilerContext, "agg.scalarbody." + Twine(destFieldIdx), func);
+        auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "agg.scalarend." + Twine(destFieldIdx), func);
+
+        // Compute the pointer to the first element in the aggregation column
         Value* srcPtr;
         if (aggregationType != AggregationType::CNT) {
             srcPtr = (srcFieldOffset == 0
@@ -971,88 +1030,188 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
             srcPtr = builder.CreateBitCast(srcPtr, srcFieldPtrType);
         }
 
+        // Load the aggregation value from the previous run
         auto destPtr = (destFieldOffset == 0
                 ? args[destData]
                 : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
         destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
         auto destValue = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
 
-        // Loop generation
-        auto previousBlock = builder.GetInsertBlock();
-        auto loopBB = BasicBlock::Create(mCompilerContext, "agg." + Twine(destFieldIdx), func);
-        builder.CreateBr(loopBB);
-        builder.SetInsertPoint(loopBB);
+        // Check how many vector iterations can be executed
+        // Skip to the vector end if no vectorized iterations can be executed
+        auto vectorCount = builder.CreateSub(args[endIdx], args[startIdx]);
+        vectorCount = builder.CreateAnd(vectorCount, builder.getInt64(-vectorSize));
+        auto vectorEndIdx = builder.CreateAdd(args[startIdx], vectorCount);
+        builder.CreateCondBr(
+                builder.CreateICmp(CmpInst::ICMP_NE, vectorCount, builder.getInt64(0)),
+                vectorHeaderBlock, vectorEndBlock);
 
-        // -> auto i = startIdx;
-        auto loopCounter = builder.CreatePHI(builder.getInt64Ty(), 2);
-        loopCounter->addIncoming(args[startIdx], previousBlock);
-
-        auto dest = builder.CreatePHI(destFieldType, 2);
-        dest->addIncoming(destValue, previousBlock);
-
-        Value* src;
-        if (aggregationType != AggregationType::CNT) {
-            src = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(srcPtr, loopCounter), srcFieldAlignment);
-        }
-
-        auto result = builder.CreateAlignedLoad(builder.CreateInBoundsGEP(args[resultData], loopCounter), 1u);
-
-        auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
-
-        Value* aggValue;
+        // Vector header
+        // Initialize the start vector: In case of min/max the current min/max element is broadcasted to the complete
+        // vector, for sum and count the current sum/cnt value is stored in the first element and the remaining vector
+        // filled with zeroes.
+        builder.SetInsertPoint(vectorHeaderBlock);
+        Value* vectorDestValue;
         switch (aggregationType) {
-        case AggregationType::MIN: {
-            auto cond = (isFloat
-                    ? builder.CreateFCmp(CmpInst::FCMP_OLT, src, dest)
-                    : builder.CreateICmp(CmpInst::ICMP_SLT, src, dest));
-            cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
-            aggValue = builder.CreateSelect(cond, src, dest);
-        } break;
-
+        case AggregationType::MIN:
         case AggregationType::MAX: {
-            auto cond = (isFloat
-                    ? builder.CreateFCmp(CmpInst::FCMP_OGT, src, dest)
-                    : builder.CreateICmp(CmpInst::ICMP_SGT, src, dest));
-            cond = builder.CreateAnd(builder.CreateTrunc(result, builder.getInt1Ty()), cond);
-            aggValue = builder.CreateSelect(cond, src, dest);
+            vectorDestValue = builder.CreateVectorSplat(vectorSize, destValue);
         } break;
 
         case AggregationType::SUM: {
-            if (srcField.type() == FieldType::SMALLINT || srcField.type() == FieldType::INT) {
-                src = builder.CreateSExt(src, builder.getInt64Ty());
-            } else if (srcField.type() == FieldType::FLOAT) {
-                src = builder.CreateFPExt(src, builder.getDoubleTy());
-            }
-
-            auto res = (isFloat
-                    ? builder.CreateFAdd(dest, src)
-                    : builder.CreateAdd(dest, src));
-            aggValue = builder.CreateSelect(builder.CreateTrunc(result, builder.getInt1Ty()), res, dest);
+            vectorDestValue = isFloat
+                    ? builder.getDoubleVector(vectorSize, 0)
+                    : builder.getInt64Vector(vectorSize, 0);
+            vectorDestValue = builder.CreateInsertElement(vectorDestValue, destValue, static_cast<uint64_t>(0));
         } break;
 
         case AggregationType::CNT: {
-            aggValue = builder.CreateAdd(dest, builder.CreateZExt(result, builder.getInt64Ty()));
+            vectorDestValue = builder.getInt64Vector(vectorSize, 0);
+            vectorDestValue = builder.CreateInsertElement(vectorDestValue, destValue, static_cast<uint64_t>(0));
         } break;
 
-        default:
-            break;
+        default: {
+            LOG_ASSERT(false, "Unknown aggregation type");
+            vectorDestValue = nullptr;
+        } break;
+        }
+        builder.CreateBr(vectorBodyBlock);
+
+        // Vector Body
+        // Contains the aggregation loop
+        builder.SetInsertPoint(vectorBodyBlock);
+        auto vectorIdx = builder.CreatePHI(builder.getInt64Ty(), 2);
+        vectorIdx->addIncoming(args[startIdx], vectorHeaderBlock);
+
+        // Create PHI node containing the immediate result in the loop
+        auto vectorDest = builder.CreatePHI(destFieldVectorType, 2);
+        vectorDest->addIncoming(vectorDestValue, vectorHeaderBlock);
+
+        // Load source vector (not required for count aggregation)
+        Value* vectorSrc;
+        if (aggregationType != AggregationType::CNT) {
+            vectorSrc = builder.CreateInBoundsGEP(srcPtr, vectorIdx);
+            vectorSrc = builder.CreateBitCast(vectorSrc, builder.getFieldVectorPtrTy(vectorSize, srcField.type()));
+            vectorSrc = builder.CreateAlignedLoad(vectorSrc, srcFieldAlignment);
         }
 
-        dest->addIncoming(aggValue, loopBB);
+        // Load result vector
+        auto vectorResult = builder.CreateInBoundsGEP(args[resultData], vectorIdx);
+        vectorResult = builder.CreateBitCast(vectorResult, builder.getInt8VectorPtrTy(vectorSize));
+        vectorResult = builder.CreateAlignedLoad(vectorResult, 1u);
+        vectorResult = builder.CreateTruncOrBitCast(vectorResult, builder.getInt1VectorTy(vectorSize));
 
-        // -> i += 1;
-        auto nextVar = builder.CreateAdd(loopCounter, builder.getInt64(1));
-        loopCounter->addIncoming(nextVar, loopBB);
+        // Evaluate aggregation
+        auto vectorAgg = builderAggregation(vectorSrc, vectorDest, vectorResult);
+        vectorDest->addIncoming(vectorAgg, vectorBodyBlock);
 
-        // i != endIdx
-        auto endCond = builder.CreateICmp(ICmpInst::ICMP_NE, nextVar, args[endIdx]);
+        // Advance the loop
+        auto vectorNextIdx = builder.CreateAdd(vectorIdx, builder.getInt64(vectorSize));
+        vectorIdx->addIncoming(vectorNextIdx, vectorBodyBlock);
+        builder.CreateCondBr(
+                builder.CreateICmp(ICmpInst::ICMP_NE, vectorNextIdx, vectorEndIdx),
+                vectorBodyBlock, vectorMergeBlock);
 
-        // Create the loop
-        auto afterBB = BasicBlock::Create(mCompilerContext, "endagg." + Twine(destFieldIdx), func);
-        builder.CreateCondBr(endCond, loopBB, afterBB);
-        builder.SetInsertPoint(afterBB);
+        // Vector Merge
+        // Reduce the individual aggregations in the vector to one value by recursively aggregating the upper with the
+        // lower values in the vector until only one value is left.
+        builder.SetInsertPoint(vectorMergeBlock);
+        std::vector<Constant*> reduceIdx;
+        reduceIdx.reserve(vectorSize);
+        for (auto i = vectorSize; i > 1; i /= 2) {
+            for (auto j = i / 2; j < i; ++j) {
+                reduceIdx.emplace_back(builder.getInt32(j));
+            }
+            for (auto j = i / 2; j < vectorSize; ++j) {
+                reduceIdx.emplace_back(UndefValue::get(builder.getInt32Ty()));
+            }
+            auto reduce = builder.CreateShuffleVector(vectorAgg, UndefValue::get(destFieldVectorType),
+                    ConstantVector::get(reduceIdx));
 
-        builder.CreateAlignedStore(aggValue, destPtr, destFieldAlignment);
+            switch (aggregationType) {
+            case AggregationType::MIN: {
+                auto cond = (isFloat
+                        ? builder.CreateFCmp(CmpInst::FCMP_OLT, vectorAgg, reduce)
+                        : builder.CreateICmp(CmpInst::ICMP_SLT, vectorAgg, reduce));
+                vectorAgg = builder.CreateSelect(cond, vectorAgg, reduce);
+            } break;
+
+            case AggregationType::MAX: {
+                auto cond = (isFloat
+                        ? builder.CreateFCmp(CmpInst::FCMP_OGT, vectorAgg, reduce)
+                        : builder.CreateICmp(CmpInst::ICMP_SGT, vectorAgg, reduce));
+                vectorAgg = builder.CreateSelect(cond, vectorAgg, reduce);
+            } break;
+
+            case AggregationType::SUM: {
+                vectorAgg = (isFloat
+                        ? builder.CreateFAdd(vectorAgg, reduce)
+                        : builder.CreateAdd(vectorAgg, reduce));
+            } break;
+
+            case AggregationType::CNT: {
+                vectorAgg = builder.CreateAdd(vectorAgg, reduce);
+            } break;
+
+            default: {
+                LOG_ASSERT(false, "Unknown aggregation type");
+            } break;
+            }
+            reduceIdx.clear();
+        }
+        vectorAgg = builder.CreateExtractElement(vectorAgg, static_cast<uint64_t>(0));
+        builder.CreateBr(vectorEndBlock);
+
+        // Vector end block
+        // Merge result from vectorized code or the result from the previous run if no vector iterations were executed.
+        // Branch to scalar code if additional scalar iterations are required.
+        builder.SetInsertPoint(vectorEndBlock);
+        auto vectorAggResult = builder.CreatePHI(destFieldType, 2);
+        vectorAggResult->addIncoming(destValue, previousBlock);
+        vectorAggResult->addIncoming(vectorAgg, vectorMergeBlock);
+        builder.CreateCondBr(
+                builder.CreateICmp(ICmpInst::ICMP_NE, vectorEndIdx, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
+
+        // Scalar Body
+        // Contains the aggregation loop
+        builder.SetInsertPoint(scalarBodyBlock);
+        auto scalarIdx = builder.CreatePHI(builder.getInt64Ty(), 2);
+        scalarIdx->addIncoming(vectorEndIdx, vectorEndBlock);
+
+        // Create PHI node containing the immediate result in the loop
+        auto scalarDest = builder.CreatePHI(destFieldType, 2);
+        scalarDest->addIncoming(vectorAggResult, vectorEndBlock);
+
+        // Load source vector (not required for count aggregation)
+        Value* scalarSrc;
+        if (aggregationType != AggregationType::CNT) {
+            scalarSrc = builder.CreateInBoundsGEP(srcPtr, scalarIdx);
+            scalarSrc = builder.CreateAlignedLoad(scalarSrc, srcFieldAlignment);
+        }
+
+        // Load result vector
+        auto scalarResult = builder.CreateInBoundsGEP(args[resultData], scalarIdx);
+        scalarResult = builder.CreateAlignedLoad(scalarResult, 1u);
+        scalarResult = builder.CreateTruncOrBitCast(scalarResult, builder.getInt1Ty());
+
+        // Evaluate aggregation
+        auto scalarAgg = builderAggregation(scalarSrc, scalarDest, scalarResult);
+        scalarDest->addIncoming(scalarAgg, scalarBodyBlock);
+
+        // Advance the loop
+        auto scalarNextIdx = builder.CreateAdd(scalarIdx, builder.getInt64(1));
+        scalarIdx->addIncoming(scalarNextIdx, scalarBodyBlock);
+        builder.CreateCondBr(
+                builder.CreateICmp(ICmpInst::ICMP_NE, scalarNextIdx, args[endIdx]),
+                scalarBodyBlock, scalarEndBlock);
+
+        // Scalar end block
+        builder.SetInsertPoint(scalarEndBlock);
+        auto aggResult = builder.CreatePHI(destFieldType, 2);
+        aggResult->addIncoming(vectorAggResult, vectorEndBlock);
+        aggResult->addIncoming(scalarAgg, scalarBodyBlock);
+        builder.CreateAlignedStore(aggResult, destPtr, destFieldAlignment);
     }
 
     builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));

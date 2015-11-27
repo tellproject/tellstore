@@ -41,6 +41,14 @@ public:
             : llvm::IRBuilder<>(context) {
     }
 
+    llvm::Type* getInt1VectorTy(uint64_t vectorSize) {
+        return llvm::VectorType::get(getInt1Ty(), vectorSize);
+    }
+
+    llvm::PointerType* getInt1VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
+        return getInt1VectorTy(vectorSize)->getPointerTo(AddrSpace);
+    }
+
     llvm::Type* getInt8VectorTy(uint64_t vectorSize) {
         return llvm::VectorType::get(getInt8Ty(), vectorSize);
     }
@@ -55,6 +63,10 @@ public:
 
     llvm::PointerType* getInt32PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt32PtrTy(Context, AddrSpace);
+    }
+
+    llvm::Type* getInt32VectorTy(uint64_t vectorSize) {
+        return llvm::VectorType::get(getInt32Ty(), vectorSize);
     }
 
     llvm::PointerType* getInt64PtrTy(unsigned AddrSpace = 0) {
@@ -81,6 +93,10 @@ public:
         return llvm::ConstantFP::get(getFloatTy(), C);
     }
 
+    llvm::Constant* getFloatVector(uint64_t vectorSize, float C) {
+        return llvm::ConstantVector::getSplat(vectorSize, getFloat(C));
+    }
+
     llvm::Type* getDoubleTy() {
         return llvm::Type::getDoubleTy(Context);
     }
@@ -93,12 +109,20 @@ public:
         return llvm::ConstantFP::get(getDoubleTy(), C);
     }
 
+    llvm::Constant* getDoubleVector(uint64_t vectorSize, double C) {
+        return llvm::ConstantVector::getSplat(vectorSize, getDouble(C));
+    }
+
     llvm::Type* getFieldTy(FieldType field);
 
     llvm::PointerType* getFieldPtrTy(FieldType field, unsigned AddrSpace = 0);
 
-    llvm::PointerType* getFieldVectorPtrTy(FieldType field, uint64_t vectorSize, unsigned AddrSpace = 0) {
-        return llvm::VectorType::get(getFieldTy(field), vectorSize)->getPointerTo(AddrSpace);
+    llvm::Type* getFieldVectorTy(uint64_t vectorSize, FieldType field) {
+        return llvm::VectorType::get(getFieldTy(field), vectorSize);
+    }
+
+    llvm::PointerType* getFieldVectorPtrTy(uint64_t vectorSize, FieldType field, unsigned AddrSpace = 0) {
+        return getFieldVectorTy(vectorSize, field)->getPointerTo(AddrSpace);
     }
 
     /**
