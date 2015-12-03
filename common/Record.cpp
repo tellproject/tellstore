@@ -69,7 +69,7 @@ size_t Field::sizeOf(const boost::any& value) const {
             return 0;
         case FieldType::TEXT:
         case FieldType::BLOB:
-            return sizeof(uint32_t) + boost::any_cast<crossbow::string>(value).size();
+            return sizeof(uint32_t) + boost::any_cast<const crossbow::string&>(value).size();
         case FieldType::NOTYPE:
             LOG_ASSERT(false, "One should never use a field of type NOTYPE");
             return std::numeric_limits<size_t>::max();
