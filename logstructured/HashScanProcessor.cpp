@@ -60,7 +60,7 @@ std::vector<std::unique_ptr<HashScanProcessor>> HashScan::startScan(size_t numTh
         auto end = start + step + (i < mod ? 1 : 0);
 
         result.emplace_back(new HashScanProcessor(*mTable, mQueries, start, end, version, mRowScanFun,
-                mRowMaterializeFuns, mNumConjuncts));
+                mRowMaterializeFuns, mScanAst.numConjunct));
     }
 
     return result;

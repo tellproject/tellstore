@@ -23,8 +23,6 @@
 
 #include "LLVMScan.hpp"
 
-#include "LLVMBuilder.hpp"
-
 #include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -54,16 +52,6 @@ namespace tell {
 namespace store {
 namespace {
 
-static const std::string gRowScanFunctionName = "rowScan";
-
-static const std::array<std::string, 5> gRowScanParamNames = {{
-    "key",
-    "validFrom",
-    "validTo",
-    "recordData",
-    "destData"
-}};
-
 static const std::string gRowMaterializeFunctionName = "rowMaterialize.";
 
 static const std::array<std::string, 3> gRowMaterializeParamNames = {{
@@ -72,38 +60,125 @@ static const std::array<std::string, 3> gRowMaterializeParamNames = {{
     "destData"
 }};
 
-struct QueryState {
-    QueryState(const ScanQuery* query, uint32_t _conjunctOffset)
-            : queryReader(query->selection(), query->selectionLength()),
-              snapshot(query->snapshot()),
-              conjunctOffset(_conjunctOffset),
-              numConjunct(0u),
-              partitionModulo(0u),
-              partitionNumber(0u),
-              currentColumn(0u) {
-    }
-
-    crossbow::buffer_reader queryReader;
-
-    const commitmanager::SnapshotDescriptor* snapshot;
-
-    uint32_t conjunctOffset;
-
-    uint32_t numConjunct;
-
-    uint32_t partitionModulo;
-
-    uint32_t partitionNumber;
-
-    uint16_t currentColumn;
-};
-
 uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
     memcpy(dest, src, length);
     return length;
 }
 
 } // anonymous namespace
+
+const std::string LLVMRowScanBuilder::FUNCTION_NAME = "rowScan";
+
+LLVMRowScanBuilder::LLVMRowScanBuilder(llvm::Module& module, llvm::TargetMachine* target)
+        : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()),
+                FUNCTION_NAME) {
+    // Set noalias hints (data pointers are not allowed to overlap)
+    mFunction->setDoesNotAlias(4);
+    mFunction->setOnlyReadsMemory(4);
+    mFunction->setDoesNotAlias(5);
+}
+
+void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
+    if (scanAst.queries.empty()) {
+        CreateRetVoid();
+        return;
+    }
+
+    mConjunctsGenerated.resize(scanAst.numConjunct, false);
+    for (auto& f : scanAst.fields) {
+        auto& fieldAst = f.second;
+
+        // Load the null status of the value if it can be null
+        llvm::Value* nullValue = nullptr;
+        if (!fieldAst.isNotNull) {
+            auto idx = fieldAst.id / 8u;
+            uint8_t mask = (0x1u << (fieldAst.id % 8u));
+
+            auto nullBitmap = getParam(recordData);
+            if (idx != 0) {
+                nullBitmap = CreateInBoundsGEP(nullBitmap, getInt64(idx));
+            }
+            nullValue = CreateAnd(CreateLoad(nullBitmap), getInt8(mask));
+        }
+
+        // Load the field value from the record
+        llvm::Value* lhs = nullptr;
+        if (fieldAst.needsValue) {
+            lhs = getParam(recordData);
+            if (fieldAst.offset != 0) {
+                lhs = CreateInBoundsGEP(lhs, getInt64(fieldAst.offset));
+            }
+            lhs = CreateBitCast(lhs, getFieldPtrTy(fieldAst.type));
+            lhs = CreateAlignedLoad(lhs, fieldAst.alignment);
+        }
+
+        // Evaluate all predicates attached to this field
+        for (auto& predicateAst : fieldAst.predicates) {
+            llvm::Value* res;
+            if (predicateAst.type == PredicateType::IS_NULL || predicateAst.type == PredicateType::IS_NOT_NULL) {
+                // Check if the field is null
+                auto predicate = (predicateAst.type == PredicateType::IS_NULL
+                        ? llvm::CmpInst::ICMP_NE
+                        : llvm::CmpInst::ICMP_EQ);
+                res = CreateICmp(predicate, nullValue, getInt8(0));
+            } else {
+                LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
+                auto& rhsAst = predicateAst.fixed;
+
+                // Execute the comparison
+                res = (rhsAst.isFloat
+                        ? CreateFCmp(rhsAst.predicate, lhs, rhsAst.value)
+                        : CreateICmp(rhsAst.predicate, lhs, rhsAst.value));
+
+                // The predicate evaluates to false if the value is null
+                if (!fieldAst.isNotNull) {
+                    res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
+                }
+            }
+            res = CreateZExtOrBitCast(res, getInt8Ty());
+
+            // Store resulting conjunct value
+            auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(predicateAst.conjunct));
+            if (mConjunctsGenerated[predicateAst.conjunct]) {
+                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                mConjunctsGenerated[predicateAst.conjunct] = true;
+            }
+            CreateAlignedStore(res, conjunctPtr, 1u);
+        }
+    }
+    mConjunctsGenerated.clear();
+
+    for (decltype(scanAst.queries.size()) i = 0; i < scanAst.queries.size(); ++i) {
+        auto& query = scanAst.queries[i];
+
+        // Evaluate validFrom <= version && validTo > baseVersion
+        auto validFromRes = CreateICmp(llvm::CmpInst::ICMP_ULE, getParam(validFrom), getInt64(query.version));
+        auto validToRes = CreateICmp(llvm::CmpInst::ICMP_UGT, getParam(validTo), getInt64(query.baseVersion));
+        auto res = CreateAnd(validFromRes, validToRes);
+
+        // Evaluate key % partitionModulo == partitionNumber
+        if (query.partitionModulo != 0u) {
+            auto keyRes = CreateICmp(llvm::CmpInst::ICMP_EQ,
+                    createConstMod(getParam(key), query.partitionModulo),
+                    getInt64(query.partitionNumber));
+            res = CreateAnd(res, keyRes);
+        }
+        res = CreateZExtOrBitCast(res, getInt8Ty());
+
+        // Merge conjuncts
+        for (decltype(query.numConjunct) j = 0; j < query.numConjunct; ++j) {
+            auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(query.conjunctOffset + j));
+            res = CreateAnd(res, CreateAlignedLoad(conjunctPtr, 1u));
+        }
+
+        // Store final result conjunct
+        auto resultPtr = CreateInBoundsGEP(getParam(resultData), getInt64(i));
+        CreateAlignedStore(res, resultPtr, 1u);
+    }
+
+    CreateRetVoid();
+}
 
 LLVMScanBase::LLVMScanBase()
         :  mCompilerModule("ScanQuery", mCompilerContext) {
@@ -159,12 +234,12 @@ void LLVMScanBase::finalizeScan() {
     mCompilerHandle = mCompiler.addModule(&mCompilerModule);
 }
 
-
 LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries)
         : mQueries(std::move(queries)),
-          mRowScanFun(nullptr),
-          mNumConjuncts(0u) {
-    prepareRowScanFunction(record);
+          mRowScanFun(nullptr) {
+    buildScanAST(record);
+
+    LLVMRowScanBuilder::createFunction(mCompilerModule, mCompiler.getTargetMachine(), mScanAst);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
@@ -185,7 +260,7 @@ LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> q
 void LLVMRowScanBase::finalizeRowScan() {
     LOG_ASSERT(!mRowScanFun, "Scan already finalized");
     finalizeScan();
-    mRowScanFun = mCompiler.findFunction<RowScanFun>(gRowScanFunctionName);
+    mRowScanFun = mCompiler.findFunction<RowScanFun>(LLVMRowScanBuilder::FUNCTION_NAME);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         if (mQueries[i]->queryType() == ScanQueryType::FULL) {
@@ -199,271 +274,155 @@ void LLVMRowScanBase::finalizeRowScan() {
     }
 }
 
-void LLVMRowScanBase::prepareRowScanFunction(const Record &record) {
+void LLVMRowScanBase::buildScanAST(const Record& record) {
     using namespace llvm;
-
-    static constexpr size_t key = 0;
-    static constexpr size_t validFrom = 1;
-    static constexpr size_t validTo = 2;
-    static constexpr size_t recordData = 3;
-    static constexpr size_t destData = 4;
 
     LLVMBuilder builder(mCompilerContext);
 
-    // Create function
-    auto funcType = FunctionType::get(builder.getVoidTy(), {
-            builder.getInt64Ty(),   // key
-            builder.getInt64Ty(),   // validFrom
-            builder.getInt64Ty(),   // validTo
-            builder.getInt8PtrTy(), // recordData
-            builder.getInt8PtrTy()  // destData
-    }, false);
-    auto func = Function::Create(funcType, Function::ExternalLinkage, gRowScanFunctionName, &mCompilerModule);
+    mScanAst.numConjunct = mQueries.size();
 
-    // Set arguments names
-    std::array<Value*, 5> args;
-    {
-        decltype(gRowScanParamNames.size()) idx = 0;
-        for (auto iter = func->arg_begin(); idx != gRowScanParamNames.size(); ++iter, ++idx) {
-            iter->setName(gRowScanParamNames[idx]);
-            args[idx] = iter.operator ->();
-        }
-    }
-
-    // Set noalias hints (data pointers are not allowed to overlap)
-    func->setDoesNotAlias(4);
-    func->setOnlyReadsMemory(4);
-    func->setDoesNotAlias(5);
-
-    // Build function
-    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(bb);
-
-    if (mQueries.size() == 0) {
-        builder.CreateRetVoid();
-        return;
-    }
-
-    std::vector<QueryState> queryBuffers;
-    queryBuffers.reserve(mQueries.size());
-
-    mNumConjuncts = mQueries.size();
     for (auto q : mQueries) {
-        queryBuffers.emplace_back(q, mNumConjuncts);
+        crossbow::buffer_reader queryReader(q->selection(), q->selectionLength());
+        auto snapshot = q->snapshot();
 
-        auto& state = queryBuffers.back();
-        auto& queryReader = state.queryReader;
         auto numColumns = queryReader.read<uint32_t>();
 
-        state.numConjunct = queryReader.read<uint32_t>();
-        state.partitionModulo = queryReader.read<uint32_t>();
-        state.partitionNumber = queryReader.read<uint32_t>();
-        if (numColumns != 0) {
-            state.currentColumn = queryReader.read<uint16_t>();
-        } else {
-            state.currentColumn = std::numeric_limits<uint16_t>::max();
+        QueryAST queryAst;
+        queryAst.baseVersion = snapshot->baseVersion();
+        queryAst.version = snapshot->version();
+        queryAst.conjunctOffset = mScanAst.numConjunct;
+        queryAst.numConjunct = queryReader.read<uint32_t>();
+        queryAst.partitionModulo = queryReader.read<uint32_t>();
+        queryAst.partitionNumber = queryReader.read<uint32_t>();
+
+        if (queryAst.partitionModulo != 0) {
+            mScanAst.needsKey = true;
         }
 
-        mNumConjuncts += state.numConjunct;
-    }
-
-    std::vector<uint8_t> conjunctsGenerated(mNumConjuncts, false);
-
-    auto currentColumn = std::numeric_limits<uint16_t>::max();
-    decltype(queryBuffers.size()) nextQueryIdx = 0;
-    while (true) {
-        // Find the next query with the nearest column
-        for (decltype(queryBuffers.size()) i = 0; i < queryBuffers.size(); ++i) {
-            auto& state = queryBuffers.at(i);
-            if (state.currentColumn < currentColumn) {
-                currentColumn = state.currentColumn;
-                nextQueryIdx = i;
-            }
-        }
-        if (currentColumn == std::numeric_limits<uint16_t>::max()) {
-            break;
-        }
-
-        auto& field = record.getFieldMeta(currentColumn).first;
-
-        Value* nullValue = nullptr;
-        if (!field.isNotNull()) {
-            auto idx = currentColumn / 8u;
-            uint8_t mask = (0x1u << (currentColumn % 8u));
-
-            auto nullBitmap = (idx == 0
-                    ? args[recordData]
-                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(idx)));
-            nullValue = builder.CreateAnd(builder.CreateLoad(nullBitmap), builder.getInt8(mask));
-        }
-
-        auto fieldOffset = record.getFieldMeta(currentColumn).second;
-        auto fieldAlignment = field.alignOf();
-        auto src = (fieldOffset == 0
-                    ? args[recordData]
-                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(fieldOffset)));
-        src = builder.CreateBitCast(src, builder.getFieldPtrTy(field.type()));
-        src = builder.CreateAlignedLoad(src, fieldAlignment);
-
-        // Process all queries with the next column
-        for (decltype(queryBuffers.size()) i = nextQueryIdx; i < queryBuffers.size(); ++i) {
-            auto& state = queryBuffers.at(i);
-            if (state.currentColumn != currentColumn) {
-                continue;
-            }
-            auto& queryReader = state.queryReader;
-
+        for (decltype(numColumns) i = 0; i < numColumns; ++i) {
+            auto currentColumn = queryReader.read<uint16_t>();
             auto numPredicates = queryReader.read<uint16_t>();
             queryReader.advance(4);
 
+            // Add a new FieldAST if the field does not yet exist
+            auto iter = mScanAst.fields.find(currentColumn);
+            if (iter == mScanAst.fields.end()) {
+                auto& fieldMeta = record.getFieldMeta(currentColumn);
+                auto& field = fieldMeta.first;
+
+                FieldAST fieldAst;
+                fieldAst.id = currentColumn;
+                fieldAst.isNotNull = field.isNotNull();
+                fieldAst.type = field.type();
+                fieldAst.offset = fieldMeta.second;
+                fieldAst.alignment = field.alignOf();
+                fieldAst.size = field.staticSize();
+
+                auto res = mScanAst.fields.emplace(currentColumn, std::move(fieldAst));
+                LOG_ASSERT(res.second, "Field already in map");
+                iter = res.first;
+            }
+            auto& fieldAst = iter->second;
+
+            // Iterate over all predicates on the field
             for (decltype(numPredicates) j = 0; j < numPredicates; ++j) {
                 auto predicateType = queryReader.read<PredicateType>();
-                auto conjunctPosition = state.conjunctOffset + queryReader.read<uint8_t>();
+                auto conjunct = queryAst.conjunctOffset + queryReader.read<uint8_t>();
 
-                Value* comp;
-                switch (predicateType) {
-                case PredicateType::IS_NULL:
-                case PredicateType::IS_NOT_NULL: {
-                    auto predicate = (predicateType == PredicateType::IS_NULL ? CmpInst::ICMP_NE : CmpInst::ICMP_EQ);
-                    comp = builder.CreateICmp(predicate, nullValue, builder.getInt8(0));
+                PredicateAST predicateAst(predicateType, conjunct);
+
+                if (predicateType == PredicateType::IS_NULL || predicateType == PredicateType::IS_NOT_NULL) {
                     queryReader.advance(6);
-                } break;
+                } else {
+                    fieldAst.needsValue = true;
 
-                default: {
-                    bool isFloat;
-                    Value* compareValue;
-                    switch (field.type()) {
+                    switch (fieldAst.type) {
                     case FieldType::SMALLINT: {
-                        isFloat = false;
-                        compareValue = builder.getInt16(queryReader.read<int16_t>());
+                        predicateAst.fixed.value = builder.getInt16(queryReader.read<int16_t>());
+                        predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
+                        predicateAst.fixed.isFloat = false;
                         queryReader.advance(4);
                     } break;
 
                     case FieldType::INT: {
-                        isFloat = false;
                         queryReader.advance(2);
-                        compareValue = builder.getInt32(queryReader.read<int32_t>());
+                        predicateAst.fixed.value = builder.getInt32(queryReader.read<int32_t>());
+                        predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
+                        predicateAst.fixed.isFloat = false;
                     } break;
 
                     case FieldType::BIGINT: {
-                        isFloat = false;
                         queryReader.advance(6);
-                        compareValue = builder.getInt64(queryReader.read<int64_t>());
+                        predicateAst.fixed.value = builder.getInt64(queryReader.read<int64_t>());
+                        predicateAst.fixed.predicate = builder.getIntPredicate(predicateType);
+                        predicateAst.fixed.isFloat = false;
                     } break;
 
                     case FieldType::FLOAT: {
-                        isFloat = true;
                         queryReader.advance(2);
-                        compareValue = builder.getFloat(queryReader.read<float>());
+                        predicateAst.fixed.value = builder.getFloat(queryReader.read<float>());
+                        predicateAst.fixed.predicate = builder.getFloatPredicate(predicateType);
+                        predicateAst.fixed.isFloat = true;
                     } break;
 
                     case FieldType::DOUBLE: {
-                        isFloat = true;
                         queryReader.advance(6);
-                        compareValue = builder.getDouble(queryReader.read<double>());
+                        predicateAst.fixed.value = builder.getDouble(queryReader.read<double>());
+                        predicateAst.fixed.predicate = builder.getFloatPredicate(predicateType);
+                        predicateAst.fixed.isFloat = true;
+                    } break;
+
+                    case FieldType::BLOB:
+                    case FieldType::TEXT: {
+                        queryReader.advance(2);
+                        auto size = queryReader.read<uint32_t>();
+                        auto data = queryReader.read(size);
+                        queryReader.align(8u);
+
+                        std::unique_ptr<char[]> tmpData;
+                        if (predicateType == PredicateType::LIKE || predicateType == PredicateType::NOT_LIKE) {
+                            LOG_ASSERT(fieldAst.type == FieldType::TEXT, "Like only supported on text fields");
+                            LOG_ASSERT(size > 0, "Size must be larger than 0");
+                            LOG_ASSERT(data[0] == '%' || data[size - 1] == '%', "Only prefix or postfix supported");
+                            LOG_ASSERT(std::count(data, data + size, '%') == 1, "Must contain exactly one wildcard");
+                            --size;
+                            if (data[0] == '%') {
+                                ++data;
+                                predicateAst.variable.isPrefixLike = false;
+                            } else {
+                                tmpData.reset(new char[size]);
+                                memcpy(tmpData.get(), data, size);
+                                tmpData[size] = '\0';
+                                data = tmpData.get();
+                                predicateAst.variable.isPrefixLike = true;
+                            }
+                        }
+
+                        predicateAst.variable.size = size;
+                        if (size <= sizeof(uint32_t)) {
+                            memcpy(&predicateAst.variable.prefix, data, size);
+                        } else {
+                            memcpy(&predicateAst.variable.prefix, data, sizeof(uint32_t));
+                            auto value = ConstantDataArray::get(builder.getContext(),
+                                    makeArrayRef(reinterpret_cast<const uint8_t*>(data) + sizeof(uint32_t),
+                                            size - sizeof(uint32_t)));
+                            predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
+                                    GlobalValue::PrivateLinkage, value);
+                        }
                     } break;
 
                     default: {
-                        LOG_ASSERT(false, "Only fixed size fields are supported (right now)");
-                        isFloat = false;
-                        compareValue = nullptr;
+                        LOG_ASSERT(false, "Invalid field");
                     } break;
                     }
-
-                    CmpInst::Predicate predicate;
-                    switch (predicateType) {
-                    case PredicateType::EQUAL: {
-                        predicate = (isFloat ? CmpInst::FCMP_OEQ : CmpInst::ICMP_EQ);
-                    } break;
-
-                    case PredicateType::NOT_EQUAL: {
-                        predicate = (isFloat ? CmpInst::FCMP_ONE : CmpInst::ICMP_NE);
-                    } break;
-
-                    case PredicateType::LESS: {
-                        predicate = (isFloat ? CmpInst::FCMP_OLT : CmpInst::ICMP_SLT);
-                    } break;
-
-                    case PredicateType::LESS_EQUAL: {
-                        predicate = (isFloat ? CmpInst::FCMP_OLE : CmpInst::ICMP_SLE);
-                    } break;
-
-                    case PredicateType::GREATER: {
-                        predicate = (isFloat ? CmpInst::FCMP_OGT : CmpInst::ICMP_SGT);
-                    } break;
-
-                    case PredicateType::GREATER_EQUAL: {
-                        predicate = (isFloat ? CmpInst::FCMP_OGE : CmpInst::ICMP_SGE);
-                    } break;
-
-                    default: {
-                        LOG_ASSERT(false, "Unknown or invalid predicate");
-                        predicate = (isFloat ? CmpInst::BAD_FCMP_PREDICATE : CmpInst::BAD_ICMP_PREDICATE);
-                    } break;
-                    }
-
-                    comp = (isFloat
-                            ? builder.CreateFCmp(predicate, src, compareValue)
-                            : builder.CreateICmp(predicate, src, compareValue));
-
-                    if (!field.isNotNull()) {
-                        comp = builder.CreateAnd(
-                                comp,
-                                builder.CreateICmp(CmpInst::ICMP_EQ, nullValue, builder.getInt8(0)));
-                    }
-                } break;
                 }
-
-                comp = builder.CreateZExt(comp, builder.getInt8Ty());
-
-                auto conjunctElement = builder.CreateInBoundsGEP(args[destData], builder.getInt64(conjunctPosition));
-
-                // -> res[i] = res[i] | comp;
-                if (conjunctsGenerated[conjunctPosition]) {
-                    comp = builder.CreateOr(builder.CreateLoad(conjunctElement), comp);
-                } else {
-                    conjunctsGenerated[conjunctPosition] = true;
-                }
-                builder.CreateStore(comp, conjunctElement);
-            }
-            if (queryReader.exhausted()) {
-                state.currentColumn = std::numeric_limits<uint16_t>::max();
-            } else {
-                state.currentColumn = queryReader.read<uint16_t>();
+                fieldAst.predicates.emplace_back(std::move(predicateAst));
             }
         }
-        currentColumn = std::numeric_limits<uint16_t>::max();
+
+        mScanAst.numConjunct += queryAst.numConjunct;
+        mScanAst.queries.emplace_back(std::move(queryAst));
     }
-
-    for (decltype(queryBuffers.size()) i = 0; i < queryBuffers.size(); ++i) {
-        auto& state = queryBuffers.at(i);
-        auto snapshot = state.snapshot;
-
-        // Evaluate validFrom <= version && validTo > baseVersion
-        auto res = builder.CreateAnd(
-                builder.CreateICmp(CmpInst::ICMP_ULE, args[validFrom], builder.getInt64(snapshot->version())),
-                builder.CreateICmp(CmpInst::ICMP_UGT, args[validTo], builder.getInt64(snapshot->baseVersion())));
-
-        // Evaluate partitioning key % partitionModulo == partitionNumber
-        if (state.partitionModulo != 0u) {
-            auto comp = builder.CreateICmp(CmpInst::ICMP_EQ,
-                    builder.createConstMod(args[key], state.partitionModulo),
-                    builder.getInt64(state.partitionNumber));
-            res = builder.CreateAnd(res, comp);
-        }
-        res = builder.CreateZExt(res, builder.getInt8Ty());
-
-        // Evaluate conjuncts
-        for (decltype(state.numConjunct) j = 0; j < state.numConjunct; ++j) {
-            auto conjunctBElement = builder.CreateInBoundsGEP(args[destData], builder.getInt64(state.conjunctOffset + j));
-            res = builder.CreateAnd(res, builder.CreateLoad(conjunctBElement));
-        }
-
-        builder.CreateStore(res, builder.CreateInBoundsGEP(args[destData], builder.getInt64(i)));
-    }
-
-    // Return
-    builder.CreateRetVoid();
 }
 
 void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
@@ -749,8 +708,6 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
         if (mResult[i] == 0) {
             continue;
         }
-
-        // TODO Snapshot Descriptor check
 
         mQueries[i].writeRecord(key, length, validFrom, validTo, [this, i, data, length] (char* dest) {
             return mRowMaterializeFuns[i](data, length, dest);

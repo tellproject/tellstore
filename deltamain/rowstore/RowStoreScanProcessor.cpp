@@ -40,7 +40,7 @@ RowStoreScan::RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*
 }
 
 std::vector<std::unique_ptr<RowStoreScanProcessor>> RowStoreScan::startScan(size_t numThreads) {
-    return mTable->startScan(numThreads, mQueries, mRowScanFun, mRowMaterializeFuns, mNumConjuncts);
+    return mTable->startScan(numThreads, mQueries, mRowScanFun, mRowMaterializeFuns, mScanAst.numConjunct);
 }
 
 RowStoreScanProcessor::RowStoreScanProcessor(const RowStoreContext& /* context */, const Record& record,

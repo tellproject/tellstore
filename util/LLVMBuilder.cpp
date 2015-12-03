@@ -23,6 +23,9 @@
 
 #include "LLVMBuilder.hpp"
 
+#include <llvm/IR/Module.h>
+#include <llvm/Target/TargetMachine.h>
+
 namespace tell {
 namespace store {
 
@@ -50,14 +53,14 @@ llvm::Value* LLVMBuilder::createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_
         throw std::invalid_argument("Modulo by 0");
     }
     if (rhs == 1u) {
-        return (vectorSize == 0 ? getInt64(0) : getInt64Vector(vectorSize, 0));
+        return getInt64Vector(vectorSize, 0);
     }
     auto mask = rhs - 1;
     if (rhs & mask) {
-        return CreateURem(lhs, (vectorSize == 0 ? getInt64(rhs) : getInt64Vector(vectorSize, rhs)));
+        return CreateURem(lhs, getInt64Vector(vectorSize, rhs));
     }
 
-    return CreateAnd(lhs, (vectorSize == 0 ? getInt64(mask) : getInt64Vector(vectorSize, mask)));
+    return CreateAnd(lhs, getInt64Vector(vectorSize, mask));
 }
 
 llvm::Value* LLVMBuilder::createPointerAlign(llvm::Value* value, uintptr_t alignment) {
@@ -117,6 +120,92 @@ llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field, unsigned AddrSpac
         LOG_ASSERT(false, "Only fixed size fields are allowed");
         return nullptr;
     }
+}
+
+llvm::CmpInst::Predicate LLVMBuilder::getIntPredicate(PredicateType type) {
+    using namespace llvm;
+
+    switch (type) {
+    case PredicateType::EQUAL:
+        return CmpInst::ICMP_EQ;
+
+    case PredicateType::NOT_EQUAL:
+        return CmpInst::ICMP_NE;
+
+    case PredicateType::LESS:
+        return CmpInst::ICMP_SLT;
+
+    case PredicateType::LESS_EQUAL:
+        return CmpInst::ICMP_SLE;
+
+    case PredicateType::GREATER:
+        return CmpInst::ICMP_SGT;
+
+    case PredicateType::GREATER_EQUAL:
+        return CmpInst::ICMP_SGE;
+
+    default: {
+        LOG_ASSERT(false, "Unknown or invalid predicate");
+        return CmpInst::BAD_ICMP_PREDICATE;
+    }
+    }
+}
+
+llvm::CmpInst::Predicate LLVMBuilder::getFloatPredicate(PredicateType type) {
+    using namespace llvm;
+
+    switch (type) {
+    case PredicateType::EQUAL:
+        return CmpInst::FCMP_OEQ;
+
+    case PredicateType::NOT_EQUAL:
+        return CmpInst::FCMP_ONE;
+
+    case PredicateType::LESS:
+        return CmpInst::FCMP_OLT;
+
+    case PredicateType::LESS_EQUAL:
+        return CmpInst::FCMP_OLE;
+
+    case PredicateType::GREATER:
+        return CmpInst::FCMP_OGT;
+
+    case PredicateType::GREATER_EQUAL:
+        return CmpInst::FCMP_OGE;
+
+    default: {
+        LOG_ASSERT(false, "Unknown or invalid predicate");
+        return CmpInst::BAD_FCMP_PREDICATE;
+    }
+    }
+}
+
+FunctionBuilder::FunctionBuilder(llvm::Module& module, llvm::TargetMachine* target, llvm::Type* returnType,
+        std::vector<std::pair<llvm::Type*, crossbow::string>> params, const llvm::Twine& name)
+        : LLVMBuilder(module.getContext()),
+          mTargetInfo(module.getDataLayout()) {
+    std::vector<llvm::Type*> paramTypes;
+    paramTypes.reserve(params.size());
+    for (auto& p : params) {
+        paramTypes.emplace_back(p.first);
+    }
+    auto functionType = llvm::FunctionType::get(returnType, paramTypes, false);
+    mFunction = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, name, &module);
+    mFunction->addFnAttr(llvm::Attribute::NoUnwind);
+    mFunction->addFnAttr("target-cpu", target->getTargetCPU());
+    mFunction->addFnAttr("target-features", target->getTargetFeatureString());
+
+    mTargetInfo = target->getTargetIRAnalysis().run(*mFunction);
+
+    mParams.reserve(params.size());
+    decltype(params.size()) idx = 0;
+    for (auto iter = mFunction->arg_begin(); idx != params.size(); ++iter, ++idx) {
+        iter->setName(params[idx].second.c_str());
+        mParams.emplace_back(iter.operator ->());
+    }
+
+    auto entryBlock = llvm::BasicBlock::Create(Context, "entry", mFunction);
+    SetInsertPoint(entryBlock);
 }
 
 } // namespace store

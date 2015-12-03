@@ -23,11 +23,13 @@
 
 #pragma once
 
+#include <util/LLVMBuilder.hpp>
 #include <util/LLVMJIT.hpp>
 #include <util/ScanQuery.hpp>
 
 #include <crossbow/non_copyable.hpp>
 
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
@@ -35,21 +37,165 @@
 #include <memory>
 #include <vector>
 
-struct LLVMScanQueryProcessor {
-    char* bufferPos;
-
-    const char* bufferEnd;
-
-    size_t length;
-};
-
-extern "C" void queryProcessorAcquireBuffer(LLVMScanQueryProcessor* data);
-
-
 namespace tell {
 namespace store {
 
 class Record;
+
+/**
+ * @brief AST node representing a predicate on a fixed size field
+ */
+struct FixedPredicateAST {
+    /// The value the predicate must match
+    llvm::Constant* value;
+
+    /// Predicate of the comparison
+    llvm::CmpInst::Predicate predicate;
+
+    /// Whether the value is a float or an integer
+    bool isFloat;
+};
+
+/**
+ * @brief AST node representing a predicate on a variable size field
+ */
+struct VariablePredicateAST {
+    /// Total size of the data (including the prefix)
+    uint32_t size;
+
+    /// First bytes of the data the predicate must match
+    char prefix[4];
+
+    /// Remaining bytes of the data the predicate must match if the size is larger than 4 bytes
+    llvm::GlobalVariable* value;
+
+    /// Whether a like matches on the prefix or postfix (only valid for like predicate)
+    bool isPrefixLike;
+};
+
+/**
+ * @brief AST node representing a predicate on a field
+ */
+struct PredicateAST {
+    PredicateAST(PredicateType _type, uint32_t _conjunct)
+            : type(_type),
+              conjunct(_conjunct) {
+    }
+
+    PredicateType type;
+
+    /// Conjunct index in the result vector the predicate is attached to
+    uint32_t conjunct;
+
+    union {
+        /// The value the predicate must match in case the field fix sized
+        /// Not active in case the predicate type matches on the null status
+        FixedPredicateAST fixed;
+
+        /// The value the predicate must match in case the field is variable sized
+        /// Not active in case the predicate type matches on the null status
+        VariablePredicateAST variable;
+    };
+};
+
+/**
+ * @brief AST node representing a number of predicates on a field
+ */
+struct FieldAST {
+    uint16_t id;
+    FieldType type;
+    bool isNotNull;
+    bool needsValue;
+
+    uint32_t offset;
+    uint32_t alignment;
+    uint32_t size;
+
+    std::vector<PredicateAST> predicates;
+};
+
+/**
+ * @brief AST node representing a single query
+ */
+struct QueryAST {
+    /// Base version of the snapshot
+    uint64_t baseVersion;
+
+    /// Version of the snapshot
+    uint64_t version;
+
+    /// Offset to the first non-result conjunct of this query
+    uint32_t conjunctOffset;
+
+    /// Number of conjuncts in the query
+    uint32_t numConjunct;
+
+    /// Overall number of partitions (or 0 if no partitioning)
+    uint32_t partitionModulo;
+
+    /// Partition the query is interested in
+    uint32_t partitionNumber;
+};
+
+/**
+ * @brief Root AST node of a scan
+ */
+struct ScanAST {
+    ScanAST()
+            : numConjunct(0),
+              needsKey(false) {
+    }
+
+    /// Number of conjuncts in total
+    uint32_t numConjunct;
+
+    /// Whether any scan has a partition on it (and as such the key is needed)
+    bool needsKey;
+
+    std::map<uint16_t, FieldAST> fields;
+
+    std::vector<QueryAST> queries;
+};
+
+/**
+ * @brief Helper class creating the row store scan function
+ */
+class LLVMRowScanBuilder : private FunctionBuilder {
+public:
+    static const std::string FUNCTION_NAME;
+
+    static void createFunction(llvm::Module& module, llvm::TargetMachine* target, const ScanAST& scanAst) {
+        LLVMRowScanBuilder builder(module, target);
+        builder.buildScan(scanAst);
+    }
+
+private:
+    static constexpr size_t key = 0;
+    static constexpr size_t validFrom = 1;
+    static constexpr size_t validTo = 2;
+    static constexpr size_t recordData = 3;
+    static constexpr size_t resultData = 4;
+
+    static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
+        return llvm::Type::getVoidTy(context);
+    }
+
+    static std::vector<std::pair<llvm::Type*, crossbow::string>> buildParamTy(llvm::LLVMContext& context) {
+        return {
+            { llvm::Type::getInt64Ty(context), "key" },
+            { llvm::Type::getInt64Ty(context), "validFrom" },
+            { llvm::Type::getInt64Ty(context), "validTo" },
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "recordData" },
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "resultData" }
+        };
+    }
+
+    LLVMRowScanBuilder(llvm::Module& module, llvm::TargetMachine* target);
+
+    void buildScan(const ScanAST& scanAst);
+
+    std::vector<uint8_t> mConjunctsGenerated;
+};
 
 class LLVMScanBase {
 public:
@@ -90,14 +236,14 @@ protected:
 
     std::vector<ScanQuery*> mQueries;
 
+    ScanAST mScanAst;
+
     RowScanFun mRowScanFun;
 
     std::vector<RowMaterializeFun> mRowMaterializeFuns;
 
-    uint32_t mNumConjuncts;
-
 private:
-    void prepareRowScanFunction(const Record& record);
+    void buildScanAST(const Record& record);
 
     void prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
 

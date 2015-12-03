@@ -74,13 +74,13 @@ std::vector<std::unique_ptr<GcScanProcessor>> GcScan::startScan(size_t numThread
         }
 
         result.emplace_back(new GcScanProcessor(*mTable, mQueries, begin, iter, version, mRowScanFun,
-                mRowMaterializeFuns, mNumConjuncts));
+                mRowMaterializeFuns, mScanAst.numConjunct));
         begin = iter;
     }
 
     // The last scan takes the remaining pages
     result.emplace_back(new GcScanProcessor (*mTable, mQueries, begin, end, version, mRowScanFun, mRowMaterializeFuns,
-            mNumConjuncts));
+            mScanAst.numConjunct));
 
     return result;
 }

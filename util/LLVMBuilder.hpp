@@ -25,6 +25,7 @@
 
 #include <tellstore/Record.hpp>
 
+#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/IR/IRBuilder.h>
 
 #include <cstdint>
@@ -37,12 +38,20 @@ namespace store {
  */
 class LLVMBuilder : public llvm::IRBuilder<> {
 public:
+    static llvm::Type* getVectorTy(llvm::Type* type, uint64_t vectorSize) {
+        return vectorSize == 1 ? type : llvm::VectorType::get(type, vectorSize);
+    }
+
+    static llvm::Constant* getVector(uint64_t vectorSize, llvm::Constant* value) {
+        return vectorSize == 1 ? value : llvm::ConstantVector::getSplat(vectorSize, value);
+    }
+
     LLVMBuilder(llvm::LLVMContext& context)
             : llvm::IRBuilder<>(context) {
     }
 
     llvm::Type* getInt1VectorTy(uint64_t vectorSize) {
-        return llvm::VectorType::get(getInt1Ty(), vectorSize);
+        return getVectorTy(getInt1Ty(), vectorSize);
     }
 
     llvm::PointerType* getInt1VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
@@ -50,7 +59,7 @@ public:
     }
 
     llvm::Type* getInt8VectorTy(uint64_t vectorSize) {
-        return llvm::VectorType::get(getInt8Ty(), vectorSize);
+        return getVectorTy(getInt8Ty(), vectorSize);
     }
 
     llvm::PointerType* getInt8VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
@@ -66,19 +75,23 @@ public:
     }
 
     llvm::Type* getInt32VectorTy(uint64_t vectorSize) {
-        return llvm::VectorType::get(getInt32Ty(), vectorSize);
+        return getVectorTy(getInt32Ty(), vectorSize);
     }
 
     llvm::PointerType* getInt64PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt64PtrTy(Context, AddrSpace);
     }
 
+    llvm::Type* getInt64VectorTy(uint64_t vectorSize) {
+        return getVectorTy(getInt64Ty(), vectorSize);
+    }
+
     llvm::PointerType* getInt64VectorPtrTy(uint64_t vectorSize, unsigned AddrSpace = 0) {
-        return llvm::VectorType::get(getInt64Ty(), vectorSize)->getPointerTo(AddrSpace);
+        return getInt64VectorTy(vectorSize)->getPointerTo(AddrSpace);
     }
 
     llvm::Constant* getInt64Vector(uint64_t vectorSize, uint64_t C) {
-        return llvm::ConstantVector::getSplat(vectorSize, getInt64(C));
+        return getVector(vectorSize, getInt64(C));
     }
 
     llvm::Type* getFloatTy() {
@@ -94,7 +107,7 @@ public:
     }
 
     llvm::Constant* getFloatVector(uint64_t vectorSize, float C) {
-        return llvm::ConstantVector::getSplat(vectorSize, getFloat(C));
+        return getVector(vectorSize, getFloat(C));
     }
 
     llvm::Type* getDoubleTy() {
@@ -110,20 +123,24 @@ public:
     }
 
     llvm::Constant* getDoubleVector(uint64_t vectorSize, double C) {
-        return llvm::ConstantVector::getSplat(vectorSize, getDouble(C));
+        return getVector(vectorSize, getDouble(C));
     }
 
     llvm::Type* getFieldTy(FieldType field);
 
     llvm::PointerType* getFieldPtrTy(FieldType field, unsigned AddrSpace = 0);
 
-    llvm::Type* getFieldVectorTy(uint64_t vectorSize, FieldType field) {
-        return llvm::VectorType::get(getFieldTy(field), vectorSize);
+    llvm::Type* getFieldVectorTy(FieldType field, uint64_t vectorSize) {
+        return getVectorTy(getFieldTy(field), vectorSize);
     }
 
-    llvm::PointerType* getFieldVectorPtrTy(uint64_t vectorSize, FieldType field, unsigned AddrSpace = 0) {
-        return getFieldVectorTy(vectorSize, field)->getPointerTo(AddrSpace);
+    llvm::PointerType* getFieldVectorPtrTy(FieldType field, uint64_t vectorSize, unsigned AddrSpace = 0) {
+        return getFieldVectorTy(field, vectorSize)->getPointerTo(AddrSpace);
     }
+
+    llvm::CmpInst::Predicate getIntPredicate(PredicateType type);
+
+    llvm::CmpInst::Predicate getFloatPredicate(PredicateType type);
 
     /**
      * @brief Create an optimized multiplication operation with a constant
@@ -140,6 +157,88 @@ public:
      */
     llvm::Value* createPointerAlign(llvm::Value* value, uintptr_t alignment);
 };
+
+/**
+ * @brief Helper class to build a LLVM function
+ */
+class FunctionBuilder : public LLVMBuilder {
+public:
+    /**
+     * @brief Create a new function
+     *
+     * @param module Module the new function should be created in
+     * @param target Properties of the target that should be associated with the function
+     * @param returnType Return type of the function
+     * @param params Type and name of all parameters of the function
+     * @param name Name of the function
+     */
+    FunctionBuilder(llvm::Module& module, llvm::TargetMachine* target, llvm::Type* returnType,
+            std::vector<std::pair<llvm::Type*, crossbow::string>> params, const llvm::Twine& name);
+
+    llvm::Function* getFunction() {
+        return mFunction;
+    }
+
+    llvm::Value* getParam(size_t idx) {
+        return mParams[idx];
+    }
+
+    llvm::BasicBlock* createBasicBlock(const llvm::Twine& name) {
+        return llvm::BasicBlock::Create(Context, name, mFunction);
+    }
+
+    /**
+     * @brief Create a new loop
+     *
+     * @param start Start index of the loop
+     * @param end End index of the loop
+     * @param step Step count of every iteration
+     * @param name Name of the loop blocks
+     * @param fun Function with the signature void(llvm::Value*) producing the loop code for the supplied index
+     * @return The end index of the loop
+     */
+    template <typename Fun>
+    llvm::Value* createLoop(llvm::Value* start, llvm::Value* end, uint64_t step, const llvm::Twine& name, Fun fun);
+
+protected:
+    llvm::Function* mFunction;
+
+    std::vector<llvm::Value*> mParams;
+
+    llvm::TargetTransformInfo mTargetInfo;
+};
+
+template <typename Fun>
+llvm::Value* FunctionBuilder::createLoop(llvm::Value* start, llvm::Value* end, uint64_t step, const llvm::Twine& name,
+        Fun fun) {
+    if (step != 1) {
+        auto count = CreateSub(end, start);
+        count = CreateAnd(count, getInt64(-step));
+        end = CreateAdd(start, count);
+    }
+
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock(name + ".body");
+    auto endBlock = createBasicBlock(name + ".end");
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, start, end), bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
+
+    // -> auto i = start;
+    auto i = CreatePHI(getInt64Ty(), 2);
+    i->addIncoming(start, previousBlock);
+
+    fun(i);
+
+    // -> i += 1;
+    auto next = CreateAdd(i, getInt64(step));
+    i->addIncoming(next, bodyBlock);
+
+    // -> i != endIdx
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, next, end), bodyBlock, endBlock);
+
+    SetInsertPoint(endBlock);
+    return end;
+}
 
 } // namespace store
 } // namespace tell
