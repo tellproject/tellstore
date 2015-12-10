@@ -21,6 +21,8 @@
  *     Lucas Braun <braunl@inf.ethz.ch>
  */
 
+#pragma once
+
 #include <util/LLVMBuilder.hpp>
 #include <util/LLVMScan.hpp>
 
