@@ -654,8 +654,6 @@ public:
     bool create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
     char* create(const GenericTuple& tuple, size_t& size) const;
 
-    char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
-
     size_t fieldCount() const {
         return mFieldMetaData.size();
     }
