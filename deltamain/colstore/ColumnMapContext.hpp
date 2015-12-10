@@ -147,8 +147,15 @@ public:
     /**
      * @brief Materialize the tuple from the page into the destination buffer
      */
-    void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-        mMaterializeFun(reinterpret_cast<const char*>(page), idx, dest, size);
+    void materialize(const ColumnMapMainPage* page, uint32_t idx, uint32_t size, char* dest) const {
+        mMaterializeFun(reinterpret_cast<const char*>(page), idx, size, dest);
+    }
+
+    /**
+     * @brief Function pointer for materializing a tuple from the page
+     */
+    LLVMColumnMapMaterializeBuilder::Signature materializeFunction() const {
+        return mMaterializeFun;
     }
 
 private:
@@ -174,6 +181,7 @@ private:
     /// \copydoc ColumnMapContext::fixedMetaData() const
     std::vector<FixedColumnMetaData> mFixedMetaData;
 
+    /// \copydoc ColumnMapContext::materializeFunction() const
     LLVMColumnMapMaterializeBuilder::Signature mMaterializeFun;
 
     LLVMJIT mLLVMJit;

@@ -60,12 +60,6 @@ namespace {
 
 static const std::string gColumnMaterializeFunctionName = "columnMaterialize.";
 
-static const std::array<std::string, 3> gColumnProjectionParamNames = {{
-    "page",
-    "idx",
-    "destData"
-}};
-
 static const std::array<std::string, 5> gColumnAggregationParamNames = {{
     "page",
     "startIdx",
@@ -80,17 +74,19 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table),
           mColumnScanFun(nullptr) {
-    LLVMColumnMapScanBuilder::createFunction(table->context(), mCompilerModule, mCompiler.getTargetMachine(), mScanAst);
+    auto& context = table->context();
+    auto targetMachine = mCompiler.getTargetMachine();
+    LLVMColumnMapScanBuilder::createFunction(context, mCompilerModule, targetMachine, mScanAst);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            prepareColumnProjectionFunction(table->context(), q, i);
+            LLVMColumnMapProjectionBuilder::createFunction(context, mCompilerModule, targetMachine, i, q);
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            prepareColumnAggregationFunction(table->context(), q, i);
+            prepareColumnAggregationFunction(context, q, i);
         } break;
         default:
             break;
@@ -104,14 +100,13 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         switch (mQueries[i]->queryType()) {
         case ScanQueryType::FULL: {
-            mColumnProjectionFuns.emplace_back(nullptr);
+            mColumnProjectionFuns.emplace_back(context.materializeFunction());
             mColumnAggregationFuns.emplace_back(nullptr);
         } break;
 
         case ScanQueryType::PROJECTION: {
-            std::stringstream ss;
-            ss << gColumnMaterializeFunctionName << i;
-            auto fun = mCompiler.findFunction<ColumnProjectionFun>(ss.str());
+            auto fun = mCompiler.findFunction<ColumnProjectionFun>(
+                    LLVMColumnMapProjectionBuilder::createFunctionName(i));
             mColumnProjectionFuns.emplace_back(fun);
             mColumnAggregationFuns.emplace_back(nullptr);
         } break;
@@ -130,149 +125,6 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
 std::vector<std::unique_ptr<ColumnMapScanProcessor>> ColumnMapScan::startScan(size_t numThreads) {
     return mTable->startScan(numThreads, mQueries, mColumnScanFun, mColumnProjectionFuns, mColumnAggregationFuns,
             mRowScanFun, mRowMaterializeFuns, mScanAst.numConjunct);
-}
-
-void ColumnMapScan::prepareColumnProjectionFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index) {
-    using namespace llvm;
-
-    static constexpr size_t page = 0;
-    static constexpr size_t idx = 1;
-    static constexpr size_t destData = 2;
-
-    LLVMBuilder builder(mCompilerContext);
-
-    // Create ColumnMapMainPage struct
-    auto mainPageStructType = getColumnMapMainPageTy(mCompilerContext);
-
-    // Create function
-    auto funcType = FunctionType::get(builder.getInt32Ty(), {
-            builder.getInt8PtrTy(), // page
-            builder.getInt64Ty(),   // idx
-            builder.getInt8PtrTy()  // destData
-    }, false);
-    auto func = Function::Create(funcType, Function::ExternalLinkage, gColumnMaterializeFunctionName + Twine(index),
-            &mCompilerModule);
-
-    // Set arguments names
-    std::array<Value*, 3> args;
-    {
-        decltype(gColumnProjectionParamNames.size()) idx = 0;
-        for (auto iter = func->arg_begin(); idx != gColumnProjectionParamNames.size(); ++iter, ++idx) {
-            iter->setName(gColumnProjectionParamNames[idx]);
-            args[idx] = iter.operator ->();
-        }
-    }
-
-    // Set noalias hints (data pointers are not allowed to overlap)
-    func->setDoesNotAlias(1);
-    func->setOnlyReadsMemory(1);
-    func->setDoesNotAlias(3);
-
-    // Build function
-    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(entryBlock);
-
-    auto mainPage = builder.CreateBitCast(args[page], mainPageStructType->getPointerTo());
-
-    auto count = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(0) });
-    count = builder.CreateZExt(builder.CreateAlignedLoad(count, 4u), builder.getInt64Ty());
-
-    if (query->headerLength() != 0u) {
-        builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
-    }
-
-    auto& srcRecord = context.record();
-    auto& destRecord = query->record();
-    llvm::Value* headerData = nullptr;
-    Record::id_t destFieldIdx = 0u;
-    auto end = query->projectionEnd();
-    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
-        auto srcFieldIdx = *i;
-        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.field;
-        if (field.isNotNull()) {
-            continue;
-        }
-        if (!headerData) {
-            // auto headerOffset = mainPage->headerOffset;
-            auto headerOffset = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(1) });
-            headerOffset = builder.CreateZExt(builder.CreateAlignedLoad(headerOffset, 4u), builder.getInt64Ty());
-
-            // -> auto headerData = page + headerOffset;
-            headerData = builder.CreateInBoundsGEP(args[page], headerOffset);
-            headerData = builder.CreateInBoundsGEP(
-                    headerData,
-                    builder.createConstMul(args[idx], query->headerLength()));
-        }
-
-        auto srcIdx = srcFieldIdx / 8u;
-        auto srcBitIdx = srcFieldIdx % 8u;
-        uint8_t srcMask = (0x1u << srcBitIdx);
-
-        auto srcNullBitmap = headerData;
-        if (srcIdx != 0) {
-            srcNullBitmap = builder.CreateInBoundsGEP(srcNullBitmap, builder.getInt64(srcIdx));
-        }
-        srcNullBitmap = builder.CreateAnd(builder.CreateAlignedLoad(srcNullBitmap, 1u), builder.getInt8(srcMask));
-
-        auto destIdx = destFieldIdx / 8u;
-        auto destBitIdx = destFieldIdx % 8u;
-
-        if (destBitIdx > srcBitIdx) {
-            srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
-        } else if (destBitIdx < srcBitIdx) {
-            srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
-        }
-
-        auto destNullBitmap = args[destData];
-        if (destIdx != 0) {
-            destNullBitmap = builder.CreateInBoundsGEP(destNullBitmap, builder.getInt64(destIdx));
-        }
-
-        auto res = builder.CreateOr(builder.CreateAlignedLoad(destNullBitmap, 1u), srcNullBitmap);
-        builder.CreateAlignedStore(res, destNullBitmap, 1u);
-    }
-
-    llvm::Value* fixedData = nullptr;
-    destFieldIdx = 0u;
-    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
-        auto srcFieldIdx = *i;
-        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.field;
-        auto fieldAlignment = field.alignOf();
-        auto fieldPtrType = builder.getFieldPtrTy(field.type());
-
-        auto& fixedMetaData = context.fixedMetaData();
-        auto srcFieldOffset = fixedMetaData[srcFieldIdx].offset;
-
-        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).offset;
-
-        LOG_ASSERT(field.isFixedSized(), "Only fixed size supported");
-        if (!fixedData) {
-            // auto fixedOffset = mainPage->fixedOffset;
-            auto fixedOffset = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(2) });
-            fixedOffset = builder.CreateZExt(builder.CreateAlignedLoad(fixedOffset, 4u), builder.getInt64Ty());
-
-            // -> auto fixedData = page + fixedOffset;
-            fixedData = builder.CreateInBoundsGEP(args[page], fixedOffset);
-        }
-
-        auto src = fixedData;
-        if (srcFieldOffset != 0) {
-            src = builder.CreateInBoundsGEP(src, builder.createConstMul(count, srcFieldOffset));
-        }
-        src = builder.CreateBitCast(src, fieldPtrType);
-        src = builder.CreateInBoundsGEP(src, args[idx]);
-
-        auto dest = args[destData];
-        if (destFieldOffset != 0) {
-            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(destFieldOffset));
-        }
-        dest = builder.CreateBitCast(dest, fieldPtrType);
-        builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
-    }
-
-    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
 void ColumnMapScan::prepareColumnAggregationFunction(const ColumnMapContext& context, ScanQuery* query,
@@ -828,28 +680,16 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         switch (mQueries[i].data()->queryType()) {
         case ScanQueryType::FULL: {
+        case ScanQueryType::PROJECTION:
+            auto fun = mColumnProjectionFuns[i];
             for (decltype(startIdx) j = startIdx; j < endIdx; ++j) {
                 if (result[j] == 0u) {
                     continue;
                 }
                 auto length = sizeData[j];
                 mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
-                        [this, page, j, length] (char* dest) {
-                    mContext.materialize(page, j, dest, length);
-                    return length;
-                });
-            }
-        } break;
-
-        case ScanQueryType::PROJECTION: {
-            for (decltype(startIdx) j = startIdx; j < endIdx; ++j) {
-                if (result[j] == 0u) {
-                    continue;
-                }
-                auto length = sizeData[j];
-                mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
-                        [this, page, i, j] (char* dest) {
-                    return mColumnProjectionFuns[i](reinterpret_cast<const char*>(page), j, dest);
+                        [fun, page, j, length] (char* dest) {
+                    return fun(reinterpret_cast<const char*>(page), j, length, dest);
                 });
             }
         } break;

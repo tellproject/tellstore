@@ -23,6 +23,8 @@
 
 #include "LLVMScan.hpp"
 
+#include "LLVMRowProjection.hpp"
+
 #include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
@@ -241,13 +243,14 @@ LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> q
           mRowScanFun(nullptr) {
     buildScanAST(record);
 
-    LLVMRowScanBuilder::createFunction(mCompilerModule, mCompiler.getTargetMachine(), mScanAst);
+    auto targetMachine = mCompiler.getTargetMachine();
+    LLVMRowScanBuilder::createFunction(mCompilerModule, targetMachine, mScanAst);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            prepareRowProjectionFunction(record, q, i);
+            LLVMRowProjectionBuilder::createFunction(record, mCompilerModule, targetMachine, i, q);
         } break;
 
         case ScanQueryType::AGGREGATION: {
@@ -423,103 +426,6 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
         mScanAst.numConjunct += queryAst.numConjunct;
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
-}
-
-void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
-    using namespace llvm;
-
-    static constexpr size_t recordData = 0;
-    static constexpr size_t destData = 2;
-
-    LLVMBuilder builder(mCompilerContext);
-
-    // Create function
-    auto funcType = FunctionType::get(builder.getInt32Ty(), {
-            builder.getInt8PtrTy(), // recordData
-            builder.getInt32Ty(),   // length
-            builder.getInt8PtrTy()  // destData
-    }, false);
-    auto func = Function::Create(funcType, Function::ExternalLinkage, gRowMaterializeFunctionName + Twine(index),
-            &mCompilerModule);
-
-    // Set arguments names
-    std::array<Value*, 3> args;
-    {
-        decltype(gRowMaterializeParamNames.size()) idx = 0;
-        for (auto iter = func->arg_begin(); idx != gRowMaterializeParamNames.size(); ++iter, ++idx) {
-            iter->setName(gRowMaterializeParamNames[idx]);
-            args[idx] = iter.operator ->();
-        }
-    }
-
-    // Set noalias hints (data pointers are not allowed to overlap)
-    func->setDoesNotAlias(1);
-    func->setOnlyReadsMemory(1);
-    func->setDoesNotAlias(3);
-
-    // Build function
-    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(entryBlock);
-
-    if (query->headerLength() != 0u) {
-        builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
-    }
-
-    auto& destRecord = query->record();
-    Record::id_t destFieldIdx = 0u;
-    auto end = query->projectionEnd();
-    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
-        auto srcFieldIdx = *i;
-        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.field;
-
-        if (!field.isNotNull()) {
-            auto srcIdx = srcFieldIdx / 8u;
-            auto srcBitIdx = srcFieldIdx % 8u;
-            uint8_t srcMask = (0x1u << srcBitIdx);
-
-            auto srcNullBitmap = (srcIdx == 0
-                    ? args[recordData]
-                    : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcIdx)));
-            srcNullBitmap = builder.CreateAnd(builder.CreateLoad(srcNullBitmap), builder.getInt8(srcMask));
-
-            auto destIdx = destFieldIdx / 8u;
-            auto destBitIdx = destFieldIdx % 8u;
-
-            if (destBitIdx > srcBitIdx) {
-                srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
-            } else if (destBitIdx < srcBitIdx) {
-                srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
-            }
-
-            auto destNullBitmap = (destIdx == 0
-                    ? args[destData]
-                    : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
-
-            auto res = builder.CreateOr(builder.CreateLoad(destNullBitmap), srcNullBitmap);
-            builder.CreateStore(res, destNullBitmap);
-        }
-
-        auto srcFieldOffset = srcFieldMeta.offset;
-        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).offset;
-        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
-
-        auto fieldAlignment = field.alignOf();
-        auto fieldPtrType = builder.getFieldPtrTy(field.type());
-        auto src = (srcFieldOffset == 0
-                ? args[recordData]
-                : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcFieldOffset)));
-        src = builder.CreateBitCast(src, fieldPtrType);
-        auto value = builder.CreateAlignedLoad(src, fieldAlignment);
-
-        auto dest = (destFieldOffset == 0
-                ? args[destData]
-                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
-        dest = builder.CreateBitCast(dest, fieldPtrType);
-        builder.CreateAlignedStore(value, dest, fieldAlignment);
-    }
-
-    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
 void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {

@@ -246,8 +246,6 @@ protected:
 private:
     void buildScanAST(const Record& record);
 
-    void prepareRowProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
-
     void prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
 };
 

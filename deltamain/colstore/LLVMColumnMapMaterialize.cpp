@@ -42,13 +42,15 @@ LLVMColumnMapMaterializeBuilder::LLVMColumnMapMaterializeBuilder(const ColumnMap
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);
     mFunction->setOnlyReadsMemory(1);
-    mFunction->setDoesNotAlias(3);
+    mFunction->setDoesNotAlias(4);
 }
 
 void LLVMColumnMapMaterializeBuilder::build() {
     auto& record = mContext.record();
 
     auto mainPage = CreateBitCast(getParam(page), mMainPageStructTy->getPointerTo());
+
+    auto index = CreateZExt(getParam(idx), getInt64Ty());
 
     // Copy the header (null bitmap) if the record has one
     if (record.headerSize() != 0) {
@@ -60,7 +62,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
         auto src = CreateInBoundsGEP(getParam(page), headerOffset);
 
         // -> src += idx * record.headerSize();
-        src = CreateInBoundsGEP(src, createConstMul(getParam(idx), record.headerSize()));
+        src = CreateInBoundsGEP(src, createConstMul(index, record.headerSize()));
 
         // -> memcpy(data, src, record.headerSize());
         CreateMemCpy(getParam(data), src, record.headerSize(), 8u);
@@ -91,7 +93,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
                 src = CreateInBoundsGEP(src, createConstMul(count, colMeta.offset));
             }
             src = CreateBitCast(src, fieldPtrTy);
-            src = CreateInBoundsGEP(src, getParam(idx));
+            src = CreateInBoundsGEP(src, index);
 
             // -> auto value = *src;
             auto value = CreateAlignedLoad(src, fieldAlignment);
@@ -117,7 +119,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
         // -> auto src = reinterpret_cast<const ColumnMapHeapEntry*>(page + variableOffset) + idx;
         auto src = CreateInBoundsGEP(getParam(page), variableOffset);
         src = CreateBitCast(src, mHeapEntryStructTy->getPointerTo());
-        src = CreateInBoundsGEP(src, getParam(idx));
+        src = CreateInBoundsGEP(src, index);
 
         // -> auto startOffset = src->offset;
         auto startOffset = CreateInBoundsGEP(src, { getInt64(0), getInt32(0) });
@@ -164,15 +166,12 @@ void LLVMColumnMapMaterializeBuilder::build() {
 
         // The last offset is always the size
         {
-            // -> auto offset = static_cast<uint32_t>(size);
-            auto endOffset = CreateTrunc(getParam(size), getInt32Ty());
-
             // -> auto dest = reinterpret_cast<uint32_t*>(dest + record.staticSize() - sizeof(uint32_t));
             auto dest = CreateInBoundsGEP(getParam(data), getInt64(record.staticSize() - sizeof(uint32_t)));
             dest = CreateBitCast(dest, getInt32PtrTy());
 
-            // -> *dest = offset;
-            CreateAlignedStore(endOffset, dest, 4u);
+            // -> *dest = size;
+            CreateAlignedStore(getParam(size), dest, 4u);
         }
 
         // -> auto heapOffset = TELL_PAGE_SIZE - static_cast<uint64_t>(startOffset);
@@ -186,14 +185,14 @@ void LLVMColumnMapMaterializeBuilder::build() {
         auto dest = CreateInBoundsGEP(getParam(data), getInt64(record.staticSize()));
 
         // -> auto length = size - record.staticSize();
-        auto length = CreateSub(getParam(size), getInt64(record.staticSize()));
+        auto length = CreateSub(getParam(size), getInt32(record.staticSize()));
 
         // -> memcpy(dest, heapSrc, length);
         CreateMemCpy(dest, heapSrc, length, 1u);
     }
 
     // Return
-    CreateRetVoid();
+    CreateRet(getParam(size));
 }
 
 } // namespace deltamain

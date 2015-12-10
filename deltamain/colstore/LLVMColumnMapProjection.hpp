@@ -28,18 +28,22 @@
 #include <crossbow/string.hpp>
 
 #include <cstddef>
+#include <sstream>
 #include <string>
 
 namespace tell {
 namespace store {
+
+class ScanQuery;
+
 namespace deltamain {
 
 class ColumnMapContext;
 
 /**
- * @brief Helper class creating the column map materialize function
+ * @brief Helper class creating the column map projection function
  */
-class LLVMColumnMapMaterializeBuilder : private FunctionBuilder {
+class LLVMColumnMapProjectionBuilder : private FunctionBuilder {
 public:
     using Signature = uint32_t (*) (
             const char* /* page */,
@@ -49,9 +53,16 @@ public:
 
     static const std::string FUNCTION_NAME;
 
-    static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target) {
-        LLVMColumnMapMaterializeBuilder builder(context, module, target);
-        builder.build();
+    static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
+            uint32_t index, ScanQuery* query) {
+        LLVMColumnMapProjectionBuilder builder(context, module, target, index);
+        builder.build(query);
+    }
+
+    static std::string createFunctionName(uint32_t index) {
+        std::stringstream ss;
+        ss << FUNCTION_NAME << index;
+        return ss.str();
     }
 
 private:
@@ -73,9 +84,10 @@ private:
         };
     }
 
-    LLVMColumnMapMaterializeBuilder(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target);
+    LLVMColumnMapProjectionBuilder(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
+            uint32_t index);
 
-    void build();
+    void build(ScanQuery* query);
 
     const ColumnMapContext& mContext;
 

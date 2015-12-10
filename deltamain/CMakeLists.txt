@@ -10,6 +10,7 @@ set(DELTAMAIN_SRCS
     colstore/ColumnMapRecord.cpp
     colstore/ColumnMapScanProcessor.cpp
     colstore/LLVMColumnMapMaterialize.cpp
+    colstore/LLVMColumnMapProjection.cpp
     colstore/LLVMColumnMapScan.cpp
     colstore/LLVMColumnMapUtils.cpp
     rowstore/RowStorePage.cpp
@@ -27,6 +28,7 @@ set(DELTAMAIN_PRIVATE_HDR
     colstore/ColumnMapRecord.hpp
     colstore/ColumnMapScanProcessor.hpp
     colstore/LLVMColumnMapMaterialize.hpp
+    colstore/LLVMColumnMapProjection.hpp
     colstore/LLVMColumnMapUtils.hpp
     colstore/LLVMColumnMapScan.hpp
     rowstore/RowStoreContext.hpp

@@ -28,37 +28,43 @@
 #include <crossbow/string.hpp>
 
 #include <cstddef>
+#include <sstream>
 #include <string>
 
 namespace tell {
 namespace store {
-namespace deltamain {
 
-class ColumnMapContext;
+class Record;
+class ScanQuery;
 
 /**
- * @brief Helper class creating the column map materialize function
+ * @brief Helper class creating the row projection function
  */
-class LLVMColumnMapMaterializeBuilder : private FunctionBuilder {
+class LLVMRowProjectionBuilder : private FunctionBuilder {
 public:
     using Signature = uint32_t (*) (
-            const char* /* page */,
-            uint32_t /* idx */,
+            const char* /* srcData */,
             uint32_t /* size */,
-            char* /* data */);
+            char* /* destData */);
 
     static const std::string FUNCTION_NAME;
 
-    static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target) {
-        LLVMColumnMapMaterializeBuilder builder(context, module, target);
-        builder.build();
+    static void createFunction(const Record& record, llvm::Module& module, llvm::TargetMachine* target, uint32_t index,
+            ScanQuery* query) {
+        LLVMRowProjectionBuilder builder(record, module, target, index);
+        builder.build(query);
+    }
+
+    static std::string createFunctionName(uint32_t index) {
+        std::stringstream ss;
+        ss << FUNCTION_NAME << index;
+        return ss.str();
     }
 
 private:
-    static constexpr size_t page = 0;
-    static constexpr size_t idx = 1;
-    static constexpr size_t size = 2;
-    static constexpr size_t data = 3;
+    static constexpr size_t srcData = 0;
+    static constexpr size_t size = 1;
+    static constexpr size_t destData = 2;
 
     static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
         return llvm::Type::getInt32Ty(context);
@@ -66,23 +72,18 @@ private:
 
     static std::vector<std::pair<llvm::Type*, crossbow::string>> buildParamTy(llvm::LLVMContext& context) {
         return {
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "page" },
-            { llvm::Type::getInt32Ty(context), "idx" },
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "srcData" },
             { llvm::Type::getInt32Ty(context), "size" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "data" }
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "destData" }
         };
     }
 
-    LLVMColumnMapMaterializeBuilder(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target);
+    LLVMRowProjectionBuilder(const Record& record, llvm::Module& module, llvm::TargetMachine* target, uint32_t index);
 
-    void build();
+    void build(ScanQuery* query);
 
-    const ColumnMapContext& mContext;
-
-    llvm::StructType* mMainPageStructTy;
-    llvm::StructType* mHeapEntryStructTy;
+    const Record& mRecord;
 };
 
-} // namespace deltamain
 } // namespace store
 } // namespace tell

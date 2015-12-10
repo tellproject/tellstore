@@ -104,7 +104,7 @@ int ColumnMapRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sn
         }
 
         auto dest = fun(recordSizes[i], entries[i].version, isNewest);
-        mContext.materialize(page, i, dest, recordSizes[i]);
+        mContext.materialize(page, i, recordSizes[i], dest);
         return 0;
     }
 

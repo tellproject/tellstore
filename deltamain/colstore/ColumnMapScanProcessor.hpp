@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include "LLVMColumnMapProjection.hpp"
+
 #include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
 
@@ -57,7 +59,7 @@ public:
             const uint64_t* /* validToData */, const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
             char* /* resultData */);
 
-    using ColumnProjectionFun = uint32_t (*) (const char* /* page */, uint64_t /* idx */, char* /* destData */);
+    using ColumnProjectionFun = LLVMColumnMapProjectionBuilder::Signature;
 
     using ColumnAggregationFun = uint32_t (*) (const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
             const char* /* resultData */, char* /* destData */);
@@ -68,8 +70,6 @@ public:
 
 private:
     void prepareColumnScanFunction(const Record& record);
-
-    void prepareColumnProjectionFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index);
 
     void prepareColumnAggregationFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index);
 
