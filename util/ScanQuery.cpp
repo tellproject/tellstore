@@ -41,7 +41,7 @@ Record buildScanRecord(ScanQueryType queryType, const char* queryData, const cha
         Schema schema(TableType::UNKNOWN);
         ProjectionIterator end(queryDataEnd);
         for (ProjectionIterator i(queryData); i != end; ++i) {
-            auto& field = record.getFieldMeta(*i).first;
+            auto& field = record.getFieldMeta(*i).field;
             schema.addField(field.type(), field.name(), field.isNotNull());
         }
         return Record(std::move(schema));
@@ -55,7 +55,7 @@ Record buildScanRecord(ScanQueryType queryType, const char* queryData, const cha
             AggregationType aggType;
             std::tie(id, aggType) = *i;
 
-            auto& field = record.getFieldMeta(id).first;
+            auto& field = record.getFieldMeta(id).field;
             schema.addField(field.aggType(aggType), crossbow::to_string(fieldId), field.isNotNull());
         }
         return Record(std::move(schema));
@@ -80,7 +80,7 @@ ScanQuery::ScanQuery(ScanQueryType queryType, std::unique_ptr<char[]> selectionD
           mSnapshot(std::move(snapshot)),
           mRecord(buildScanRecord(mQueryType, mQueryData.get(), mQueryDataEnd, record)),
           mHeaderLength(mRecord.headerSize()),
-          mMinimumLength(mRecord.minimumSize() + ScanQueryProcessor::TUPLE_OVERHEAD) {
+          mMinimumLength(mRecord.staticSize() + ScanQueryProcessor::TUPLE_OVERHEAD) {
 }
 
 ScanQuery::~ScanQuery() = default;
@@ -165,25 +165,37 @@ void ScanQueryProcessor::writeFullRecord(uint64_t key, const char* data, uint32_
     // Copy complete tuple
     mBufferWriter.write(data, length);
 
+    // Align the tuple to 8 byte
+    // No need to check for space as the buffers are required to be a multiple of 8 bytes
+    mBufferWriter.align(8);
+
     ++mTupleCount;
 }
 
 void ScanQueryProcessor::writeProjectionRecord(const Record& record, uint64_t key, const char* data) {
     ensureBufferSpace(mData->minimumLength());
 
+    auto& destRecord = mData->record();
+
     // Write key
     mBufferWriter.write<uint64_t>(key);
     auto tupleData = mBufferWriter.data();
     mBufferWriter.set(0, mData->headerLength());
 
+    auto varHeapOffset = destRecord.staticSize();
+    mBufferWriter.advance(varHeapOffset - mData->headerLength());
+
     Record::id_t fieldId = 0u;
     auto end = mData->projectionEnd();
     for (auto i = mData->projectionBegin(); i != end; ++i) {
         bool isNull;
-        FieldType type;
-        auto field = record.data(data, *i, isNull, &type);
-        writeProjectionField(tupleData, fieldId, type, isNull, field);
+        auto value = record.data(data, *i, isNull);
+        writeProjectionField(tupleData, varHeapOffset, fieldId, isNull, data, value);
         ++fieldId;
+    }
+    if (destRecord.varSizeFieldCount() != 0) {
+        auto current = tupleData + destRecord.staticSize() - sizeof(uint32_t);
+        *reinterpret_cast<uint32_t*>(current) = varHeapOffset;
     }
 
     // Align the tuple to 8 byte
@@ -193,14 +205,29 @@ void ScanQueryProcessor::writeProjectionRecord(const Record& record, uint64_t ke
     ++mTupleCount;
 }
 
-void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, FieldType type, bool isNull,
-        const char* data) {
-    FieldBase field(type);
-    auto fieldLength = field.sizeOf(data);
-    if (!field.isFixedSized()) {
-        mBufferWriter.align(4u);
+void ScanQueryProcessor::writeProjectionField(char*& ptr, uint32_t& varHeapOffset, Record::id_t fieldId, bool isNull,
+        const char* data, const char* value) {
+    auto& record = mData->record();
+    auto& fieldMeta = record.getFieldMeta(fieldId);
+    auto& field = fieldMeta.field;
+
+    if (isNull) {
+        record.setFieldNull(ptr, fieldId, true);
     }
-    if (!mBufferWriter.canWrite(fieldLength)) {
+
+    auto current = ptr + fieldMeta.offset;
+    if (field.isFixedSized()) {
+        memcpy(current, value, field.staticSize());
+        return;
+    }
+
+    *reinterpret_cast<uint32_t*>(current) = varHeapOffset;
+
+    auto offsetData = reinterpret_cast<const uint32_t*>(value);
+    auto offset = offsetData[0];
+    auto length = offsetData[1] - offset;
+
+    if (!mBufferWriter.canWrite(length)) {
         char* newBuffer;
         uint32_t newBufferLength;
         std::tie(newBuffer, newBufferLength) = mData->acquireBuffer();
@@ -230,22 +257,13 @@ void ScanQueryProcessor::writeProjectionField(char*& ptr, Record::id_t fieldId, 
         ptr = mBuffer + TUPLE_OVERHEAD;
         mTupleCount = 0u;
 
-        if (!field.isFixedSized()) {
-            mBufferWriter.align(4u);
-        }
-
-        if (!mBufferWriter.canWrite(fieldLength)) {
+        if (!mBufferWriter.canWrite(length)) {
             // TODO Handle error
             throw std::runtime_error("Trying to write too much data into the buffer");
         }
     }
-
-    if (isNull) {
-        auto& record = mData->record();
-        record.setFieldNull(ptr, fieldId, true);
-    }
-
-    mBufferWriter.write(data, fieldLength);
+    mBufferWriter.write(data + offset, length);
+    varHeapOffset += length;
 }
 
 void ScanQueryProcessor::writeAggregationRecord(const Record& record, const char* data) {
@@ -289,9 +307,9 @@ void ScanQueryProcessor::initAggregationRecord() {
         uint16_t destFieldIdx;
         record.idOf(crossbow::to_string(i), destFieldIdx);
         auto& metadata = record.getFieldMeta(destFieldIdx);
-        auto& field = metadata.first;
+        auto& field = metadata.field;
         auto aggType = std::get<1>(*aggIter);
-        field.initAgg(aggType, tupleData + metadata.second);
+        field.initAgg(aggType, tupleData + metadata.offset);
 
         // Set all fields that can be NULL to NULL
         // Whenever the first value is written the field will be marked as non-NULL
@@ -312,10 +330,10 @@ void ScanQueryProcessor::writeAggregationField(char* ptr, Record::id_t fieldId, 
     auto& metadata = record.getFieldMeta(fieldId);
     // If the schema can contain NULL values then check if this is the first time we encountered a non NULL value for
     // the field - Initialize the aggregation with the field data
-    if (!metadata.first.isNotNull()) {
+    if (!metadata.field.isNotNull()) {
         record.setFieldNull(ptr, fieldId, false);
     }
-    field.agg(aggType, ptr + metadata.second, data);
+    field.agg(aggType, ptr + metadata.offset, data);
 }
 
 void ScanQueryProcessor::ensureBufferSpace(uint32_t length) {

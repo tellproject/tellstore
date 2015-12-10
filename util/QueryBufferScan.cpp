@@ -103,7 +103,7 @@ bool QueryBufferScanProcessorBase::check(const char*& query, uint64_t key, const
                 current += offsetToNextPredicate(current, f);
                 break;
             default:
-                if (f.queryCmp(type, field, current)) {
+                if (f.queryCmp(type, data, field, current)) {
                     bitmap.set(bitmapPos);
                 }
             }

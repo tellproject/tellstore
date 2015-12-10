@@ -33,6 +33,8 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+class ColumnMapContext;
+
 /**
  * @brief Helper class creating the column map scan function
  */
@@ -40,8 +42,9 @@ class LLVMColumnMapScanBuilder : private FunctionBuilder {
 public:
     static const std::string FUNCTION_NAME;
 
-    static void createFunction(llvm::Module& module, llvm::TargetMachine* target, const ScanAST& scanAst) {
-        LLVMColumnMapScanBuilder builder(module, target);
+    static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
+            const ScanAST& scanAst) {
+        LLVMColumnMapScanBuilder builder(context, module, target);
         builder.buildScan(scanAst);
     }
 
@@ -49,12 +52,10 @@ private:
     static constexpr size_t keyData = 0;
     static constexpr size_t validFromData = 1;
     static constexpr size_t validToData = 2;
-    static constexpr size_t recordData = 3;
-    static constexpr size_t heapData = 4;
-    static constexpr size_t count = 5;
-    static constexpr size_t startIdx = 6;
-    static constexpr size_t endIdx = 7;
-    static constexpr size_t resultData = 8;
+    static constexpr size_t page = 3;
+    static constexpr size_t startIdx = 4;
+    static constexpr size_t endIdx = 5;
+    static constexpr size_t resultData = 6;
 
     static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
         return llvm::Type::getVoidTy(context);
@@ -65,16 +66,14 @@ private:
             { llvm::Type::getInt64Ty(context)->getPointerTo(), "keyData" },
             { llvm::Type::getInt64Ty(context)->getPointerTo(), "validFromData" },
             { llvm::Type::getInt64Ty(context)->getPointerTo(), "validToData" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "recordData" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "heapData" },
-            { llvm::Type::getInt64Ty(context), "count" },
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "page" },
             { llvm::Type::getInt64Ty(context), "startIdx" },
             { llvm::Type::getInt64Ty(context), "endIdx" },
             { llvm::Type::getInt8Ty(context)->getPointerTo(), "resultData" }
         };
     }
 
-    LLVMColumnMapScanBuilder(llvm::Module& module, llvm::TargetMachine* target);
+    LLVMColumnMapScanBuilder(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target);
 
     void buildScan(const ScanAST& scanAst);
 
@@ -92,6 +91,14 @@ private:
 
     llvm::Value* buildConjunctMerge(llvm::Value* startIdx, uint64_t vectorSize, uint32_t src, uint32_t dest,
             const llvm::Twine& name);
+
+    const ColumnMapContext& mContext;
+
+    llvm::StructType* mMainPageStructTy;
+
+    llvm::Value* mMainPage;
+    llvm::Value* mCount;
+    llvm::Value* mFixedData;
 
     uint64_t mRegisterWidth;
 

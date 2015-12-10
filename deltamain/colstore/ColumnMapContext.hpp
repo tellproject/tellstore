@@ -45,6 +45,19 @@ class ColumnMapRecord;
 class ConstColumnMapRecord;
 
 /**
+ * @brief ColumnMap specific metadata for every fixed size field in a record
+ */
+struct FixedColumnMetaData {
+    FixedColumnMetaData(uint32_t _offset, uint32_t _length)
+            : offset(_offset),
+              length(_length) {
+    }
+
+    uint32_t offset;
+    uint32_t length;
+};
+
+/**
  * @brief Context containing approach-specific information for the column map implementation
  */
 class ColumnMapContext {
@@ -83,39 +96,43 @@ public:
 
     ColumnMapContext(const PageManager& pageManager, const Record& record);
 
-    /**
-     * @brief Additional overhead required by every element in a column map page
-     */
-    uint32_t entryOverhead() const {
-        return mEntryOverhead;
+    const Record& record() const {
+        return mRecord;
     }
 
     /**
-     * @brief Maximum number of elements fitting in one page excluding any variable sized fields
+     * @brief Size of an element in the column map (excluding the variable heap)
      */
-    uint32_t fixedSizeCapacity() const {
-        return mFixedSizeCapacity;
+    uint32_t staticSize() const {
+        return mStaticSize;
     }
 
     /**
-     * @brief Size of all fixed size fields of an element
+     * @brief Maximum number of elements fitting in one page (without the variable size heap)
+     */
+    uint32_t staticCapacity() const {
+        return mStaticCapacity;
+    }
+
+    /**
+     * @brief Size of the header segment of a record
+     */
+    uint32_t headerSize() const {
+        return mHeaderSize;
+    }
+
+    /**
+     * @brief Size of the fixed size value segment of a record
      */
     uint32_t fixedSize() const {
         return mFixedSize;
     }
 
     /**
-     * @brief Number of variable sized fields of an element
+     * @brief ColumnMap specific metadata for all static sized fields of a record
      */
-    uint32_t varSizeFieldCount() const {
-        return mVarSizeFieldCount;
-    }
-
-    /**
-     * @brief Vector containing the lengths for all static sized fields of an element
-     */
-    const std::vector<uint32_t>& fieldLengths() const {
-        return mFieldLengths;
+    const std::vector<FixedColumnMetaData>& fixedMetaData() const {
+        return mFixedMetaData;
     }
 
     /**
@@ -130,40 +147,37 @@ public:
      * @brief Materialize the tuple from the page into the destination buffer
      */
     void materialize(const ColumnMapMainPage* page, uint64_t idx, char* dest, size_t size) const {
-        mMaterializeFun(page->recordData(), page->heapData(), page->count, idx, dest, size);
+        mMaterializeFun(reinterpret_cast<const char*>(page), idx, dest, size);
     }
 
 private:
     using MaterializeFun = void (*) (
-            const char* /* recordData */,
-            const char* /* heapData */,
-            uint64_t /* count */,
+            const char* /* page */,
             uint64_t /* idx */,
             char* /* destData */,
             size_t /* size */);
 
-    void prepareMaterializeFunction(const Record& record);
+    void prepareMaterializeFunction();
+
+    const Record& mRecord;
 
     /// Pointer to the start of the page manager data region
     uintptr_t mPageData;
 
-    /// \copydoc ColumnMapContext::entryOverhead() const
-    uint32_t mEntryOverhead;
+    /// \copydoc ColumnMapContext::staticSize() const
+    uint32_t mStaticSize;
 
-    /// \copydoc ColumnMapContext::fixedSizeCapacity() const
-    uint32_t mFixedSizeCapacity;
+    /// \copydoc ColumnMapContext::staticCapacity() const
+    uint32_t mStaticCapacity;
+
+    /// \copydoc ColumnMapContext::headerSize() const
+    uint32_t mHeaderSize;
 
     /// \copydoc ColumnMapContext::fixedSize() const
     uint32_t mFixedSize;
 
-    /// Aligned offset to the first variable size field
-    uint32_t mVariableSizeOffset;
-
-    /// \copydoc ColumnMapContext::varSizeFieldCount() const
-    uint32_t mVarSizeFieldCount;
-
-    /// \copydoc ColumnMapContext::fieldLengths() const
-    std::vector<uint32_t> mFieldLengths;
+    /// \copydoc ColumnMapContext::fixedMetaData() const
+    std::vector<FixedColumnMetaData> mFixedMetaData;
 
     MaterializeFun mMaterializeFun;
 

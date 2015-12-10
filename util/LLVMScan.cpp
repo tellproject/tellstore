@@ -121,7 +121,7 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
                         ? llvm::CmpInst::ICMP_NE
                         : llvm::CmpInst::ICMP_EQ);
                 res = CreateICmp(predicate, nullValue, getInt8(0));
-            } else {
+            } else if (fieldAst.isFixedSize) {
                 LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
                 auto& rhsAst = predicateAst.fixed;
 
@@ -134,6 +134,8 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
                 if (!fieldAst.isNotNull) {
                     res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
                 }
+            } else {
+                LOG_ASSERT(false, "Scan on variable sized fields not yet supported");
             }
             res = CreateZExtOrBitCast(res, getInt8Ty());
 
@@ -308,13 +310,14 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
             auto iter = mScanAst.fields.find(currentColumn);
             if (iter == mScanAst.fields.end()) {
                 auto& fieldMeta = record.getFieldMeta(currentColumn);
-                auto& field = fieldMeta.first;
+                auto& field = fieldMeta.field;
 
                 FieldAST fieldAst;
                 fieldAst.id = currentColumn;
                 fieldAst.isNotNull = field.isNotNull();
+                fieldAst.isFixedSize = field.isFixedSized();
                 fieldAst.type = field.type();
-                fieldAst.offset = fieldMeta.second;
+                fieldAst.offset = fieldMeta.offset;
                 fieldAst.alignment = field.alignOf();
                 fieldAst.size = field.staticSize();
 
@@ -400,15 +403,12 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
 
                         predicateAst.variable.size = size;
                         if (size <= sizeof(uint32_t)) {
-                            memcpy(&predicateAst.variable.prefix, data, size);
-                        } else {
-                            memcpy(&predicateAst.variable.prefix, data, sizeof(uint32_t));
-                            auto value = ConstantDataArray::get(builder.getContext(),
-                                    makeArrayRef(reinterpret_cast<const uint8_t*>(data) + sizeof(uint32_t),
-                                            size - sizeof(uint32_t)));
-                            predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
-                                    GlobalValue::PrivateLinkage, value);
+                            memcpy(&predicateAst.variable.prefix, data, size < sizeof(uint32_t) ? size : sizeof(uint32_t));
                         }
+                        auto value = ConstantDataArray::get(builder.getContext(),
+                                makeArrayRef(reinterpret_cast<const uint8_t*>(data), size));
+                        predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
+                                GlobalValue::PrivateLinkage, value);
                     } break;
 
                     default: {
@@ -458,8 +458,8 @@ void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, Scan
     func->setDoesNotAlias(3);
 
     // Build function
-    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(bb);
+    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(entryBlock);
 
     if (query->headerLength() != 0u) {
         builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
@@ -471,7 +471,7 @@ void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, Scan
     for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
         auto srcFieldIdx = *i;
         auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.first;
+        auto& field = srcFieldMeta.field;
 
         if (!field.isNotNull()) {
             auto srcIdx = srcFieldIdx / 8u;
@@ -500,8 +500,8 @@ void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, Scan
             builder.CreateStore(res, destNullBitmap);
         }
 
-        auto srcFieldOffset = srcFieldMeta.second;
-        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).second;
+        auto srcFieldOffset = srcFieldMeta.offset;
+        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).offset;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
         auto fieldAlignment = field.alignOf();
@@ -510,15 +510,16 @@ void LLVMRowScanBase::prepareRowProjectionFunction(const Record& srcRecord, Scan
                 ? args[recordData]
                 : builder.CreateInBoundsGEP(args[recordData], builder.getInt64(srcFieldOffset)));
         src = builder.CreateBitCast(src, fieldPtrType);
+        auto value = builder.CreateAlignedLoad(src, fieldAlignment);
 
         auto dest = (destFieldOffset == 0
                 ? args[destData]
                 : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
         dest = builder.CreateBitCast(dest, fieldPtrType);
-        builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
+        builder.CreateAlignedStore(value, dest, fieldAlignment);
     }
 
-    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
 void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
@@ -566,18 +567,18 @@ void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, Sca
         AggregationType aggregationType;
         std::tie(srcFieldIdx, aggregationType) = *i;
         auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& srcField = srcFieldMeta.first;
+        auto& srcField = srcFieldMeta.field;
         auto srcFieldAlignment = srcField.alignOf();
         auto srcFieldPtrType = builder.getFieldPtrTy(srcField.type());
-        auto srcFieldOffset = srcFieldMeta.second;
+        auto srcFieldOffset = srcFieldMeta.offset;
 
         uint16_t destFieldIdx;
         destRecord.idOf(crossbow::to_string(j), destFieldIdx);
         auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
-        auto& destField = destFieldMeta.first;
+        auto& destField = destFieldMeta.field;
         auto destFieldAlignment = destField.alignOf();
         auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
-        auto destFieldOffset = destFieldMeta.second;
+        auto destFieldOffset = destFieldMeta.offset;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
         Value* srcNullBitmap = nullptr;
@@ -678,7 +679,7 @@ void LLVMRowScanBase::prepareRowAggregationFunction(const Record& srcRecord, Sca
         builder.CreateAlignedStore(dest, destPtr, destFieldAlignment);
     }
 
-    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
 LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const std::vector<ScanQuery*>& queries,

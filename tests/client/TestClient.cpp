@@ -481,7 +481,7 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     selectionWriter.align(sizeof(uint32_t));
     selectionWriter.write<int32_t>(mTuple.size() - mTuple.size() * selectivity);
 
-    uint32_t aggregationLength = 12;
+    uint32_t aggregationLength = 16;
     std::unique_ptr<char[]> aggregation(new char[aggregationLength]);
 
     crossbow::buffer_writer aggregationWriter(aggregation.get(), aggregationLength);
@@ -491,11 +491,14 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::MIN));
     aggregationWriter.write<uint16_t>(recordField);
     aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::MAX));
+    aggregationWriter.write<uint16_t>(recordField);
+    aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::CNT));
 
     Schema resultSchema(mTable.tableType());
-    resultSchema.addField(FieldType::INT, "sum", true);
+    resultSchema.addField(FieldType::BIGINT, "sum", true);
     resultSchema.addField(FieldType::INT, "min", true);
     resultSchema.addField(FieldType::INT, "max", true);
+    resultSchema.addField(FieldType::BIGINT, "cnt", true);
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 
     auto scanStartTime = std::chrono::steady_clock::now();
@@ -504,9 +507,10 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
 
     size_t scanCount = 0x0u;
     size_t scanDataSize = 0x0u;
-    int32_t totalSum = 0;
+    int64_t totalSum = 0;
     int32_t totalMin = std::numeric_limits<int32_t>::max();
     int32_t totalMax = std::numeric_limits<int32_t>::min();
+    int64_t totalCnt = 0;
     while (scanIterator->hasNext()) {
         const char* tuple;
         size_t tupleLength;
@@ -514,9 +518,10 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
         ++scanCount;
         scanDataSize += tupleLength;
 
-        totalSum += resultTable.field<int32_t>("sum", tuple);
+        totalSum += resultTable.field<int64_t>("sum", tuple);
         totalMin = std::min(totalMin, resultTable.field<int32_t>("min", tuple));
         totalMax = std::max(totalMax, resultTable.field<int32_t>("max", tuple));
+        totalCnt += resultTable.field<int64_t>("cnt", tuple);
 
         if (scanCount % 1000 == 0) {
             fiber.yield();
@@ -530,8 +535,8 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
         return;
     }
 
-    LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%]", snapshot->version(), totalSum, totalMin,
-            totalMax);
+    LOG_INFO("TID %1%] Scan output [sum = %2%, min = %3%, max = %4%, cnt = %5%]", snapshot->version(), totalSum,
+            totalMin, totalMax, totalCnt);
 
     LOG_TRACE("Commit transaction");
     client.commit(*snapshot);

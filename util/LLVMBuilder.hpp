@@ -183,7 +183,7 @@ public:
         return mParams[idx];
     }
 
-    llvm::BasicBlock* createBasicBlock(const llvm::Twine& name) {
+    llvm::BasicBlock* createBasicBlock(const llvm::Twine& name = "") {
         return llvm::BasicBlock::Create(Context, name, mFunction);
     }
 
@@ -231,7 +231,7 @@ llvm::Value* FunctionBuilder::createLoop(llvm::Value* start, llvm::Value* end, u
 
     // -> i += 1;
     auto next = CreateAdd(i, getInt64(step));
-    i->addIncoming(next, bodyBlock);
+    i->addIncoming(next, GetInsertBlock());
 
     // -> i != endIdx
     CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, next, end), bodyBlock, endBlock);

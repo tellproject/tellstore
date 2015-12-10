@@ -36,6 +36,7 @@ namespace store {
 
 class Modifier;
 class PageManager;
+class Record;
 
 namespace deltamain {
 
@@ -55,6 +56,21 @@ public:
     const uint64_t key;
     const uint64_t version;
     std::atomic<uintptr_t> newest;
+};
+
+/**
+ * @brief Struct in the column map page storing the offset and the 4 byte prefix of a single variable sized field
+ */
+struct alignas(8) ColumnMapHeapEntry {
+    ColumnMapHeapEntry(uint32_t _offset, const char* data);
+
+    ColumnMapHeapEntry(uint32_t offset, uint32_t size, const char* data);
+
+    /// Offset from the end of the variable sized heap to the field value
+    const uint32_t offset;
+
+    /// First 4 bytes of the field value
+    char prefix[4];
 };
 
 /**
@@ -83,12 +99,13 @@ public:
  */
 struct alignas(8) ColumnMapMainPage {
     ColumnMapMainPage()
-            : count(0u) {
+            : count(0u),
+              headerOffset(0u),
+              fixedOffset(0u),
+              variableOffset(0u) {
     }
 
-    ColumnMapMainPage(uint32_t _count)
-            : count(_count) {
-    }
+    ColumnMapMainPage(const ColumnMapContext& context, uint32_t _count);
 
     /**
      * @brief Pointer to the array holding the entries stored in this page
@@ -102,7 +119,7 @@ struct alignas(8) ColumnMapMainPage {
     }
 
     /**
-     * @brief Pointer to the array holding the sized of the elements stored in this page
+     * @brief Pointer to the array holding the size of the elements stored in this page
      */
     const uint32_t* sizeData() const {
         return reinterpret_cast<const uint32_t*>(data() + count * sizeof(ColumnMapMainEntry));
@@ -113,14 +130,36 @@ struct alignas(8) ColumnMapMainPage {
     }
 
     /**
-     * @brief Pointer to the record data of the elements stored in this page
+     * @brief Pointer to the beginning of the section where headers are stored
      */
-    const char* recordData() const {
-        return crossbow::align(data() + count * (sizeof(ColumnMapMainEntry) + sizeof(uint32_t)), 8u);
+    const char* headerData() const {
+        return reinterpret_cast<const char*>(this) + headerOffset;
     }
 
-    char* recordData() {
-        return const_cast<char*>(const_cast<const ColumnMapMainPage*>(this)->recordData());
+    char* headerData() {
+        return const_cast<char*>(const_cast<const ColumnMapMainPage*>(this)->headerData());
+    }
+
+    /**
+     * @brief Pointer to the beginning of the section where fixed size fields are stored
+     */
+    const char* fixedData() const {
+        return reinterpret_cast<const char*>(this) + fixedOffset;
+    }
+
+    char* fixedData() {
+        return const_cast<char*>(const_cast<const ColumnMapMainPage*>(this)->fixedData());
+    }
+
+    /**
+     * @brief Pointer to the beginning of the section where variable size fields are stored
+     */
+    const ColumnMapHeapEntry* variableData() const {
+        return reinterpret_cast<const ColumnMapHeapEntry*>(reinterpret_cast<const char*>(this) + variableOffset);
+    }
+
+    ColumnMapHeapEntry* variableData() {
+        return const_cast<ColumnMapHeapEntry*>(const_cast<const ColumnMapMainPage*>(this)->variableData());
     }
 
     /**
@@ -148,22 +187,13 @@ struct alignas(8) ColumnMapMainPage {
     }
 
     /// The number of elements stored in this page
-    const uint64_t count;
-};
+    const uint32_t count;
 
-/**
- * @brief Struct in the column map page storing the offset and the 4 byte prefix of a single variable sized field
- */
-struct alignas(8) ColumnMapHeapEntry {
-    ColumnMapHeapEntry(uint32_t _offset, const char* data);
+    const uint32_t headerOffset;
 
-    ColumnMapHeapEntry(uint32_t offset, uint32_t size, const char* data);
+    const uint32_t fixedOffset;
 
-    /// Offset from the end of the variable sized heap to the field value
-    const uint32_t offset;
-
-    /// First 4 bytes of the field value
-    char prefix[4];
+    const uint32_t variableOffset;
 };
 
 /**
@@ -322,6 +352,8 @@ private:
     void flushFillPage();
 
     const ColumnMapContext& mContext;
+
+    const Record& mRecord;
 
     PageManager& mPageManager;
 

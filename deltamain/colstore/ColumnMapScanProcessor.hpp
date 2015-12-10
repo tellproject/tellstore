@@ -54,14 +54,13 @@ public:
     using ScanProcessor = ColumnMapScanProcessor;
 
     using ColumnScanFun = void (*) (const uint64_t* /* keyData */, const uint64_t* /* validFromData */,
-            const uint64_t* /* validToData */, const char* /* recordData */, const char* /* heapData */,
-            uint64_t /* count */, uint64_t /* startIdx */, uint64_t /* endIdx */, char* /* resultData */);
+            const uint64_t* /* validToData */, const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
+            char* /* resultData */);
 
-    using ColumnProjectionFun = uint32_t (*) (const char* /* recordData */, const char* /* heapData */,
-            uint64_t /* count */, uint64_t /* idx */, char* /* destData */);
+    using ColumnProjectionFun = uint32_t (*) (const char* /* page */, uint64_t /* idx */, char* /* destData */);
 
-    using ColumnAggregationFun = uint32_t (*) (const char* /* recordData */, const char* /* heapData */,
-            uint64_t /* count */, uint64_t /* startIdx */, uint64_t /* endIdx */, const char* /* resultData */, char* /* destData */);
+    using ColumnAggregationFun = uint32_t (*) (const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
+            const char* /* resultData */, char* /* destData */);
 
     ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
 
@@ -70,9 +69,9 @@ public:
 private:
     void prepareColumnScanFunction(const Record& record);
 
-    void prepareColumnProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
+    void prepareColumnProjectionFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index);
 
-    void prepareColumnAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
+    void prepareColumnAggregationFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index);
 
     Table<ColumnMapContext>* mTable;
 

@@ -23,15 +23,23 @@
 
 #include "LLVMColumnMapScan.hpp"
 
+#include "ColumnMapContext.hpp"
+#include "LLVMColumnMapUtils.hpp"
+
 namespace tell {
 namespace store {
 namespace deltamain {
 
 const std::string LLVMColumnMapScanBuilder::FUNCTION_NAME = "columnScan";
 
-LLVMColumnMapScanBuilder::LLVMColumnMapScanBuilder(llvm::Module& module, llvm::TargetMachine* target)
+LLVMColumnMapScanBuilder::LLVMColumnMapScanBuilder(const ColumnMapContext& context, llvm::Module& module,
+        llvm::TargetMachine* target)
         : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()),
                 FUNCTION_NAME),
+          mContext(context),
+          mMainPageStructTy(getColumnMapMainPageTy(module.getContext())),
+          mCount(nullptr),
+          mFixedData(nullptr),
           mRegisterWidth(mTargetInfo.getRegisterBitWidth(true)) {
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);
@@ -42,9 +50,7 @@ LLVMColumnMapScanBuilder::LLVMColumnMapScanBuilder(llvm::Module& module, llvm::T
     mFunction->setOnlyReadsMemory(3);
     mFunction->setDoesNotAlias(4);
     mFunction->setOnlyReadsMemory(4);
-    mFunction->setDoesNotAlias(5);
-    mFunction->setOnlyReadsMemory(5);
-    mFunction->setDoesNotAlias(9);
+    mFunction->setDoesNotAlias(7);
 }
 
 void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
@@ -53,14 +59,29 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
         return;
     }
 
+    mMainPage = CreateBitCast(getParam(page), mMainPageStructTy->getPointerTo());
+
+    mCount = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(0) });
+    mCount = CreateZExt(CreateAlignedLoad(mCount, 4u), getInt64Ty());
+
     // Field evaluation
-    mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
-    mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
-    for (auto& fieldAst : scanAst.fields) {
-        buildField(fieldAst.second);
+    if (!scanAst.fields.empty()) {
+        mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
+        mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
+
+        // auto fixedOffset = mainPage->fixedOffset;
+        auto fixedOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(2) });
+        fixedOffset = CreateZExt(CreateAlignedLoad(fixedOffset, 4u), getInt64Ty());
+
+        // -> auto src = page + fixedOffset;
+        mFixedData = CreateInBoundsGEP(getParam(page), fixedOffset);
+
+        for (auto& fieldAst : scanAst.fields) {
+            buildField(fieldAst.second);
+        }
+        mScalarConjunctsGenerated.clear();
+        mVectorConjunctsGenerated.clear();
     }
-    mScalarConjunctsGenerated.clear();
-    mVectorConjunctsGenerated.clear();
 
     // Query evaluation
     buildQuery(scanAst.needsKey, scanAst.queries);
@@ -75,9 +96,12 @@ void LLVMColumnMapScanBuilder::buildField(const FieldAST& fieldAst) {
     // Load the start pointer of the column
     llvm::Value* recordPtr = nullptr;
     if (fieldAst.needsValue) {
-        recordPtr = getParam(recordData);
-        if (fieldAst.offset > 0) {
-            recordPtr = CreateInBoundsGEP(recordPtr, createConstMul(getParam(count), fieldAst.offset));
+        auto& fixedMetaData = mContext.fixedMetaData();
+        auto offset = fixedMetaData[fieldAst.id].offset;
+
+        recordPtr = mFixedData;
+        if (offset != 0) {
+            recordPtr = CreateInBoundsGEP(recordPtr, createConstMul(mCount, offset));
         }
         recordPtr = CreateBitCast(recordPtr, getFieldPtrTy(fieldAst.type));
     }
@@ -120,7 +144,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* re
             res = CreateZExtOrBitCast(res, conjunctTy);
 
             // Store resulting conjunct value
-            auto conjunctPtr = CreateAdd(createConstMul(getParam(count), predicateAst.conjunct), idx);
+            auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
             conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
             conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
             if (conjunctsGenerated[predicateAst.conjunct]) {
@@ -193,7 +217,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildQueryEvaluation(llvm::Value* startId
             // Store temporary result value
             auto resultPtr = idx;
             if (i > 0) {
-                resultPtr = CreateAdd(createConstMul(getParam(count), i), resultPtr);
+                resultPtr = CreateAdd(createConstMul(mCount, i), resultPtr);
             }
             resultPtr = CreateInBoundsGEP(getParam(resultData), resultPtr);
             resultPtr = CreateBitCast(resultPtr, conjunctTy->getPointerTo());
@@ -241,7 +265,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildConjunctMerge(llvm::Value* startIdx,
         // Load destination conjunct
         auto lhsPtr = idx;
         if (dest > 0) {
-            lhsPtr = CreateAdd(createConstMul(getParam(count), dest), lhsPtr);
+            lhsPtr = CreateAdd(createConstMul(mCount, dest), lhsPtr);
         }
         lhsPtr = CreateInBoundsGEP(getParam(resultData), lhsPtr);
         lhsPtr = CreateBitCast(lhsPtr, conjunctTy->getPointerTo());
@@ -250,7 +274,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildConjunctMerge(llvm::Value* startIdx,
         // Load source conjunct
         auto rhsPtr = idx;
         if (src > 0) {
-            rhsPtr = CreateAdd(createConstMul(getParam(count), src), rhsPtr);
+            rhsPtr = CreateAdd(createConstMul(mCount, src), rhsPtr);
         }
         rhsPtr = CreateInBoundsGEP(getParam(resultData), rhsPtr);
         rhsPtr = CreateBitCast(rhsPtr, conjunctTy->getPointerTo());

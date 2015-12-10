@@ -66,7 +66,7 @@ struct VariablePredicateAST {
     /// First bytes of the data the predicate must match
     char prefix[4];
 
-    /// Remaining bytes of the data the predicate must match if the size is larger than 4 bytes
+    /// Data the predicate must match
     llvm::GlobalVariable* value;
 
     /// Whether a like matches on the prefix or postfix (only valid for like predicate)
@@ -106,6 +106,7 @@ struct FieldAST {
     FieldType type;
     bool isNotNull;
     bool needsValue;
+    bool isFixedSize;
 
     uint32_t offset;
     uint32_t alignment;

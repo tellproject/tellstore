@@ -42,7 +42,6 @@ namespace store {
 
 class Record;
 
-
 template<class NumberType>
 int cmp(NumberType left, NumberType right) {
     static_assert(std::is_floating_point<NumberType>::value ||
@@ -186,53 +185,11 @@ public:
         case FieldType::DOUBLE:
             return sizeof(double);
         case FieldType::TEXT:
-            LOG_ASSERT(false, "Tried to get static size of TEXT Field, which does not have a static size");
-            return std::numeric_limits<size_t>::max();
-        case FieldType::BLOB:
-            LOG_ASSERT(false, "Tried to get static size of BLOB Field, which does not have a static size");
-            return std::numeric_limits<size_t>::max();
-        case FieldType::NOTYPE:
-            LOG_ASSERT(false, "One should never use a field of type NOTYPE");
-            return std::numeric_limits<size_t>::max();
-        default:
-            LOG_ASSERT(false, "Unknown type");
-            return std::numeric_limits<size_t>::max();
-        }
-    }
-
-    size_t defaultSize() const {
-        switch (mType) {
-        case FieldType::NULLTYPE:
-            return 0;
-        case FieldType::SMALLINT:
-            return sizeof(int16_t);
-        case FieldType::INT:
-            return sizeof(int32_t);
-        case FieldType::BIGINT:
-            return sizeof(int64_t);
-        case FieldType::FLOAT:
-            return sizeof(float);
-        case FieldType::DOUBLE:
-            return sizeof(double);
-        case FieldType::TEXT:
         case FieldType::BLOB:
             return sizeof(uint32_t);
         case FieldType::NOTYPE:
             LOG_ASSERT(false, "One should never use a field of type NOTYPE");
             return std::numeric_limits<size_t>::max();
-        default:
-            LOG_ASSERT(false, "Unknown type");
-            return std::numeric_limits<size_t>::max();
-        }
-    }
-
-    size_t sizeOf(const char* data) const
-    {
-        if (isFixedSized()) return staticSize();
-        switch (mType) {
-        case FieldType::TEXT:
-        case FieldType::BLOB:
-            return *reinterpret_cast<const uint32_t*>(data) + sizeof(uint32_t);
         default:
             LOG_ASSERT(false, "Unknown type");
             return std::numeric_limits<size_t>::max();
@@ -285,7 +242,7 @@ public:
         return false;
     }
 
-    bool queryCmp(PredicateType type, const char* left, const char*& query) const
+    bool queryCmp(PredicateType type, const char* data, const char* left, const char*& query) const
     {
         int cmpRes;
         bool isText = false;
@@ -325,8 +282,10 @@ public:
         case FieldType::BLOB: {
             query += 4;
             bool isPositiveLike = true;
-            auto szLeft = *reinterpret_cast<const uint32_t*>(left);
-            auto leftValue = left + 4;
+            auto offsetData = reinterpret_cast<const uint32_t*>(left);
+            auto offsetLeft = offsetData[0];
+            auto szLeft = offsetData[1] - offsetLeft;
+            auto leftValue = data + offsetLeft;
             auto szRight = *reinterpret_cast<const uint32_t*>(query);
             auto rightValue = query + 4;
             query = crossbow::align(rightValue + szRight, 8);
@@ -483,7 +442,6 @@ class Field : public FieldBase {
 private:
     crossbow::string mName;
     bool mNotNull = false;
-    char* mData = nullptr;
 public:
     Field()
         : FieldBase(FieldType::NOTYPE) {
@@ -504,13 +462,9 @@ public:
         return mName;
     }
 
-    size_t sizeOf(const boost::any& value) const;
-
     bool isNotNull() const {
         return mNotNull;
     }
-
-    crossbow::string stringValue() const;
 };
 
 /**
@@ -633,6 +587,15 @@ public: // Serialization
     void serialize(crossbow::buffer_writer& writer) const;
 };
 
+struct FieldMetaData {
+    FieldMetaData(const Field& _field, uint32_t _offset)
+            : field(_field),
+              offset(_offset) {
+    }
+
+    Field field;
+    uint32_t offset;
+};
 
 /**
 * This class implements the physical representation of a tuple.
@@ -655,9 +618,9 @@ public:
 private:
     Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
-    std::vector<std::pair<Field, int32_t>> mFieldMetaData;
-    size_t mFixedSize;
-    size_t mVariableSizeOffset;
+    std::vector<FieldMetaData> mFieldMetaData;
+    uint32_t mHeaderSize;
+    uint32_t mStaticSize;
 public:
     Record();
 
@@ -671,25 +634,18 @@ public:
 
     size_t sizeOfTuple(const char* ptr) const;
 
-    size_t headerSize() const;
+    size_t headerSize() const {
+        return mHeaderSize;
+    }
 
     /**
-     * @brief The combined size of all fixed size fields (including the null bitmap)
+     * @brief The combined size of all fields
      *
-     * This value is not yet aligned! To get the offset to the first variable sized field align the size to 4 bytes.
+     * This includes the header, fixed size fields and variable size offsets.
      */
-    size_t fixedSize() const {
-        return mFixedSize;
+    uint32_t staticSize() const {
+        return mStaticSize;
     }
-
-    /**
-     * @brief The aligned offset to the first variable size field
-     */
-    size_t variableSizeOffset() const {
-        return mVariableSizeOffset;
-    }
-
-    size_t minimumSize() const;
 
     bool idOf(const crossbow::string& name, id_t& result) const;
 
@@ -698,9 +654,6 @@ public:
     bool create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
     char* create(const GenericTuple& tuple, size_t& size) const;
 
-    /**
-    * These methods are NOT thread safe.
-    */
     char* data(char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr);
 
     size_t fieldCount() const {
@@ -715,12 +668,9 @@ public:
         return mSchema.varSizeFields().size();
     }
 
-    const std::pair<Field, int32_t>& getFieldMeta(id_t id) const {
+    const FieldMetaData& getFieldMeta(id_t id) const {
         return mFieldMetaData.at(id);
     }
-
-    Field getField(char* const ptr, id_t id);
-    Field getField(char* const ptr, const crossbow::string& name);
 
     bool allNotNull() const {
         return mSchema.allNotNull();

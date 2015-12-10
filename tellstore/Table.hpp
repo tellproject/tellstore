@@ -154,8 +154,10 @@ T Table::field(const crossbow::string& name, const char* data) const {
 
     case FieldType::TEXT:
     case FieldType::BLOB: {
-        auto length = *reinterpret_cast<const int32_t*>(field);
-        value = crossbow::string(field + sizeof(int32_t), length);
+        auto offsetData = reinterpret_cast<const uint32_t*>(field);
+        auto offset = offsetData[0];
+        auto length = offsetData[1] - offset;
+        value = crossbow::string(data + offset, length);
     } break;
 
     default: {

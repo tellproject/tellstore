@@ -54,7 +54,7 @@ GenericTuple Table::toGenericTuple(const char* data) const {
     GenericTuple tuple;
 
     for (decltype(mRecord.fieldCount()) id = 0; id < mRecord.fieldCount(); ++id) {
-        auto& metadata = mRecord.getFieldMeta(id);
+        auto& fieldMeta = mRecord.getFieldMeta(id);
 
         bool isNull;
         FieldType type;
@@ -88,8 +88,10 @@ GenericTuple Table::toGenericTuple(const char* data) const {
 
         case FieldType::TEXT:
         case FieldType::BLOB: {
-            auto length = *reinterpret_cast<const int32_t*>(field);
-            value = crossbow::string(field + sizeof(int32_t), length);
+            auto offsetData = reinterpret_cast<const uint32_t*>(field);
+            auto offset = offsetData[0];
+            auto length = offsetData[1] - offset;
+            value = crossbow::string(data + offset, length);
         } break;
 
         default: {
@@ -97,7 +99,7 @@ GenericTuple Table::toGenericTuple(const char* data) const {
         } break;
         }
 
-        tuple.emplace(metadata.first.name(), std::move(value));
+        tuple.emplace(fieldMeta.field.name(), std::move(value));
     }
 
     return tuple;

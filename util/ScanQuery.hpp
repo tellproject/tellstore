@@ -359,12 +359,14 @@ public:
      * @brief Appends the field from the tuple to the scan buffer
      *
      * @param tupleData Reference pointing to the start of the current tuple
+     * @param varHeapOffset Current offset into the variabel size heap
      * @param fieldId Id of the field to write
-     * @param type Type of the field to write
      * @param isNull Whether the field is NULL
-     * @param data Pointer to the tuple's data
+     * @param data Pointer to the source tuple's data
+     * @param value Pointer to the source field value
      */
-    void writeProjectionField(char*& ptr, Record::id_t fieldId, FieldType type, bool isNull, const char* data);
+    void writeProjectionField(char*& ptr, uint32_t& varHeapOffset, Record::id_t fieldId, bool isNull, const char* data,
+            const char* value);
 
     /**
      * @brief Write the aggregation of the tuple to the scan buffer
@@ -429,6 +431,8 @@ void ScanQueryProcessor::writeRecord(uint64_t key, uint32_t length, uint64_t val
 
         // Write complete tuple
         auto bytesWritten = fun(mBufferWriter.data());
+        LOG_ASSERT(bytesWritten <= length, "Bytes written must be smaller than the length");
+
         mBufferWriter.advance(crossbow::align(bytesWritten, 8u));
 
         ++mTupleCount;

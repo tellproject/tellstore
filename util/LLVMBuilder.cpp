@@ -116,6 +116,10 @@ llvm::PointerType* LLVMBuilder::getFieldPtrTy(FieldType field, unsigned AddrSpac
     case FieldType::DOUBLE:
         return getDoublePtrTy(AddrSpace);
 
+    case FieldType::TEXT:
+    case FieldType::BLOB:
+        return getInt32PtrTy(AddrSpace);
+
     default:
         LOG_ASSERT(false, "Only fixed size fields are allowed");
         return nullptr;

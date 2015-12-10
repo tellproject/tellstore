@@ -188,7 +188,7 @@ void ServerSocket::handleUpdate(crossbow::infinio::MessageId messageId, crossbow
     request.advance(sizeof(uint32_t));
     auto dataLength = request.read<uint32_t>();
     auto data = request.read(dataLength);
-    LOG_ASSERT(dataLength % 8 == 0, "Data must be 8 byte padded");
+    request.align(8u);
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {
@@ -204,7 +204,7 @@ void ServerSocket::handleInsert(crossbow::infinio::MessageId messageId, crossbow
     request.advance(sizeof(uint32_t));
     auto dataLength = request.read<uint32_t>();
     auto data = request.read(dataLength);
-    LOG_ASSERT(dataLength % 8 == 0, "Data must be 8 byte padded");
+    request.align(8u);
 
     handleSnapshot(messageId, request, [this, messageId, tableId, key, dataLength, data]
             (const commitmanager::SnapshotDescriptor& snapshot) {

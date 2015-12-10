@@ -272,16 +272,16 @@ public:
             auto numberData = getTupleData(dest.get(), record, "number");
             EXPECT_EQ(static_cast<int32_t>(key % mTuple.size()), *reinterpret_cast<const int32_t*>(numberData));
 
-            auto text1Data = getTupleData(dest.get(), record, "text1");
-            EXPECT_EQ(gTupleText1, crossbow::string(text1Data + sizeof(uint32_t),
-                    *reinterpret_cast<const uint32_t*>(text1Data)));
+            auto text1OffsetData = reinterpret_cast<const uint32_t*>(getTupleData(dest.get(), record, "text1"));
+            auto text1Offset = text1OffsetData[0];
+            EXPECT_EQ(gTupleText1, crossbow::string(dest.get() + text1Offset, text1OffsetData[1] - text1Offset));
 
             auto largenumberData = getTupleData(dest.get(), record, "largenumber");
             EXPECT_EQ(gTupleLargenumber, *reinterpret_cast<const int64_t*>(largenumberData));
 
-            auto text2Data = getTupleData(dest.get(), record, "text2");
-            EXPECT_EQ(gTupleText2, crossbow::string(text2Data + sizeof(uint32_t),
-                    *reinterpret_cast<const uint32_t*>(text2Data)));
+            auto text2OffsetData = reinterpret_cast<const uint32_t*>(getTupleData(dest.get(), record, "text2"));
+            auto text2Offset = text2OffsetData[0];
+            EXPECT_EQ(gTupleText2, crossbow::string(dest.get() + text2Offset, text2OffsetData[1] - text2Offset));
         }
 
         transaction.commit();

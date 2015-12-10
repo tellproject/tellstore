@@ -179,7 +179,7 @@ std::tuple<uint64_t, const char*, size_t> ScanIterator::next() {
 
     auto data = mChunkPos;
     auto length = mRecord.sizeOfTuple(data);
-    mChunkPos += length;
+    mChunkPos += crossbow::align(length, 8u);
 
     if (mChunkPos >= mChunkEnd) {
         LOG_ASSERT(mChunkPos == mChunkEnd, "Chunk pointer not pointing to the exact end of the chunk");
@@ -292,9 +292,8 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = tuple.size();
-    LOG_ASSERT(tupleLength % 8 == 0, "Data must be 8 byte padded");
 
-    uint32_t messageLength = 4 * sizeof(uint64_t) + tupleLength + snapshot.serializedLength();
+    uint32_t messageLength = 4 * sizeof(uint64_t) + crossbow::align(tupleLength, 8u) + snapshot.serializedLength();
     sendRequest(response, RequestType::INSERT, messageLength, [tableId, key, tupleLength, &tuple, &snapshot]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
@@ -303,7 +302,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::insert(crossbow::infinio::Fi
         message.write<uint32_t>(0x0u);
         message.write<uint32_t>(tupleLength);
         tuple.serialize(message.data());
-        message.advance(tupleLength);
+        message.advance(crossbow::align(tupleLength, 8u));
 
         writeSnapshot(message, snapshot);
     });
@@ -316,9 +315,8 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
     auto response = std::make_shared<ModificationResponse>(fiber);
 
     auto tupleLength = tuple.size();
-    LOG_ASSERT(tupleLength % 8 == 0, "Data must be 8 byte padded");
 
-    uint32_t messageLength = 4 * sizeof(uint64_t) + tupleLength + snapshot.serializedLength();
+    uint32_t messageLength = 4 * sizeof(uint64_t) + crossbow::align(tupleLength, 8u) + snapshot.serializedLength();
     sendRequest(response, RequestType::UPDATE, messageLength, [tableId, key, tupleLength, &tuple, &snapshot]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
@@ -327,7 +325,7 @@ std::shared_ptr<ModificationResponse> ClientSocket::update(crossbow::infinio::Fi
         message.write<uint32_t>(0x0u);
         message.write<uint32_t>(tupleLength);
         tuple.serialize(message.data());
-        message.advance(tupleLength);
+        message.advance(crossbow::align(tupleLength, 8u));
 
         writeSnapshot(message, snapshot);
     });

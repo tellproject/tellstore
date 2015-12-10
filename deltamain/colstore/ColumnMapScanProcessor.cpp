@@ -27,6 +27,7 @@
 #include "ColumnMapPage.hpp"
 #include "ColumnMapRecord.hpp"
 #include "LLVMColumnMapScan.hpp"
+#include "LLVMColumnMapUtils.hpp"
 
 #include <deltamain/Table.hpp>
 
@@ -59,18 +60,14 @@ namespace {
 
 static const std::string gColumnMaterializeFunctionName = "columnMaterialize.";
 
-static const std::array<std::string, 5> gColumnProjectionParamNames = {{
-    "recordData",
-    "heapData",
-    "count",
+static const std::array<std::string, 3> gColumnProjectionParamNames = {{
+    "page",
     "idx",
     "destData"
 }};
 
-static const std::array<std::string, 7> gColumnAggregationParamNames = {{
-    "recordData",
-    "heapData",
-    "count",
+static const std::array<std::string, 5> gColumnAggregationParamNames = {{
+    "page",
     "startIdx",
     "endIdx",
     "resultData",
@@ -83,17 +80,17 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table),
           mColumnScanFun(nullptr) {
-    LLVMColumnMapScanBuilder::createFunction(mCompilerModule, mCompiler.getTargetMachine(), mScanAst);
+    LLVMColumnMapScanBuilder::createFunction(table->context(), mCompilerModule, mCompiler.getTargetMachine(), mScanAst);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            prepareColumnProjectionFunction(table->record(), q, i);
+            prepareColumnProjectionFunction(table->context(), q, i);
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            prepareColumnAggregationFunction(table->record(), q, i);
+            prepareColumnAggregationFunction(table->context(), q, i);
         } break;
         default:
             break;
@@ -135,22 +132,21 @@ std::vector<std::unique_ptr<ColumnMapScanProcessor>> ColumnMapScan::startScan(si
             mRowScanFun, mRowMaterializeFuns, mScanAst.numConjunct);
 }
 
-void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+void ColumnMapScan::prepareColumnProjectionFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index) {
     using namespace llvm;
 
-    static constexpr size_t recordData = 0;
-    static constexpr size_t heapData = 1;
-    static constexpr size_t count = 2;
-    static constexpr size_t idx = 3;
-    static constexpr size_t destData = 4;
+    static constexpr size_t page = 0;
+    static constexpr size_t idx = 1;
+    static constexpr size_t destData = 2;
 
     LLVMBuilder builder(mCompilerContext);
 
+    // Create ColumnMapMainPage struct
+    auto mainPageStructType = getColumnMapMainPageTy(mCompilerContext);
+
     // Create function
     auto funcType = FunctionType::get(builder.getInt32Ty(), {
-            builder.getInt8PtrTy(), // recordData
-            builder.getInt8PtrTy(), // heapData
-            builder.getInt64Ty(),   // count
+            builder.getInt8PtrTy(), // page
             builder.getInt64Ty(),   // idx
             builder.getInt8PtrTy()  // destData
     }, false);
@@ -158,7 +154,7 @@ void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, Sca
             &mCompilerModule);
 
     // Set arguments names
-    std::array<Value*, 5> args;
+    std::array<Value*, 3> args;
     {
         decltype(gColumnProjectionParamNames.size()) idx = 0;
         for (auto iter = func->arg_begin(); idx != gColumnProjectionParamNames.size(); ++iter, ++idx) {
@@ -170,96 +166,133 @@ void ColumnMapScan::prepareColumnProjectionFunction(const Record& srcRecord, Sca
     // Set noalias hints (data pointers are not allowed to overlap)
     func->setDoesNotAlias(1);
     func->setOnlyReadsMemory(1);
-    func->setDoesNotAlias(2);
-    func->setOnlyReadsMemory(2);
-    func->setDoesNotAlias(5);
+    func->setDoesNotAlias(3);
 
     // Build function
-    auto bb = BasicBlock::Create(mCompilerContext, "entry", func);
-    builder.SetInsertPoint(bb);
+    auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
+    builder.SetInsertPoint(entryBlock);
+
+    auto mainPage = builder.CreateBitCast(args[page], mainPageStructType->getPointerTo());
+
+    auto count = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(0) });
+    count = builder.CreateZExt(builder.CreateAlignedLoad(count, 4u), builder.getInt64Ty());
 
     if (query->headerLength() != 0u) {
         builder.CreateMemSet(args[destData], builder.getInt8(0), query->headerLength(), 8u);
     }
 
+    auto& srcRecord = context.record();
     auto& destRecord = query->record();
+    llvm::Value* headerData = nullptr;
     Record::id_t destFieldIdx = 0u;
     auto end = query->projectionEnd();
     for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
         auto srcFieldIdx = *i;
         auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.first;
+        auto& field = srcFieldMeta.field;
+        if (field.isNotNull()) {
+            continue;
+        }
+        if (!headerData) {
+            // auto headerOffset = mainPage->headerOffset;
+            auto headerOffset = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(1) });
+            headerOffset = builder.CreateZExt(builder.CreateAlignedLoad(headerOffset, 4u), builder.getInt64Ty());
 
-        if (!field.isNotNull()) {
-            auto srcIdx = srcFieldIdx / 8u;
-            auto srcBitIdx = srcFieldIdx % 8u;
-            uint8_t srcMask = (0x1u << srcBitIdx);
-
-            auto srcNullBitmap = builder.CreateInBoundsGEP(
-                    args[recordData],
+            // -> auto headerData = page + headerOffset;
+            headerData = builder.CreateInBoundsGEP(args[page], headerOffset);
+            headerData = builder.CreateInBoundsGEP(
+                    headerData,
                     builder.createConstMul(args[idx], query->headerLength()));
-            if (srcIdx != 0) {
-                srcNullBitmap = builder.CreateInBoundsGEP(srcNullBitmap, builder.getInt64(srcIdx));
-            }
-            srcNullBitmap = builder.CreateAnd(builder.CreateAlignedLoad(srcNullBitmap, 1u), builder.getInt8(srcMask));
-
-            auto destIdx = destFieldIdx / 8u;
-            auto destBitIdx = destFieldIdx % 8u;
-
-            if (destBitIdx > srcBitIdx) {
-                srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
-            } else if (destBitIdx < srcBitIdx) {
-                srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
-            }
-
-            auto destNullBitmap = (destIdx == 0
-                    ? args[destData]
-                    : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destIdx)));
-
-            auto res = builder.CreateOr(builder.CreateAlignedLoad(destNullBitmap, 1u), srcNullBitmap);
-            builder.CreateAlignedStore(res, destNullBitmap, 1u);
         }
 
-        auto srcFieldOffset = srcFieldMeta.second;
-        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).second;
-        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+        auto srcIdx = srcFieldIdx / 8u;
+        auto srcBitIdx = srcFieldIdx % 8u;
+        uint8_t srcMask = (0x1u << srcBitIdx);
 
+        auto srcNullBitmap = headerData;
+        if (srcIdx != 0) {
+            srcNullBitmap = builder.CreateInBoundsGEP(srcNullBitmap, builder.getInt64(srcIdx));
+        }
+        srcNullBitmap = builder.CreateAnd(builder.CreateAlignedLoad(srcNullBitmap, 1u), builder.getInt8(srcMask));
+
+        auto destIdx = destFieldIdx / 8u;
+        auto destBitIdx = destFieldIdx % 8u;
+
+        if (destBitIdx > srcBitIdx) {
+            srcNullBitmap = builder.CreateShl(srcNullBitmap, builder.getInt64(destBitIdx - srcBitIdx));
+        } else if (destBitIdx < srcBitIdx) {
+            srcNullBitmap = builder.CreateLShr(srcNullBitmap, builder.getInt64(srcBitIdx - destBitIdx));
+        }
+
+        auto destNullBitmap = args[destData];
+        if (destIdx != 0) {
+            destNullBitmap = builder.CreateInBoundsGEP(destNullBitmap, builder.getInt64(destIdx));
+        }
+
+        auto res = builder.CreateOr(builder.CreateAlignedLoad(destNullBitmap, 1u), srcNullBitmap);
+        builder.CreateAlignedStore(res, destNullBitmap, 1u);
+    }
+
+    llvm::Value* fixedData = nullptr;
+    destFieldIdx = 0u;
+    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
+        auto srcFieldIdx = *i;
+        auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
+        auto& field = srcFieldMeta.field;
         auto fieldAlignment = field.alignOf();
         auto fieldPtrType = builder.getFieldPtrTy(field.type());
-        auto src = (srcFieldOffset == 0
-                ? args[recordData]
-                : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
+
+        auto& fixedMetaData = context.fixedMetaData();
+        auto srcFieldOffset = fixedMetaData[srcFieldIdx].offset;
+
+        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).offset;
+
+        LOG_ASSERT(field.isFixedSized(), "Only fixed size supported");
+        if (!fixedData) {
+            // auto fixedOffset = mainPage->fixedOffset;
+            auto fixedOffset = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(2) });
+            fixedOffset = builder.CreateZExt(builder.CreateAlignedLoad(fixedOffset, 4u), builder.getInt64Ty());
+
+            // -> auto fixedData = page + fixedOffset;
+            fixedData = builder.CreateInBoundsGEP(args[page], fixedOffset);
+        }
+
+        auto src = fixedData;
+        if (srcFieldOffset != 0) {
+            src = builder.CreateInBoundsGEP(src, builder.createConstMul(count, srcFieldOffset));
+        }
         src = builder.CreateBitCast(src, fieldPtrType);
         src = builder.CreateInBoundsGEP(src, args[idx]);
 
-        auto dest = (destFieldOffset == 0
-                ? args[destData]
-                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        auto dest = args[destData];
+        if (destFieldOffset != 0) {
+            dest = builder.CreateInBoundsGEP(dest, builder.getInt64(destFieldOffset));
+        }
         dest = builder.CreateBitCast(dest, fieldPtrType);
         builder.CreateAlignedStore(builder.CreateAlignedLoad(src, fieldAlignment), dest, fieldAlignment);
     }
 
-    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
-void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index) {
+void ColumnMapScan::prepareColumnAggregationFunction(const ColumnMapContext& context, ScanQuery* query,
+        uint32_t index) {
     using namespace llvm;
 
-    static constexpr size_t recordData = 0;
-    static constexpr size_t heapData = 1;
-    static constexpr size_t count = 2;
-    static constexpr size_t startIdx = 3;
-    static constexpr size_t endIdx = 4;
-    static constexpr size_t resultData = 5;
-    static constexpr size_t destData = 6;
+    static constexpr size_t page = 0;
+    static constexpr size_t startIdx = 1;
+    static constexpr size_t endIdx = 2;
+    static constexpr size_t resultData = 3;
+    static constexpr size_t destData = 4;
 
     LLVMBuilder builder(mCompilerContext);
 
+    // Create ColumnMapMainPage struct
+    auto mainPageStructType = getColumnMapMainPageTy(mCompilerContext);
+
     // Create function
     auto funcType = FunctionType::get(builder.getInt32Ty(), {
-            builder.getInt8PtrTy(), // recordData
-            builder.getInt8PtrTy(), // heapData
-            builder.getInt64Ty(),   // count
+            builder.getInt8PtrTy(), // page
             builder.getInt64Ty(),   // startIdx
             builder.getInt64Ty(),   // endIdx
             builder.getInt8PtrTy(), // resultData
@@ -271,7 +304,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
     auto targetInfo = mCompiler.getTargetMachine()->getTargetIRAnalysis().run(*func);
 
     // Set arguments names
-    std::array<Value*, 7> args;
+    std::array<Value*, 5> args;
     {
         decltype(gColumnAggregationParamNames.size()) idx = 0;
         for (auto iter = func->arg_begin(); idx != gColumnAggregationParamNames.size(); ++iter, ++idx) {
@@ -283,17 +316,22 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
     // Set noalias hints (data pointers are not allowed to overlap)
     func->setDoesNotAlias(1);
     func->setOnlyReadsMemory(1);
-    func->setDoesNotAlias(2);
-    func->setOnlyReadsMemory(2);
-    func->setDoesNotAlias(6);
-    func->setOnlyReadsMemory(6);
-    func->setDoesNotAlias(7);
+    func->setDoesNotAlias(4);
+    func->setOnlyReadsMemory(4);
+    func->setDoesNotAlias(5);
 
     // Build function
     auto entryBlock = BasicBlock::Create(mCompilerContext, "entry", func);
     builder.SetInsertPoint(entryBlock);
 
+    auto mainPage = builder.CreateBitCast(args[page], mainPageStructType->getPointerTo());
+
+    auto count = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(0) });
+    count = builder.CreateZExt(builder.CreateAlignedLoad(count, 4u), builder.getInt64Ty());
+
+    auto& srcRecord = context.record();
     auto& destRecord = query->record();
+    llvm::Value* fixedData = nullptr;
     Record::id_t j = 0u;
     auto end = query->aggregationEnd();
     for (auto i = query->aggregationBegin(); i != end; ++i, ++j) {
@@ -301,22 +339,24 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         AggregationType aggregationType;
         std::tie(srcFieldIdx, aggregationType) = *i;
         auto& srcFieldMeta = srcRecord.getFieldMeta(srcFieldIdx);
-        auto& srcField = srcFieldMeta.first;
+        auto& srcField = srcFieldMeta.field;
         auto srcFieldAlignment = srcField.alignOf();
         auto srcFieldPtrType = builder.getFieldPtrTy(srcField.type());
-        auto srcFieldOffset = srcFieldMeta.second;
+
+        auto& fixedMetaData = context.fixedMetaData();
+        auto srcFieldOffset = fixedMetaData[srcFieldIdx].offset;
 
         uint16_t destFieldIdx;
         destRecord.idOf(crossbow::to_string(j), destFieldIdx);
         auto& destFieldMeta = destRecord.getFieldMeta(destFieldIdx);
-        auto& destField = destFieldMeta.first;
+        auto& destField = destFieldMeta.field;
         auto destFieldAlignment = destField.alignOf();
         auto destFieldSize = destField.staticSize();
         auto destFieldType = builder.getFieldTy(destField.type());
         auto vectorSize = static_cast<uint64_t>(targetInfo.getRegisterBitWidth(true)) / (destFieldSize * 8);
         auto destFieldVectorType = VectorType::get(destFieldType, vectorSize);
         auto destFieldPtrType = builder.getFieldPtrTy(destField.type());
-        auto destFieldOffset = destFieldMeta.second;
+        auto destFieldOffset = destFieldMeta.offset;
         LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
 
         auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
@@ -375,18 +415,29 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "agg.scalarend." + Twine(destFieldIdx), func);
 
         // Compute the pointer to the first element in the aggregation column
-        Value* srcPtr;
+        llvm::Value* srcPtr;
         if (aggregationType != AggregationType::CNT) {
-            srcPtr = (srcFieldOffset == 0
-                    ? args[recordData]
-                    : builder.CreateInBoundsGEP(args[recordData], builder.createConstMul(args[count], srcFieldOffset)));
+            if (!fixedData) {
+                // auto fixedOffset = mainPage->fixedOffset;
+                auto fixedOffset = builder.CreateInBoundsGEP(mainPage, { builder.getInt64(0), builder.getInt32(2) });
+                fixedOffset = builder.CreateZExt(builder.CreateAlignedLoad(fixedOffset, 4u), builder.getInt64Ty());
+
+                // -> auto fixedData = page + fixedOffset;
+                fixedData = builder.CreateInBoundsGEP(args[page], fixedOffset);
+            }
+
+            srcPtr = fixedData;
+            if (srcFieldOffset != 0) {
+                srcPtr = builder.CreateInBoundsGEP(srcPtr, builder.createConstMul(count, srcFieldOffset));
+            }
             srcPtr = builder.CreateBitCast(srcPtr, srcFieldPtrType);
         }
 
         // Load the aggregation value from the previous run
-        auto destPtr = (destFieldOffset == 0
-                ? args[destData]
-                : builder.CreateInBoundsGEP(args[destData], builder.getInt64(destFieldOffset)));
+        auto destPtr = args[destData];
+        if (destFieldOffset != 0) {
+            destPtr = builder.CreateInBoundsGEP(destPtr, builder.getInt64(destFieldOffset));
+        }
         destPtr = builder.CreateBitCast(destPtr, destFieldPtrType);
         auto destValue = builder.CreateAlignedLoad(destPtr, destFieldAlignment);
 
@@ -567,7 +618,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const Record& srcRecord, Sc
         builder.CreateAlignedStore(aggResult, destPtr, destFieldAlignment);
     }
 
-    builder.CreateRet(builder.getInt32(destRecord.variableSizeOffset()));
+    builder.CreateRet(builder.getInt32(destRecord.staticSize()));
 }
 
 ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
@@ -768,8 +819,8 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
     LOG_ASSERT(mValidFromData.size() == page->count, "Size of valid-from array does not match the page size");
     LOG_ASSERT(mValidToData.size() == page->count, "Size of valid-to array does not match the page size");
 
-    mColumnScanFun(&mKeyData.front(), &mValidFromData.front(), &mValidToData.front(), page->recordData(),
-            page->heapData(), page->count, startIdx, endIdx, &mResult.front());
+    mColumnScanFun(&mKeyData.front(), &mValidFromData.front(), &mValidToData.front(),
+            reinterpret_cast<const char*>(page), startIdx, endIdx, &mResult.front());
 
     auto entries = page->entryData();
     auto sizeData = page->sizeData();
@@ -798,13 +849,13 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
                 auto length = sizeData[j];
                 mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
                         [this, page, i, j] (char* dest) {
-                    return mColumnProjectionFuns[i](page->recordData(), page->heapData(), page->count, j, dest);
+                    return mColumnProjectionFuns[i](reinterpret_cast<const char*>(page), j, dest);
                 });
             }
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            mColumnAggregationFuns[i](page->recordData(), page->heapData(), page->count, startIdx, endIdx, result,
+            mColumnAggregationFuns[i](reinterpret_cast<const char*>(page), startIdx, endIdx, result,
                     mQueries[i].mBuffer + 8);
         } break;
 

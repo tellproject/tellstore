@@ -71,6 +71,10 @@ public:
 
     ~Table();
 
+    const Context& context() const {
+        return mContext;
+    }
+
     const Record& record() const {
         return mRecord;
     }
