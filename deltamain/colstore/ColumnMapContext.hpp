@@ -25,6 +25,7 @@
 
 #include "ColumnMapPage.hpp"
 #include "ColumnMapScanProcessor.hpp"
+#include "LLVMColumnMapMaterialize.hpp"
 
 #include <util/LLVMJIT.hpp>
 
@@ -151,12 +152,6 @@ public:
     }
 
 private:
-    using MaterializeFun = void (*) (
-            const char* /* page */,
-            uint64_t /* idx */,
-            char* /* destData */,
-            size_t /* size */);
-
     void prepareMaterializeFunction();
 
     const Record& mRecord;
@@ -179,7 +174,7 @@ private:
     /// \copydoc ColumnMapContext::fixedMetaData() const
     std::vector<FixedColumnMetaData> mFixedMetaData;
 
-    MaterializeFun mMaterializeFun;
+    LLVMColumnMapMaterializeBuilder::Signature mMaterializeFun;
 
     LLVMJIT mLLVMJit;
 };
