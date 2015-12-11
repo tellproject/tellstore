@@ -44,69 +44,172 @@ LLVMRowProjectionBuilder::LLVMRowProjectionBuilder(const Record& record, llvm::M
 }
 
 void LLVMRowProjectionBuilder::build(ScanQuery* query) {
-    if (query->headerLength() != 0u) {
-        CreateMemSet(getParam(destData), getInt8(0), query->headerLength(), 8u);
-    }
-
     auto& destRecord = query->record();
-    Record::id_t destFieldIdx = 0u;
-    auto end = query->projectionEnd();
-    for (auto i = query->projectionBegin(); i != end; ++i, ++destFieldIdx) {
-        auto srcFieldIdx = *i;
-        auto& srcFieldMeta = mRecord.getFieldMeta(srcFieldIdx);
-        auto& field = srcFieldMeta.field;
+    if (destRecord.headerSize() != 0u) {
+        // -> memset(dest, 0, destRecord.headerSize());
+        CreateMemSet(getParam(dest), getInt8(0), destRecord.headerSize(), 8u);
 
-        if (!field.isNotNull()) {
+        auto i = query->projectionBegin();
+        for (decltype(destRecord.fieldCount()) destFieldIdx = 0u; destFieldIdx < destRecord.fieldCount();
+                ++i, ++destFieldIdx) {
+            auto srcFieldIdx = *i;
+            auto& field = mRecord.getFieldMeta(srcFieldIdx).field;
+            if (field.isNotNull()) {
+                continue;
+            }
+
             auto srcIdx = srcFieldIdx / 8u;
             auto srcBitIdx = srcFieldIdx % 8u;
             uint8_t srcMask = (0x1u << srcBitIdx);
 
-            auto srcNullBitmap = getParam(srcData);
+            // -> auto srcNullBitmap = *(src + srcIdx) & srcMask;
+            auto srcNullBitmap = getParam(src);
             if (srcIdx != 0) {
                 srcNullBitmap = CreateInBoundsGEP(srcNullBitmap, getInt64(srcIdx));
             }
-            srcNullBitmap = CreateAnd(CreateLoad(srcNullBitmap), getInt8(srcMask));
+            srcNullBitmap = CreateAlignedLoad(srcNullBitmap, 1u);
+            srcNullBitmap = CreateAnd(srcNullBitmap, getInt8(srcMask));
 
             auto destIdx = destFieldIdx / 8u;
             auto destBitIdx = destFieldIdx % 8u;
 
             if (destBitIdx > srcBitIdx) {
+                // -> srcNullBitmap = srcNullBitmap << (destBitIdx - srcBitIdx);
                 srcNullBitmap = CreateShl(srcNullBitmap, getInt64(destBitIdx - srcBitIdx));
             } else if (destBitIdx < srcBitIdx) {
+                // -> srcNullBitmap = srcNullBitmap >> (srcBitIdx - destBitIdx);
                 srcNullBitmap = CreateLShr(srcNullBitmap, getInt64(srcBitIdx - destBitIdx));
             }
 
-            auto destNullBitmap = getParam(destData);
+            // -> auto destNullBitmapPtr = dest + destIdx;
+            auto destNullBitmapPtr = getParam(dest);
             if (destIdx != 0) {
-                destNullBitmap = CreateInBoundsGEP(destNullBitmap, getInt64(destIdx));
+                destNullBitmapPtr = CreateInBoundsGEP(destNullBitmapPtr, getInt64(destIdx));
             }
 
-            auto res = CreateOr(CreateLoad(destNullBitmap), srcNullBitmap);
-            CreateStore(res, destNullBitmap);
-        }
+            // -> auto destNullBitmap = *destNullBitmapPtr | srcNullBitmap;
+            llvm::Value* destNullBitmap = CreateAlignedLoad(destNullBitmapPtr, 1u);
+            destNullBitmap = CreateOr(destNullBitmapPtr, srcNullBitmap);
 
-        auto srcFieldOffset = srcFieldMeta.offset;
-        auto destFieldOffset = destRecord.getFieldMeta(destFieldIdx).offset;
-        LOG_ASSERT(srcFieldOffset >= 0 && destFieldOffset >= 0, "Only fixed size supported at the moment");
+            // -> *destNullBitmapPtr = destNullBitmap;
+            CreateAlignedStore(destNullBitmap, destNullBitmapPtr, 1u);
+        }
+    }
+
+    auto i = query->projectionBegin();
+    for (decltype(destRecord.fixedSizeFieldCount()) destFieldIdx = 0u; destFieldIdx < destRecord.fixedSizeFieldCount();
+            ++i, ++destFieldIdx) {
+        auto srcFieldIdx = *i;
+        auto& srcMeta = mRecord.getFieldMeta(srcFieldIdx);
+        auto& destMeta = destRecord.getFieldMeta(destFieldIdx);
+        auto& field = srcMeta.field;
+        LOG_ASSERT(field.isFixedSized(), "Field must be fixed size");
 
         auto fieldAlignment = field.alignOf();
         auto fieldPtrType = getFieldPtrTy(field.type());
-        auto src = getParam(srcData);
-        if (srcFieldOffset != 0) {
-            src = CreateInBoundsGEP(src, getInt64(srcFieldOffset));
-        }
-        src = CreateBitCast(src, fieldPtrType);
-        auto value = CreateAlignedLoad(src, fieldAlignment);
 
-        auto dest = getParam(destData);
-        if (destFieldOffset != 0) {
-            dest = CreateInBoundsGEP(dest, getInt64(destFieldOffset));
+        // -> auto srcData = reinterpret_cast<const T*>(src + srcMeta.offset);
+        auto srcData = getParam(src);
+        if (srcMeta.offset != 0) {
+            srcData = CreateInBoundsGEP(srcData, getInt64(srcMeta.offset));
         }
-        dest = CreateBitCast(dest, fieldPtrType);
-        CreateAlignedStore(value, dest, fieldAlignment);
+        srcData = CreateBitCast(srcData, fieldPtrType);
+
+        // -> auto value = *srcData;
+        auto value = CreateAlignedLoad(srcData, fieldAlignment);
+
+        // -> auto destData = reinterpret_cast<const T*>(dest + destMeta.offset);
+        auto destData = getParam(dest);
+        if (destMeta.offset != 0) {
+            destData = CreateInBoundsGEP(destData, getInt64(destMeta.offset));
+        }
+        destData = CreateBitCast(destData, fieldPtrType);
+
+        // -> *destData = value;
+        CreateAlignedStore(value, destData, fieldAlignment);
     }
 
-    CreateRet(getInt32(destRecord.staticSize()));
+    llvm::Value* destHeapOffset = getInt32(destRecord.staticSize());
+
+    if (destRecord.varSizeFieldCount() != 0) {
+        auto srcFieldIdx = mRecord.fixedSizeFieldCount();
+        decltype(destRecord.varSizeFieldCount()) destFieldIdx = 0;
+
+        auto& srcMeta = mRecord.getFieldMeta(srcFieldIdx);
+        auto& destMeta = destRecord.getFieldMeta(destRecord.fixedSizeFieldCount());
+        auto& field = srcMeta.field;
+        LOG_ASSERT(!field.isFixedSized(), "Field must be variable size");
+
+        // -> auto srcData = reinterpret_cast<uint32_t*>(src + srcMeta.offset);
+        auto srcData = getParam(src);
+        if (srcMeta.offset != 0) {
+            srcData = CreateInBoundsGEP(srcData, getInt64(srcMeta.offset));
+        }
+        srcData = CreateBitCast(srcData, getInt32PtrTy());
+
+        // -> auto destData = reinterpret_cast<uint32_t*>(dest + destMeta.offset);
+        auto destData = getParam(dest);
+        if (destMeta.offset != 0) {
+            destData = CreateInBoundsGEP(destData, getInt64(destMeta.offset));
+        }
+        destData = CreateBitCast(destData, getInt32PtrTy());
+
+        // -> *destData = destHeapOffset;
+        CreateAlignedStore(destHeapOffset, destData, 4u);
+
+        do {
+            if (*i != srcFieldIdx) {
+                auto step = *i - srcFieldIdx;
+                // -> srcData += (*i - srcFieldIdx);
+                srcData = CreateInBoundsGEP(srcData, getInt64(step));
+                srcFieldIdx = *i;
+            }
+
+            // -> auto srcHeapOffset = *srcData;
+            auto srcHeapOffset = CreateAlignedLoad(srcData, 4u);
+
+            // -> auto offsetCorrection = srcHeapOffset-+ destHeapOffset;
+            auto offsetCorrection = CreateSub(srcHeapOffset, destHeapOffset);
+
+            llvm::Value* offset;
+            do {
+                ++i;
+
+                // -> ++srcData;
+                ++srcFieldIdx;
+                srcData = CreateInBoundsGEP(srcData, getInt64(1));
+
+                // -> auto offset = *srcData - offsetCorrection;
+                offset = CreateAlignedLoad(srcData, 4u);
+                offset = CreateSub(offset, offsetCorrection);
+
+                // -> ++destData;
+                ++destFieldIdx;
+                destData = CreateInBoundsGEP(destData, getInt64(1));
+
+                // -> *destData = offset;
+                CreateAlignedStore(offset, destData, 4u);
+            } while (destFieldIdx < destRecord.varSizeFieldCount() && *i == srcFieldIdx);
+
+            // -> auto srcHeap = page + srcHeapOffset;
+            auto srcHeap = CreateInBoundsGEP(getParam(src), srcHeapOffset);
+
+            // -> auto destHeap = dest + destHeapOffset;
+            auto destHeap = CreateInBoundsGEP(getParam(dest), destHeapOffset);
+
+            // -> auto length = offset - destHeapOffset
+            auto length = CreateSub(offset, destHeapOffset);
+
+            // -> memcpy(destHeap, srcHeap, length);
+            CreateMemCpy(destHeap, srcHeap, length, 1u);
+
+            // -> destHeapOffset = offset;
+            destHeapOffset = offset;
+        } while (destFieldIdx < destRecord.varSizeFieldCount());
+    }
+
+    // -> return destHeapOffset;
+    CreateRet(destHeapOffset);
 }
 
 } // namespace store

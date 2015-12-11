@@ -81,8 +81,11 @@ public:
 
     /**
      * @brief Maximum number of bytes that fit into a column map page
+     *
+     * If the record contains any variable sized field an additional sentry ColumnMapHeapEntry must be allocated.
      */
-    static constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE - (sizeof(ColumnMapMainPage) + PAGE_PADDING_OVERHEAD);
+    static constexpr uint32_t MAX_DATA_SIZE = TELL_PAGE_SIZE
+            - (sizeof(ColumnMapMainPage) + sizeof(ColumnMapHeapEntry) + PAGE_PADDING_OVERHEAD);
 
     static const char* implementationName() {
         return "Delta-Main Rewrite (Column Map)";

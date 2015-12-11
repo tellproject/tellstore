@@ -62,6 +62,11 @@ public:
  * @brief Struct in the column map page storing the offset and the 4 byte prefix of a single variable sized field
  */
 struct alignas(8) ColumnMapHeapEntry {
+    ColumnMapHeapEntry()
+        : offset(0),
+          prefix{} {
+    }
+
     ColumnMapHeapEntry(uint32_t _offset, const char* data);
 
     ColumnMapHeapEntry(uint32_t offset, uint32_t size, const char* data);
@@ -187,13 +192,13 @@ struct alignas(8) ColumnMapMainPage {
     }
 
     /// The number of elements stored in this page
-    const uint32_t count;
+    uint32_t count;
 
-    const uint32_t headerOffset;
+    uint32_t headerOffset;
 
-    const uint32_t fixedOffset;
+    uint32_t fixedOffset;
 
-    const uint32_t variableOffset;
+    uint32_t variableOffset;
 };
 
 /**

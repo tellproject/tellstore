@@ -43,9 +43,9 @@ class ScanQuery;
 class LLVMRowProjectionBuilder : private FunctionBuilder {
 public:
     using Signature = uint32_t (*) (
-            const char* /* srcData */,
+            const char* /* src */,
             uint32_t /* size */,
-            char* /* destData */);
+            char* /* dest */);
 
     static const std::string FUNCTION_NAME;
 
@@ -62,9 +62,9 @@ public:
     }
 
 private:
-    static constexpr size_t srcData = 0;
+    static constexpr size_t src = 0;
     static constexpr size_t size = 1;
-    static constexpr size_t destData = 2;
+    static constexpr size_t dest = 2;
 
     static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
         return llvm::Type::getInt32Ty(context);
@@ -72,9 +72,9 @@ private:
 
     static std::vector<std::pair<llvm::Type*, crossbow::string>> buildParamTy(llvm::LLVMContext& context) {
         return {
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "srcData" },
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "src" },
             { llvm::Type::getInt32Ty(context), "size" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "destData" }
+            { llvm::Type::getInt8Ty(context)->getPointerTo(), "dest" }
         };
     }
 

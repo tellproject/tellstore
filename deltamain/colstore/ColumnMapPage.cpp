@@ -44,7 +44,8 @@ ColumnMapHeapEntry::ColumnMapHeapEntry(uint32_t _offset, const char* data)
 }
 
 ColumnMapHeapEntry::ColumnMapHeapEntry(uint32_t _offset, uint32_t size, const char* data)
-        : offset(_offset) {
+        : offset(_offset),
+          prefix{} {
     memcpy(prefix, data, size < sizeof(prefix) ? size : sizeof(prefix));
 }
 
@@ -54,6 +55,12 @@ ColumnMapMainPage::ColumnMapMainPage(const ColumnMapContext& context, uint32_t _
                 + count * (sizeof(ColumnMapMainEntry) + sizeof(uint32_t)), 8u)),
           fixedOffset(crossbow::align(headerOffset + count * context.headerSize(), 8u)),
           variableOffset(crossbow::align(fixedOffset + count * context.fixedSize(), 8u)) {
+    // Create sentinel heap entry
+    auto& record = context.record();
+    if (record.varSizeFieldCount() != 0) {
+        new (reinterpret_cast<char*>(this) + variableOffset) ColumnMapHeapEntry();
+        variableOffset += sizeof(ColumnMapHeapEntry);
+    }
 }
 
 ColumnMapPageModifier::ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager,
@@ -402,7 +409,7 @@ void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t sta
     // Determine begin and end offset of the variable size heap
     auto heapEntries = page->variableData();
     auto beginOffset = heapEntries[endIdx - 1].offset;
-    auto endOffset = (startIdx == 0 ? 0 : heapEntries[startIdx - 1].offset);
+    auto endOffset = heapEntries[startIdx - 1].offset;
     LOG_ASSERT(beginOffset >= endOffset, "End offset larger than begin offset");
 
     auto length = beginOffset - endOffset;
@@ -615,7 +622,6 @@ void ColumnMapPageModifier::flushFillPage() {
             memcpy(headerData, srcData, length);
             headerData += length;
         }
-        LOG_ASSERT(crossbow::align(headerData, 8u) == mFillPage->fixedData(), "Data does not point to begin of fixed");
     }
 
     // Copy all fixed size fields into the fill page
@@ -635,8 +641,6 @@ void ColumnMapPageModifier::flushFillPage() {
             }
             fieldOffset += fieldLength;
         }
-        LOG_ASSERT(crossbow::align(fixedData, 8u) == reinterpret_cast<const char*>(mFillPage->variableData()),
-                "Data does not point to begin of variable");
     }
 
     // Copy all variable size field heap entries
