@@ -6,6 +6,7 @@ set(UTIL_SRCS
     LLVMBuilder.cpp
     LLVMJIT.cpp
     LLVMRowProjection.cpp
+    LLVMRowScan.cpp
     LLVMScan.cpp
     Log.cpp
     OpenAddressingHash.cpp
@@ -20,6 +21,7 @@ set(UTIL_PRIVATE_HDR
     LLVMBuilder.hpp
     LLVMJIT.hpp
     LLVMRowProjection.hpp
+    LLVMRowScan.hpp
     LLVMScan.hpp
     Log.hpp
     OpenAddressingHash.hpp

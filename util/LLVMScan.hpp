@@ -158,46 +158,6 @@ struct ScanAST {
     std::vector<QueryAST> queries;
 };
 
-/**
- * @brief Helper class creating the row store scan function
- */
-class LLVMRowScanBuilder : private FunctionBuilder {
-public:
-    static const std::string FUNCTION_NAME;
-
-    static void createFunction(llvm::Module& module, llvm::TargetMachine* target, const ScanAST& scanAst) {
-        LLVMRowScanBuilder builder(module, target);
-        builder.buildScan(scanAst);
-    }
-
-private:
-    static constexpr size_t key = 0;
-    static constexpr size_t validFrom = 1;
-    static constexpr size_t validTo = 2;
-    static constexpr size_t recordData = 3;
-    static constexpr size_t resultData = 4;
-
-    static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
-        return llvm::Type::getVoidTy(context);
-    }
-
-    static std::vector<std::pair<llvm::Type*, crossbow::string>> buildParamTy(llvm::LLVMContext& context) {
-        return {
-            { llvm::Type::getInt64Ty(context), "key" },
-            { llvm::Type::getInt64Ty(context), "validFrom" },
-            { llvm::Type::getInt64Ty(context), "validTo" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "recordData" },
-            { llvm::Type::getInt8Ty(context)->getPointerTo(), "resultData" }
-        };
-    }
-
-    LLVMRowScanBuilder(llvm::Module& module, llvm::TargetMachine* target);
-
-    void buildScan(const ScanAST& scanAst);
-
-    std::vector<uint8_t> mConjunctsGenerated;
-};
-
 class LLVMScanBase {
 public:
     template <typename Fun>
