@@ -267,7 +267,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const ColumnMapContext& con
         auto scalarEndBlock = BasicBlock::Create(mCompilerContext, "agg.scalarend." + Twine(destFieldIdx), func);
 
         // Compute the pointer to the first element in the aggregation column
-        llvm::Value* srcPtr;
+        llvm::Value* srcPtr = nullptr;
         if (aggregationType != AggregationType::CNT) {
             if (!fixedData) {
                 // auto fixedOffset = mainPage->fixedOffset;
@@ -344,7 +344,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const ColumnMapContext& con
         vectorDest->addIncoming(vectorDestValue, vectorHeaderBlock);
 
         // Load source vector (not required for count aggregation)
-        Value* vectorSrc;
+        Value* vectorSrc = nullptr;
         if (aggregationType != AggregationType::CNT) {
             vectorSrc = builder.CreateInBoundsGEP(srcPtr, vectorIdx);
             vectorSrc = builder.CreateBitCast(vectorSrc, builder.getFieldVectorPtrTy(srcField.type(), vectorSize));
@@ -440,7 +440,7 @@ void ColumnMapScan::prepareColumnAggregationFunction(const ColumnMapContext& con
         scalarDest->addIncoming(vectorAggResult, vectorEndBlock);
 
         // Load source vector (not required for count aggregation)
-        Value* scalarSrc;
+        Value* scalarSrc = nullptr;
         if (aggregationType != AggregationType::CNT) {
             scalarSrc = builder.CreateInBoundsGEP(srcPtr, scalarIdx);
             scalarSrc = builder.CreateAlignedLoad(scalarSrc, srcFieldAlignment);

@@ -432,6 +432,7 @@ NUMBER_COMPARE:
 
         default: {
             LOG_ASSERT(false, "Unknown type");
+            return FieldType::NOTYPE;
         }
         }
     }
