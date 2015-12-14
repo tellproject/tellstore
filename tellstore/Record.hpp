@@ -607,11 +607,14 @@ struct FieldMetaData {
 * The format look as follows (in the following order):
 *  - NULL bitmap (size of bitmap is (|Columns|+7)/8 bytes)
 *    This is omitted, if all columns are declared as NOT NULL
-*  - A padding to the next multiple of pointer size
-*  - The row Data - it is important to understand, that one needs to
-*    know the schema in order to be able to parse the record data.
-*    The Table schema needs to be stored somewhere (usually in the
-*    first page of the table).
+*  - A padding to the next multiple of 8 byte
+*  - The row Data of all fixed size fields
+*  In case the schema also contains variable size fields
+*  - A padding to the next multiple of 4 byte
+*  - A uint32_t array of size #variable-size-fields + 1 containing the offsets into the heap where the data for the
+*    field is stored. The offset is calculated from the start of the record and the last offset contains points to the
+*    end of the variable heap.
+*  - The variable size heap storing the variable sized data
 */
 class Record {
 public:
