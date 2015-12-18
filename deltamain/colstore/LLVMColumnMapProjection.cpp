@@ -207,8 +207,8 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
             auto srcHeapOffset = CreateInBoundsGEP(srcData, { getInt64(0), getInt32(0) });
             srcHeapOffset = CreateAlignedLoad(srcHeapOffset, 8u);
 
-            // -> auto offsetCorrection = srcHeapOffset + destHeapOffset;
-            auto offsetCorrection = CreateAdd(srcHeapOffset, destHeapOffset);
+            // -> auto offsetCorrection = srcHeapOffset - destHeapOffset;
+            auto offsetCorrection = CreateSub(srcHeapOffset, destHeapOffset);
 
             llvm::Value* offset;
             do {
@@ -225,10 +225,10 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
                     srcData = CreateInBoundsGEP(srcData, count);
                 }
 
-                // -> auto offset = offsetCorrection - srcData->offset;
+                // -> auto offset = srcData->offset - offsetCorrection;
                 offset = CreateInBoundsGEP(srcData, { getInt64(0), getInt32(0) });
                 offset = CreateAlignedLoad(offset, 8u);
-                offset = CreateSub(offsetCorrection, offset);
+                offset = CreateSub(offset, offsetCorrection);
 
                 // -> ++destData;
                 ++destFieldIdx;
@@ -238,16 +238,11 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
                 CreateAlignedStore(offset, destData, 4u);
             } while (destFieldIdx < destRecord.varSizeFieldCount() && *i == srcFieldIdx);
 
+            // -> auto srcHeap = page + static_cast<uint64_t>(srcHeapOffset);
+            auto srcHeap = CreateInBoundsGEP(getParam(page), CreateZExt(srcHeapOffset, getInt64Ty()));
 
-            // -> srcHeapOffset = TELL_PAGE_SIZE - static_cast<uint64_t>(srcHeapOffset);
-            srcHeapOffset = CreateZExt(srcHeapOffset, getInt64Ty());
-            srcHeapOffset = CreateSub(getInt64(TELL_PAGE_SIZE), srcHeapOffset);
-
-            // -> auto srcHeap = page + srcHeapOffset;
-            auto srcHeap = CreateInBoundsGEP(getParam(page), srcHeapOffset);
-
-            // -> auto destHeap = dest + destHeapOffset;
-            auto destHeap = CreateInBoundsGEP(getParam(dest), destHeapOffset);
+            // -> auto destHeap = dest + static_cast<uint64_t>(destHeapOffset);
+            auto destHeap = CreateInBoundsGEP(getParam(dest), CreateZExt(destHeapOffset, getInt64Ty()));
 
             // -> auto length = offset - destHeapOffset
             auto length = CreateSub(offset, destHeapOffset);

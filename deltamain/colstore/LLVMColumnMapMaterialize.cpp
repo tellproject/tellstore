@@ -142,8 +142,8 @@ void LLVMColumnMapMaterializeBuilder::build() {
 
         // Offsets of the remaining fields have to be calculated
         if (record.varSizeFieldCount() > 1) {
-            // -> auto offsetCorrection = startOffset + record.staticSize();
-            auto offsetCorrection = CreateAdd(startOffset, getInt32(record.staticSize()));
+            // -> auto offsetCorrection = startOffset - record.staticSize();
+            auto offsetCorrection = CreateSub(startOffset, getInt32(record.staticSize()));
             for (decltype(record.varSizeFieldCount()) i = 1; i < record.varSizeFieldCount(); ++i) {
                 // -> src += count;
                 src = CreateInBoundsGEP(src, count);
@@ -151,7 +151,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
                 // -> auto offset = src->offset - offsetCorrection;
                 auto offset = CreateInBoundsGEP(src, { getInt64(0), getInt32(0) });
                 offset = CreateAlignedLoad(offset, 8u);
-                offset = CreateSub(offsetCorrection, offset);
+                offset = CreateSub(offset, offsetCorrection);
 
                 auto& rowMeta = record.getFieldMeta(record.fixedSizeFieldCount() + i);
 
@@ -174,12 +174,8 @@ void LLVMColumnMapMaterializeBuilder::build() {
             CreateAlignedStore(getParam(size), dest, 4u);
         }
 
-        // -> auto heapOffset = TELL_PAGE_SIZE - static_cast<uint64_t>(startOffset);
-        auto heapOffset = CreateZExt(startOffset, getInt64Ty());
-        heapOffset = CreateSub(getInt64(TELL_PAGE_SIZE), heapOffset);
-
-        // -> auto heapSrc = page + heapOffset;
-        auto heapSrc = CreateInBoundsGEP(getParam(page), heapOffset);
+        // -> auto heapSrc = page + static_cast<uint64_t>(startOffset);
+        auto heapSrc = CreateInBoundsGEP(getParam(page), CreateZExt(startOffset, getInt64Ty()));
 
         // -> auto dest = data + record.staticSize();
         auto dest = CreateInBoundsGEP(getParam(data), getInt64(record.staticSize()));

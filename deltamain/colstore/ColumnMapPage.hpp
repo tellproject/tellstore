@@ -62,8 +62,8 @@ public:
  * @brief Struct in the column map page storing the offset and the 4 byte prefix of a single variable sized field
  */
 struct alignas(8) ColumnMapHeapEntry {
-    ColumnMapHeapEntry()
-        : offset(0),
+    ColumnMapHeapEntry(uint32_t _offset)
+        : offset(_offset),
           prefix{} {
     }
 
