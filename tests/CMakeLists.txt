@@ -8,7 +8,6 @@ set(TEST_SRCS
     testCommitManager.cpp
     testLog.cpp
     testOpenAddressingHash.cpp
-    testQueryBufferScan.cpp
     simpleTests.cpp
     deltamain/testInsertHash.cpp
     logstructured/testTable.cpp

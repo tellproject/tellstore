@@ -308,19 +308,6 @@ public:
      *
      * @param record Record of the tuple
      * @param key Key of the tuple
-     * @param data Pointer to the tuple's data
-     * @param length Length of the tuple
-     * @param validFrom Valid-From version of the tuple
-     * @param validTo Valid-To version of the tuple
-     */
-    void processRecord(const Record& record, uint64_t key, const char* data, uint32_t length, uint64_t validFrom,
-            uint64_t validTo);
-
-    /**
-     * @brief Process the tuple according to the query data associated with this processor
-     *
-     * @param record Record of the tuple
-     * @param key Key of the tuple
      * @param length Length of the tuple
      * @param validFrom Valid-From version of the tuple
      * @param validTo Valid-To version of the tuple
@@ -337,61 +324,6 @@ public:
     void initAggregationRecord();
 
 //private:
-    /**
-     * @brief Write the full tuple to the scan buffer
-     *
-     * @param key Key of the tuple
-     * @param data Pointer to the tuple's data
-     * @param length Length of the tuple
-     */
-    void writeFullRecord(uint64_t key, const char* data, uint32_t length);
-
-    /**
-     * @brief Write only the projected fields of the tuple to the scan buffer
-     *
-     * @param record Record of the tuple
-     * @param key Key of the tuple
-     * @param data Pointer to the tuple's data
-     */
-    void writeProjectionRecord(const Record& record, uint64_t key, const char* data);
-
-    /**
-     * @brief Appends the field from the tuple to the scan buffer
-     *
-     * @param tupleData Reference pointing to the start of the current tuple
-     * @param varHeapOffset Current offset into the variabel size heap
-     * @param fieldId Id of the field to write
-     * @param isNull Whether the field is NULL
-     * @param data Pointer to the source tuple's data
-     * @param value Pointer to the source field value
-     */
-    void writeProjectionField(char*& ptr, uint32_t& varHeapOffset, Record::id_t fieldId, bool isNull, const char* data,
-            const char* value);
-
-    /**
-     * @brief Write the aggregation of the tuple to the scan buffer
-     *
-     * Reserves space for the aggregations in the buffer on the first tuple written, subsequent calls update the
-     * aggregation values in the buffer directly. The key of the resulting aggregation is always 0.
-     *
-     * @param record Record of the tuple
-     * @param data Pointer to the tuple's data
-     */
-    void writeAggregationRecord(const Record& record, const char* data);
-
-    /**
-     * @brief Update the aggregation of the field to the scan buffer
-     *
-     * @param ptr Pointer to the start of the current tuple
-     * @param fieldId Id of the field to aggregate
-     * @param type Type of the field to aggregate
-     * @param aggType Type of the aggregation
-     * @param isNull Whether the field is NULL
-     * @param data Pointer to the tuple's data
-     */
-    void writeAggregationField(char* ptr, Record::id_t fieldId, FieldType type, AggregationType aggType, bool isNull,
-            const char* data);
-
     /**
      * @brief Ensures that the buffer can hold at least the number of bytes
      *
