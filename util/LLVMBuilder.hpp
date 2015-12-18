@@ -219,7 +219,7 @@ llvm::Value* FunctionBuilder::createLoop(llvm::Value* start, llvm::Value* end, u
 
     auto previousBlock = GetInsertBlock();
     auto bodyBlock = createBasicBlock(name + ".body");
-    auto endBlock = createBasicBlock(name + ".end");
+    auto endBlock = llvm::BasicBlock::Create(Context, name + ".end");
     CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, start, end), bodyBlock, endBlock);
     SetInsertPoint(bodyBlock);
 
@@ -236,6 +236,7 @@ llvm::Value* FunctionBuilder::createLoop(llvm::Value* start, llvm::Value* end, u
     // -> i != endIdx
     CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, next, end), bodyBlock, endBlock);
 
+    mFunction->getBasicBlockList().push_back(endBlock);
     SetInsertPoint(endBlock);
     return end;
 }
