@@ -52,8 +52,10 @@ enum class PredicateType : uint8_t {
     LESS_EQUAL,
     GREATER,
     GREATER_EQUAL,
-    LIKE,
-    NOT_LIKE,
+    PREFIX_LIKE,
+    PREFIX_NOT_LIKE,
+    POSTFIX_LIKE,
+    POSTFIX_NOT_LIKE,
     IS_NULL,
     IS_NOT_NULL
 };

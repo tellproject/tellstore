@@ -83,41 +83,22 @@ LLVMScanBase::~LLVMScanBase() {
 void LLVMScanBase::finalizeScan() {
     using namespace llvm;
 
-#ifndef NDEBUG
-    LOG_INFO("Dumping LLVM Code before optimizations");
-    mCompilerModule.dump();
-#endif
-
-    // Setup optimizations
-    legacy::PassManager modulePass;
-#ifndef NDEBUG
-    modulePass.add(createVerifierPass());
-#endif
-    modulePass.add(createTargetTransformInfoWrapperPass(mCompiler.getTargetMachine()->getTargetIRAnalysis()));
-
-    legacy::FunctionPassManager functionPass(&mCompilerModule);
-#ifndef NDEBUG
-    functionPass.add(createVerifierPass());
-#endif
-    functionPass.add(createTargetTransformInfoWrapperPass(mCompiler.getTargetMachine()->getTargetIRAnalysis()));
-
-    functionPass.doInitialization();
     for (auto& func : mCompilerModule) {
         // Add host CPU features
         func.addFnAttr(Attribute::NoUnwind);
         func.addFnAttr("target-cpu", mCompiler.getTargetMachine()->getTargetCPU());
         func.addFnAttr("target-features", mCompiler.getTargetMachine()->getTargetFeatureString());
-
-        // Run passes
-        functionPass.run(func);
     }
-    functionPass.doFinalization();
-
-    modulePass.run(mCompilerModule);
 
 #ifndef NDEBUG
-    LOG_INFO("Dumping LLVM Code after optimizations");
+    LOG_INFO("Dumping LLVM scan code");
     mCompilerModule.dump();
+
+    LOG_INFO("Verifying LLVM scan code");
+    if (llvm::verifyModule(mCompilerModule, &llvm::dbgs())) {
+        LOG_FATAL("Verifying LLVM scan code failed");
+        std::terminate();
+    }
 #endif
 
     // Compile the module
@@ -271,33 +252,17 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
                         auto data = queryReader.read(size);
                         queryReader.align(8u);
 
-                        std::unique_ptr<char[]> tmpData;
-                        if (predicateType == PredicateType::LIKE || predicateType == PredicateType::NOT_LIKE) {
-                            LOG_ASSERT(fieldAst.type == FieldType::TEXT, "Like only supported on text fields");
-                            LOG_ASSERT(size > 0, "Size must be larger than 0");
-                            LOG_ASSERT(data[0] == '%' || data[size - 1] == '%', "Only prefix or postfix supported");
-                            LOG_ASSERT(std::count(data, data + size, '%') == 1, "Must contain exactly one wildcard");
-                            --size;
-                            if (data[0] == '%') {
-                                ++data;
-                                predicateAst.variable.isPrefixLike = false;
-                            } else {
-                                tmpData.reset(new char[size]);
-                                memcpy(tmpData.get(), data, size);
-                                tmpData[size] = '\0';
-                                data = tmpData.get();
-                                predicateAst.variable.isPrefixLike = true;
-                            }
-                        }
-
                         predicateAst.variable.size = size;
-                        if (size <= sizeof(uint32_t)) {
-                            memcpy(&predicateAst.variable.prefix, data, size < sizeof(uint32_t) ? size : sizeof(uint32_t));
+                        memset(predicateAst.variable.prefix, 0, sizeof(predicateAst.variable.prefix));
+                        if (size > 0) {
+                            memcpy(predicateAst.variable.prefix, data, size < sizeof(predicateAst.variable.prefix)
+                                   ? size : sizeof(predicateAst.variable.prefix));
+
+                            auto value = ConstantDataArray::get(builder.getContext(),
+                                    makeArrayRef(reinterpret_cast<const uint8_t*>(data), size));
+                            predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
+                                    GlobalValue::PrivateLinkage, value);
                         }
-                        auto value = ConstantDataArray::get(builder.getContext(),
-                                makeArrayRef(reinterpret_cast<const uint8_t*>(data), size));
-                        predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
-                                GlobalValue::PrivateLinkage, value);
                     } break;
 
                     default: {

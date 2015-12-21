@@ -38,8 +38,10 @@ LLVMColumnMapScanBuilder::LLVMColumnMapScanBuilder(const ColumnMapContext& conte
                 FUNCTION_NAME),
           mContext(context),
           mMainPageStructTy(getColumnMapMainPageTy(module.getContext())),
+          mHeapEntryStructTy(getColumnMapHeapEntriesTy(module.getContext())),
           mCount(nullptr),
           mFixedData(nullptr),
+          mVariableData(nullptr),
           mRegisterWidth(mTargetInfo.getRegisterBitWidth(true)) {
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);
@@ -69,16 +71,35 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
         mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
         mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
 
-        // auto fixedOffset = mainPage->fixedOffset;
-        auto fixedOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(2) });
-        fixedOffset = CreateZExt(CreateAlignedLoad(fixedOffset, 4u), getInt64Ty());
+        auto i = scanAst.fields.begin();
 
-        // -> auto src = page + fixedOffset;
-        mFixedData = CreateInBoundsGEP(getParam(page), fixedOffset);
+        if (i != scanAst.fields.end() && i->second.isFixedSize) {
+            // auto fixedOffset = mainPage->fixedOffset;
+            auto fixedOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(2) });
+            fixedOffset = CreateZExt(CreateAlignedLoad(fixedOffset, 4u), getInt64Ty());
 
-        for (auto& fieldAst : scanAst.fields) {
-            buildField(fieldAst.second);
+            // -> auto src = page + fixedOffset;
+            mFixedData = CreateInBoundsGEP(getParam(page), fixedOffset);
+
+            for (; i != scanAst.fields.end() && i->second.isFixedSize; ++i) {
+                buildFixedField(i->second);
+            }
         }
+
+        if (i != scanAst.fields.end()) {
+            // auto variableOffset = static_cast<uint64_t>(mainPage->variableOffset);
+            auto variableOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(3) });
+            variableOffset = CreateZExt(CreateAlignedLoad(variableOffset, 4u), getInt64Ty());
+
+            // -> auto variableData = reinterpret_cast<const ColumnMapHeapEntry*>(page + variableOffset);
+            mVariableData = CreateInBoundsGEP(getParam(page), variableOffset);
+            mVariableData = CreateBitCast(mVariableData, mHeapEntryStructTy->getPointerTo());
+
+            for (; i != scanAst.fields.end(); ++i) {
+                buildVariableField(i->second);
+            }
+        }
+
         mScalarConjunctsGenerated.clear();
         mVectorConjunctsGenerated.clear();
     }
@@ -92,7 +113,7 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
     CreateRetVoid();
 }
 
-void LLVMColumnMapScanBuilder::buildField(const FieldAST& fieldAst) {
+void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
     // Load the start pointer of the column
     llvm::Value* recordPtr = nullptr;
     if (fieldAst.needsValue) {
@@ -151,6 +172,154 @@ llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* re
                 res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
             } else {
                 conjunctsGenerated[predicateAst.conjunct] = true;
+            }
+            CreateAlignedStore(res, conjunctPtr, 1u);
+        }
+    });
+}
+
+void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
+    // Load the start pointer of the column
+    llvm::Value* srcData = nullptr;
+    if (fieldAst.needsValue) {
+        auto& record = mContext.record();
+        auto destIdx = fieldAst.id - record.fixedSizeFieldCount();
+
+        srcData = mVariableData;
+        if (destIdx != 0) {
+            srcData = CreateInBoundsGEP(srcData, createConstMul(mCount, destIdx));
+        }
+    }
+
+    createLoop(getParam(startIdx), getParam(endIdx), 1, "col." + llvm::Twine(fieldAst.id),
+            [this, srcData, &fieldAst] (llvm::Value* idx) {
+        // Load the field value from the record
+        llvm::Value* lhsStart = nullptr;
+        llvm::Value* length = nullptr;
+        llvm::Value* prefix = nullptr;
+        if (srcData) {
+            auto heapEntry = CreateInBoundsGEP(srcData, idx);
+
+            auto heapStartOffset = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(0) });
+            heapStartOffset = CreateAlignedLoad(heapStartOffset, 4u);
+
+            lhsStart = CreateAdd(heapStartOffset, getInt32(4));
+            lhsStart = CreateZExt(lhsStart, getInt64Ty());
+            lhsStart = CreateInBoundsGEP(getParam(page), lhsStart);
+
+            prefix = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(1) });
+            prefix = CreateAlignedLoad(prefix, 4u);
+
+            auto& record = mContext.record();
+            if (fieldAst.id + 1u == record.fieldCount()) {
+                heapEntry = CreateGEP(mVariableData, CreateSub(idx, getInt64(1)));
+            } else {
+                heapEntry = CreateInBoundsGEP(heapEntry, mCount);
+            }
+            auto heapEndOffset = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(0) });
+            heapEndOffset = CreateAlignedLoad(heapEndOffset, 4u);
+
+            length = CreateSub(heapEndOffset, heapStartOffset);
+        }
+
+        // Evaluate all predicates attached to this field
+        for (decltype(fieldAst.predicates.size()) i = 0; i < fieldAst.predicates.size(); ++i) {
+            LOG_ASSERT(srcData != nullptr, "lhs must not be null for this kind of comparison");
+            auto& predicateAst = fieldAst.predicates[i];
+            auto& rhsAst = predicateAst.variable;
+
+            // Execute the comparison
+            llvm::Value* res = nullptr;
+            switch (predicateAst.type) {
+            case PredicateType::EQUAL:
+            case PredicateType::NOT_EQUAL: {
+                auto negateResult = (predicateAst.type == PredicateType::NOT_EQUAL);
+                if (rhsAst.size == 0) {
+                    res = CreateICmp((negateResult ? llvm::CmpInst::ICMP_NE : llvm::CmpInst::ICMP_EQ), length,
+                            getInt32(0));
+                } else {
+                    auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_EQ, length, getInt32(rhsAst.size));
+                    auto prefixValue = *reinterpret_cast<const uint32_t*>(rhsAst.prefix);
+                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, prefix, getInt32(prefixValue));
+                    res = CreateAnd(lengthComp, prefixComp);
+
+                    if (rhsAst.size > 4) {
+                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(0), getInt32(4) });
+                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(1), getInt32(0) });
+
+                        res = createMemCmp(res, lhsStart, rhsStart, rhsEnd,
+                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                    }
+                    if (negateResult) {
+                        res = CreateNot(res);
+                    }
+                }
+            } break;
+
+            case PredicateType::PREFIX_LIKE:
+            case PredicateType::PREFIX_NOT_LIKE: {
+                auto negateResult = (predicateAst.type == PredicateType::PREFIX_NOT_LIKE);
+                if (rhsAst.size == 0) {
+                    res = (negateResult ? getFalse() : getTrue());
+                } else {
+                    auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_UGE, length, getInt32(rhsAst.size));
+                    auto maskedPrefix = prefix;
+                    if (rhsAst.size < 4) {
+                        alignas(4) char mask[4] = {};
+                        memset(mask, 0xFFu, rhsAst.size);
+                        auto maskValue = *reinterpret_cast<const uint32_t*>(mask);
+                        maskedPrefix = CreateAnd(maskedPrefix, getInt32(maskValue));
+                    }
+                    auto prefixValue = *reinterpret_cast<const uint32_t*>(rhsAst.prefix);
+                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, maskedPrefix, getInt32(prefixValue));
+                    res = CreateAnd(lengthComp, prefixComp);
+
+                    if (rhsAst.size > 4) {
+                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(0), getInt32(4) });
+                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(1), getInt32(0) });
+
+                        res = createMemCmp(res, lhsStart, rhsStart, rhsEnd,
+                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                    }
+                    if (negateResult) {
+                        res = CreateNot(res);
+                    }
+                }
+            } break;
+
+            case PredicateType::POSTFIX_LIKE:
+            case PredicateType::POSTFIX_NOT_LIKE: {
+                auto negateResult = (predicateAst.type == PredicateType::POSTFIX_NOT_LIKE);
+                if (rhsAst.size == 0) {
+                    res = (negateResult ? getFalse() : getTrue());
+                } else {
+                    res = createPostfixMemCmp(lhsStart, length, rhsAst.value, rhsAst.size,
+                            "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                    if (negateResult) {
+                        res = CreateNot(res);
+                    }
+                }
+            } break;
+
+            default: {
+                LOG_ASSERT(false, "Unknown predicate");
+                res = nullptr;
+            } break;
+            }
+            res = CreateZExtOrBitCast(res, getInt8Ty());
+
+            // Store resulting conjunct value
+            auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
+            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+            conjunctPtr = CreateBitCast(conjunctPtr, getInt8PtrTy());
+            if (mScalarConjunctsGenerated[predicateAst.conjunct]) {
+                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                mScalarConjunctsGenerated[predicateAst.conjunct] = true;
             }
             CreateAlignedStore(res, conjunctPtr, 1u);
         }

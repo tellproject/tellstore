@@ -68,6 +68,7 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
 
         // Load the field value from the record
         llvm::Value* lhs = nullptr;
+        llvm::Value* length = nullptr;
         if (fieldAst.needsValue) {
             lhs = getParam(recordData);
             if (fieldAst.offset != 0) {
@@ -75,10 +76,21 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
             }
             lhs = CreateBitCast(lhs, getFieldPtrTy(fieldAst.type));
             lhs = CreateAlignedLoad(lhs, fieldAst.alignment);
+            if (!fieldAst.isFixedSize) {
+                auto endOffset = CreateInBoundsGEP(getParam(recordData), getInt64(fieldAst.offset + sizeof(uint32_t)));
+                endOffset = CreateBitCast(endOffset, getFieldPtrTy(fieldAst.type));
+                endOffset = CreateAlignedLoad(endOffset, fieldAst.alignment);
+
+                length = CreateSub(endOffset, lhs);
+
+                lhs = CreateInBoundsGEP(getParam(recordData), lhs);
+            }
         }
 
         // Evaluate all predicates attached to this field
-        for (auto& predicateAst : fieldAst.predicates) {
+        for (decltype(fieldAst.predicates.size()) i = 0; i < fieldAst.predicates.size(); ++i) {
+            auto& predicateAst = fieldAst.predicates[i];
+
             llvm::Value* res;
             if (predicateAst.type == PredicateType::IS_NULL || predicateAst.type == PredicateType::IS_NOT_NULL) {
                 // Check if the field is null
@@ -100,7 +112,78 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
                     res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
                 }
             } else {
-                LOG_ASSERT(false, "Scan on variable sized fields not yet supported");
+                LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
+                LOG_ASSERT(length != nullptr, "length must not be null for this kind of comparison");
+                auto& rhsAst = predicateAst.variable;
+
+                // Execute the comparison
+                switch (predicateAst.type) {
+                case PredicateType::EQUAL:
+                case PredicateType::NOT_EQUAL: {
+                    auto negateResult = (predicateAst.type == PredicateType::NOT_EQUAL);
+                    if (rhsAst.size == 0) {
+                        res = CreateICmp((negateResult ? llvm::CmpInst::ICMP_NE : llvm::CmpInst::ICMP_EQ), length,
+                                getInt32(0));
+                    } else {
+                        res = CreateICmp(llvm::CmpInst::ICMP_EQ, length, getInt32(rhsAst.size));
+
+                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(0), getInt32(0) });
+                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(1), getInt32(0) });
+
+                        res = createMemCmp(res, lhs, rhsStart, rhsEnd,
+                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                        if (negateResult) {
+                            res = CreateNot(res);
+                        }
+                    }
+                } break;
+
+                case PredicateType::PREFIX_LIKE:
+                case PredicateType::PREFIX_NOT_LIKE: {
+                    auto negateResult = (predicateAst.type == PredicateType::PREFIX_NOT_LIKE);
+                    if (rhsAst.size == 0) {
+                        res = (negateResult ? getFalse() : getTrue());
+                    } else {
+                        res = CreateICmp(llvm::CmpInst::ICMP_UGE, length, getInt32(rhsAst.size));
+                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(0), getInt32(0) });
+                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                                { getInt64(1), getInt32(0) });
+
+                        res = createMemCmp(res, lhs, rhsStart, rhsEnd,
+                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                        if (negateResult) {
+                            res = CreateNot(res);
+                        }
+                    }
+                } break;
+
+                case PredicateType::POSTFIX_LIKE:
+                case PredicateType::POSTFIX_NOT_LIKE: {
+                    auto negateResult = (predicateAst.type == PredicateType::POSTFIX_NOT_LIKE);
+                    if (rhsAst.size == 0) {
+                        res = (negateResult ? getFalse() : getTrue());
+                    } else {
+                        res = createPostfixMemCmp(lhs, length, rhsAst.value, rhsAst.size,
+                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                        if (negateResult) {
+                            res = CreateNot(res);
+                        }
+                    }
+                } break;
+
+                default: {
+                    LOG_ASSERT(false, "Unknown predicate");
+                    res = nullptr;
+                } break;
+                }
+
+                // The predicate evaluates to false if the value is null
+                if (!fieldAst.isNotNull) {
+                    res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
+                }
             }
             res = CreateZExtOrBitCast(res, getInt8Ty());
 

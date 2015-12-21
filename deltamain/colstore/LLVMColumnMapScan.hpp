@@ -79,10 +79,12 @@ private:
 
     void buildScan(const ScanAST& scanAst);
 
-    void buildField(const FieldAST& field);
+    void buildFixedField(const FieldAST& fieldAst);
 
     llvm::Value* buildFixedFieldEvaluation(llvm::Value* recordPtr, llvm::Value* startIdx, uint64_t vectorSize,
             std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst, const llvm::Twine& name);
+
+    void buildVariableField(const FieldAST& fieldAst);
 
     void buildQuery(bool needsKey, const std::vector<QueryAST>& queries);
 
@@ -97,10 +99,12 @@ private:
     const ColumnMapContext& mContext;
 
     llvm::StructType* mMainPageStructTy;
+    llvm::StructType* mHeapEntryStructTy;
 
     llvm::Value* mMainPage;
     llvm::Value* mCount;
     llvm::Value* mFixedData;
+    llvm::Value* mVariableData;
 
     uint64_t mRegisterWidth;
 

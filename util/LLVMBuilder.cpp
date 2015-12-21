@@ -212,5 +212,101 @@ FunctionBuilder::FunctionBuilder(llvm::Module& module, llvm::TargetMachine* targ
     SetInsertPoint(entryBlock);
 }
 
+llvm::Value* FunctionBuilder::createMemCmp(llvm::Value* cond, llvm::Value* lhsStart, llvm::Value* rhsStart,
+        llvm::Value* rhsEnd, const llvm::Twine& name /* = "" */) {
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock(name + ".memcmp.body");
+    auto endBlock = createBasicBlock(name + ".memcmp.end");
+
+    CreateCondBr(cond, bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
+
+    auto lhs = CreatePHI(getInt8PtrTy(), 2);
+    lhs->addIncoming(lhsStart, previousBlock);
+    auto rhs = CreatePHI(getInt8PtrTy(), 2);
+    rhs->addIncoming(rhsStart, previousBlock);
+
+    // -> auto comp = (*lhs == *rhs);
+    auto lhsValue = CreateAlignedLoad(lhs, 1u);
+    auto rhsValue = CreateAlignedLoad(rhs, 1u);
+    auto comp = CreateICmp(llvm::CmpInst::ICMP_EQ, lhsValue, rhsValue);
+
+    // -> ++lhs;
+    auto lhsNext = CreateInBoundsGEP(lhs, getInt64(1));
+    lhs->addIncoming(lhsNext, bodyBlock);
+
+    // -> ++rhs;
+    auto rhsNext = CreateInBoundsGEP(rhs, getInt64(1));
+    rhs->addIncoming(rhsNext, bodyBlock);
+
+    // -> comp && rhs != rhsEnd
+    cond = CreateICmp(llvm::CmpInst::ICMP_NE, rhsNext, rhsEnd);
+    cond = CreateAnd(comp, cond);
+    CreateCondBr(cond, bodyBlock, endBlock);
+
+    SetInsertPoint(endBlock);
+    auto res = CreatePHI(getInt1Ty(), 2);
+    res->addIncoming(getFalse(), previousBlock);
+    res->addIncoming(comp, bodyBlock);
+
+    return res;
+}
+
+llvm::Value* FunctionBuilder::createPostfixMemCmp(llvm::Value* lhsStart, llvm::Value* lhsLength,
+        llvm::GlobalValue* rhsString, uint32_t rhsLength, const llvm::Twine& name /* = "" */) {
+    auto previousBlock = GetInsertBlock();
+    auto beginBlock = createBasicBlock(name + ".postfix.begin");
+    auto bodyBlock = createBasicBlock(name + ".postfix.body");
+    auto endBlock = createBasicBlock(name + ".postfix.end");
+
+    auto cond = CreateICmp(llvm::CmpInst::ICMP_UGE, lhsLength, getInt32(rhsLength));
+    CreateCondBr(cond, beginBlock, endBlock);
+    SetInsertPoint(beginBlock);
+
+    // -> lhsStart += static_cast<uint64_t>(lhsLength - rhsLength);
+    auto offset = CreateSub(lhsLength, getInt32(rhsLength));
+    offset = CreateZExt(offset, getInt64Ty());
+    lhsStart = CreateInBoundsGEP(lhsStart, offset);
+
+    // -> auto rhsStart = &rhsString[0]
+    auto rhsStart = CreateInBoundsGEP(rhsString->getValueType(), rhsString, { getInt64(0), getInt32(0) });
+
+    // -> auto rhsEnd = &rhsString[rhsLength]
+    auto rhsEnd = CreateGEP(rhsString->getValueType(), rhsString, { getInt64(1), getInt32(0) });
+
+    CreateBr(bodyBlock);
+    SetInsertPoint(bodyBlock);
+
+    auto lhs = CreatePHI(getInt8PtrTy(), 2);
+    lhs->addIncoming(lhsStart, beginBlock);
+    auto rhs = CreatePHI(getInt8PtrTy(), 2);
+    rhs->addIncoming(rhsStart, beginBlock);
+
+    // -> auto comp = (*lhs == *rhs);
+    auto lhsValue = CreateAlignedLoad(lhs, 1u);
+    auto rhsValue = CreateAlignedLoad(rhs, 1u);
+    auto comp = CreateICmp(llvm::CmpInst::ICMP_EQ, lhsValue, rhsValue);
+
+    // -> ++lhs;
+    auto lhsNext = CreateInBoundsGEP(lhs, getInt64(1));
+    lhs->addIncoming(lhsNext, bodyBlock);
+
+    // -> ++rhs;
+    auto rhsNext = CreateInBoundsGEP(rhs, getInt64(1));
+    rhs->addIncoming(rhsNext, bodyBlock);
+
+    // -> comp && rhs != rhsEnd
+    cond = CreateICmp(llvm::CmpInst::ICMP_NE, rhsNext, rhsEnd);
+    cond = CreateAnd(comp, cond);
+    CreateCondBr(cond, bodyBlock, endBlock);
+
+    SetInsertPoint(endBlock);
+    auto res = CreatePHI(getInt1Ty(), 2);
+    res->addIncoming(getFalse(), previousBlock);
+    res->addIncoming(comp, bodyBlock);
+
+    return res;
+}
+
 } // namespace store
 } // namespace tell

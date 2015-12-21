@@ -200,6 +200,34 @@ public:
     template <typename Fun>
     llvm::Value* createLoop(llvm::Value* start, llvm::Value* end, uint64_t step, const llvm::Twine& name, Fun fun);
 
+    /**
+     * @brief Creates a memcmp function
+     *
+     * The rhs string must be at least as long as the lhs string.
+     *
+     * @param cond Initial condition that must be true
+     * @param lhsStart Pointer to string A
+     * @param rhsStart Pointer to string B
+     * @param rhsEnd End pointer to string B
+     * @param name Name of the loop blocks
+     * @return The result of the comparison
+     */
+    llvm::Value* createMemCmp(llvm::Value* cond, llvm::Value* lhsStart, llvm::Value* rhsStart, llvm::Value* rhsEnd,
+            const llvm::Twine& name = "");
+
+    /**
+     * @brief Creates a memcmp function that matches on the postfix
+     *
+     * @param lhsStart Pointer to string A
+     * @param lhsLength Length of string A
+     * @param rhsString Pointer to global char array B
+     * @param rhsLength Length of string B
+     * @param name Name of the loop blocks
+     * @return The result of the comparison
+     */
+    llvm::Value* createPostfixMemCmp(llvm::Value* lhsStart, llvm::Value* lhsLength, llvm::GlobalValue* rhsString,
+            uint32_t rhsLength, const llvm::Twine& name = "");
+
 protected:
     llvm::Function* mFunction;
 

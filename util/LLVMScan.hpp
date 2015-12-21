@@ -64,13 +64,10 @@ struct VariablePredicateAST {
     uint32_t size;
 
     /// First bytes of the data the predicate must match
-    char prefix[4];
+    alignas(4) char prefix[4];
 
     /// Data the predicate must match
     llvm::GlobalVariable* value;
-
-    /// Whether a like matches on the prefix or postfix (only valid for like predicate)
-    bool isPrefixLike;
 };
 
 /**
