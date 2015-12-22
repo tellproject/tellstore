@@ -5,6 +5,7 @@ set(UTIL_SRCS
     CuckooHash.cpp
     LLVMBuilder.cpp
     LLVMJIT.cpp
+    LLVMRowAggregation.cpp
     LLVMRowProjection.cpp
     LLVMRowScan.cpp
     LLVMScan.cpp
@@ -19,6 +20,7 @@ set(UTIL_PRIVATE_HDR
     functional.hpp
     LLVMBuilder.hpp
     LLVMJIT.hpp
+    LLVMRowAggregation.hpp
     LLVMRowProjection.hpp
     LLVMRowScan.hpp
     LLVMScan.hpp

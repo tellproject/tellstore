@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "LLVMColumnMapAggregation.hpp"
 #include "LLVMColumnMapProjection.hpp"
 
 #include <util/LLVMScan.hpp>
@@ -61,18 +62,13 @@ public:
 
     using ColumnProjectionFun = LLVMColumnMapProjectionBuilder::Signature;
 
-    using ColumnAggregationFun = uint32_t (*) (const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
-            const char* /* resultData */, char* /* destData */);
+    using ColumnAggregationFun = LLVMColumnMapAggregationBuilder::Signature;
 
     ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
 
     std::vector<std::unique_ptr<ColumnMapScanProcessor>> startScan(size_t numThreads);
 
 private:
-    void prepareColumnScanFunction(const Record& record);
-
-    void prepareColumnAggregationFunction(const ColumnMapContext& context, ScanQuery* query, uint32_t index);
-
     Table<ColumnMapContext>* mTable;
 
     ColumnScanFun mColumnScanFun;

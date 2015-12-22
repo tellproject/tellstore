@@ -202,8 +202,6 @@ protected:
 
 private:
     void buildScanAST(const Record& record);
-
-    void prepareRowAggregationFunction(const Record& srcRecord, ScanQuery* query, uint32_t index);
 };
 
 class LLVMRowScanProcessorBase {
