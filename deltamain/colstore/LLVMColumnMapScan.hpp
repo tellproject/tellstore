@@ -81,8 +81,9 @@ private:
 
     void buildFixedField(const FieldAST& fieldAst);
 
-    llvm::Value* buildFixedFieldEvaluation(llvm::Value* recordPtr, llvm::Value* startIdx, uint64_t vectorSize,
-            std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst, const llvm::Twine& name);
+    llvm::Value* buildFixedFieldEvaluation(llvm::Value* srcData, llvm::Value* nullData, llvm::Value* startIdx,
+            uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst,
+            const llvm::Twine& name);
 
     void buildVariableField(const FieldAST& fieldAst);
 
@@ -103,6 +104,7 @@ private:
 
     llvm::Value* mMainPage;
     llvm::Value* mCount;
+    llvm::Value* mHeaderData;
     llvm::Value* mFixedData;
     llvm::Value* mVariableData;
 

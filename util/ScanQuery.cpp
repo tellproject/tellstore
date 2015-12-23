@@ -55,8 +55,26 @@ Record buildScanRecord(ScanQueryType queryType, const char* queryData, const cha
             AggregationType aggType;
             std::tie(id, aggType) = *i;
 
+            bool notNull;
+            switch (aggType) {
+            case AggregationType::MIN:
+            case AggregationType::MAX:
+            case AggregationType::SUM: {
+                notNull = false;
+            } break;
+
+            case AggregationType::CNT: {
+                notNull = true;
+            } break;
+
+            default: {
+                LOG_ASSERT(false, "Unknown aggregation type");
+                notNull = false;
+            } break;
+            }
+
             auto& field = record.getFieldMeta(id).field;
-            schema.addField(field.aggType(aggType), crossbow::to_string(fieldId), field.isNotNull());
+            schema.addField(field.aggType(aggType), crossbow::to_string(fieldId), notNull);
         }
         return Record(std::move(schema));
     } break;
@@ -79,7 +97,6 @@ ScanQuery::ScanQuery(ScanQueryType queryType, std::unique_ptr<char[]> selectionD
           mQueryDataEnd(mQueryData.get() + queryLength),
           mSnapshot(std::move(snapshot)),
           mRecord(buildScanRecord(mQueryType, mQueryData.get(), mQueryDataEnd, record)),
-          mHeaderLength(mRecord.headerSize()),
           mMinimumLength(mRecord.staticSize() + ScanQueryProcessor::TUPLE_OVERHEAD) {
 }
 
@@ -150,7 +167,7 @@ void ScanQueryProcessor::initAggregationRecord() {
         // Set all fields that can be NULL to NULL
         // Whenever the first value is written the field will be marked as non-NULL
         if (!field.isNotNull()) {
-            record.setFieldNull(tupleData, i, true);
+            record.setFieldNull(tupleData, metadata.nullIdx, true);
         }
     }
 }

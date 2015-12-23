@@ -45,54 +45,36 @@ LLVMRowProjectionBuilder::LLVMRowProjectionBuilder(const Record& record, llvm::M
 
 void LLVMRowProjectionBuilder::build(ScanQuery* query) {
     auto& destRecord = query->record();
-    if (destRecord.headerSize() != 0u) {
-        // -> memset(dest, 0, destRecord.headerSize());
-        CreateMemSet(getParam(dest), getInt8(0), destRecord.headerSize(), 8u);
 
+    if (destRecord.headerSize() != 0u) {
         auto i = query->projectionBegin();
         for (decltype(destRecord.fieldCount()) destFieldIdx = 0u; destFieldIdx < destRecord.fieldCount();
                 ++i, ++destFieldIdx) {
             auto srcFieldIdx = *i;
-            auto& field = mRecord.getFieldMeta(srcFieldIdx).field;
+            auto& srcMeta = mRecord.getFieldMeta(srcFieldIdx);
+            auto& destMeta = destRecord.getFieldMeta(destFieldIdx);
+            auto& field = srcMeta.field;
             if (field.isNotNull()) {
                 continue;
             }
 
-            auto srcIdx = srcFieldIdx / 8u;
-            auto srcBitIdx = srcFieldIdx % 8u;
-            uint8_t srcMask = (0x1u << srcBitIdx);
-
-            // -> auto srcNullBitmap = *(src + srcIdx) & srcMask;
-            auto srcNullBitmap = getParam(src);
-            if (srcIdx != 0) {
-                srcNullBitmap = CreateInBoundsGEP(srcNullBitmap, getInt64(srcIdx));
-            }
-            srcNullBitmap = CreateAlignedLoad(srcNullBitmap, 1u);
-            srcNullBitmap = CreateAnd(srcNullBitmap, getInt8(srcMask));
-
-            auto destIdx = destFieldIdx / 8u;
-            auto destBitIdx = destFieldIdx % 8u;
-
-            if (destBitIdx > srcBitIdx) {
-                // -> srcNullBitmap = srcNullBitmap << (destBitIdx - srcBitIdx);
-                srcNullBitmap = CreateShl(srcNullBitmap, getInt64(destBitIdx - srcBitIdx));
-            } else if (destBitIdx < srcBitIdx) {
-                // -> srcNullBitmap = srcNullBitmap >> (srcBitIdx - destBitIdx);
-                srcNullBitmap = CreateLShr(srcNullBitmap, getInt64(srcBitIdx - destBitIdx));
+            // -> auto srcData = src + srcMeta.nullIdx;
+            auto srcData = getParam(src);
+            if (srcMeta.nullIdx != 0) {
+                srcData = CreateInBoundsGEP(srcData, getInt64(srcMeta.nullIdx));
             }
 
-            // -> auto destNullBitmapPtr = dest + destIdx;
-            auto destNullBitmapPtr = getParam(dest);
-            if (destIdx != 0) {
-                destNullBitmapPtr = CreateInBoundsGEP(destNullBitmapPtr, getInt64(destIdx));
+            // -> auto nullValue = *srcData;
+            auto nullValue = CreateAlignedLoad(srcData, 1u);
+
+            // -> auto destData = dest + destMeta.nullIdx;
+            auto destData = getParam(dest);
+            if (destMeta.nullIdx != 0) {
+                destData = CreateInBoundsGEP(destData, getInt64(destMeta.nullIdx));
             }
 
-            // -> auto destNullBitmap = *destNullBitmapPtr | srcNullBitmap;
-            llvm::Value* destNullBitmap = CreateAlignedLoad(destNullBitmapPtr, 1u);
-            destNullBitmap = CreateOr(destNullBitmapPtr, srcNullBitmap);
-
-            // -> *destNullBitmapPtr = destNullBitmap;
-            CreateAlignedStore(destNullBitmap, destNullBitmapPtr, 1u);
+            // -> *destNullData = nullValue;
+            CreateAlignedStore(nullValue, destData, 1u);
         }
     }
 

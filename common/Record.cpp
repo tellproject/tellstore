@@ -88,7 +88,9 @@ bool Schema::addField(FieldType type, const crossbow::string& name, bool notNull
         LOG_TRACE("Tried to insert an already existing field: %s", name);
         return res;
     }
-    mAllNotNull &= notNull;
+    if (!notNull) {
+        ++mNullFields;
+    }
     if (f.isFixedSized()) {
         mFixedSizeFields.emplace(insertPos, f);
     } else {
@@ -167,8 +169,9 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
         crossbow::string name(reader.data(), nameLen);
         reader.advance(nameLen);
         reader.align(sizeof(uint32_t));
-
-        res.mAllNotNull &= notNull;
+        if (!notNull) {
+            ++res.mNullFields;
+        }
         Field field(ftype, name, notNull);
         if (field.isFixedSized()) {
             res.mFixedSizeFields.emplace_back(std::move(field));
@@ -194,19 +197,16 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
 }
 
 Record::Record()
-        : mHeaderSize(0u),
-          mStaticSize(0u) {
+        : mStaticSize(0u) {
 }
 
 Record::Record(Schema schema)
-        : mSchema(std::move(schema)),
-          mHeaderSize(0u) {
+        : mSchema(std::move(schema)) {
     auto count = mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size();
+    mIdMap.reserve(count);
+    mFieldMetaData.reserve(count);
 
-    if (!mSchema.allNotNull()) {
-        mHeaderSize = crossbow::align((count + 7) / 8, 8u);
-    }
-    mStaticSize = mHeaderSize;
+    mStaticSize = crossbow::align(mSchema.nullFields(), 8u);
 
 #ifndef NDEBUG
     auto lastAlignment = std::numeric_limits<size_t>::max();
@@ -217,22 +217,22 @@ Record::Record(Schema schema)
     }
 #endif
 
-    mFieldMetaData.reserve(count);
-    size_t id = 0;
+    size_t idx = 0;
+    uint16_t nullIdx = 0;
     for (const auto& field : mSchema.fixedSizeFields()) {
-        mIdMap.insert(std::make_pair(field.name(), id));
-        mFieldMetaData.emplace_back(field, mStaticSize);
+        mIdMap.insert(std::make_pair(field.name(), idx));
+        mFieldMetaData.emplace_back(field, mStaticSize, field.isNotNull() ? 0 : nullIdx++);
         mStaticSize += field.staticSize();
-        ++id;
+        ++idx;
     }
 
     if (!mSchema.varSizeFields().empty()) {
         mStaticSize = crossbow::align(mStaticSize, 4u);
         for (const auto& field : mSchema.varSizeFields()) {
-            mIdMap.insert(std::make_pair(field.name(), id));
-            mFieldMetaData.emplace_back(field, mStaticSize);
+            mIdMap.insert(std::make_pair(field.name(), idx));
+            mFieldMetaData.emplace_back(field, mStaticSize, field.isNotNull() ? 0 : nullIdx++);
             mStaticSize += sizeof(uint32_t);
-            ++id;
+            ++idx;
         }
         // Allocate an additional entry for the last offset
         mStaticSize += sizeof(uint32_t);
@@ -276,7 +276,7 @@ char* Record::create(const GenericTuple& tuple, size_t& size) const {
 
 bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) const {
     LOG_ASSERT(recSize == sizeOfTuple(tuple), "Size has to be the actual tuple size");
-    memset(result, 0, mHeaderSize);
+    memset(result, 0, mSchema.nullFields());
     auto varHeapOffset = mStaticSize;
     for (id_t id = 0; id < mFieldMetaData.size(); ++id) {
         auto& f = mFieldMetaData[id];
@@ -292,7 +292,7 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
             }
 
             // In this case we set the field to NULL
-            setFieldNull(result, id, true);
+            result[f.nullIdx] = 1;
 
             if (field.isFixedSized()) {
                 // Write a string of \0 bytes as a default value for fields if the field is null. This is for
@@ -365,7 +365,7 @@ bool Record::create(char* result, const GenericTuple& tuple, uint32_t recSize) c
     return true;
 }
 
-const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {
+const char* Record::data(const char* ptr, Record::id_t id, bool& isNull, FieldType* type /* = nullptr*/) const {
     if (id >= mFieldMetaData.size()) {
         LOG_ASSERT(false, "Tried to get nonexistent id");
         return nullptr;
@@ -375,7 +375,9 @@ const char* Record::data(const char* const ptr, Record::id_t id, bool& isNull, F
     if (type != nullptr) {
         *type = field.type();
     }
-    isNull = isFieldNull(ptr, id);
+    if (!field.isNotNull()) {
+        isNull = isFieldNull(ptr, f.nullIdx);
+    }
     return ptr + f.offset;
 }
 
@@ -384,33 +386,6 @@ bool Record::idOf(const crossbow::string& name, id_t& result) const {
     if (iter == mIdMap.end()) return false;
     result = iter->second;
     return true;
-}
-
-bool Record::isFieldNull(const char* ptr, Record::id_t id) const {
-    using uchar = unsigned char;
-
-    if (mSchema.allNotNull()) {
-        return false;
-    }
-
-    auto bitmap = *reinterpret_cast<const uchar*>(ptr + id / 8);
-    auto mask = uchar(0x1 << (id % 8));
-    return (bitmap & mask) != 0;
-}
-
-void Record::setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
-    using uchar = unsigned char;
-
-    LOG_ASSERT(!mSchema.allNotNull(), "Trying to set a null field on non-NULL schema")
-
-    auto& bitmap = *reinterpret_cast<uchar*>(ptr + id / 8);
-    auto mask = uchar(0x1 << (id % 8));
-
-    if (isNull) {
-        bitmap |= mask;
-    } else {
-        bitmap &= ~mask;
-    }
 }
 
 } // namespace store

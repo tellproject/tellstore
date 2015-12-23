@@ -122,7 +122,7 @@ T Table::field(const crossbow::string& name, const char* data) const {
         throw std::logic_error("Field not found");
     }
 
-    bool isNull;
+    bool isNull = false;
     FieldType type;
     auto field = mRecord.data(data, id, isNull, &type);
     if (isNull) {

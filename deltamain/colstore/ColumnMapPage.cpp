@@ -526,8 +526,16 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
 
     // Copy the header if the record has one into the update page
     if (mRecord.headerSize() != 0) {
-        auto headerData = mUpdatePage->headerData();
-        memcpy(headerData + mUpdateIdx * mRecord.headerSize(), data, mRecord.headerSize());
+        auto headerData = mUpdatePage->headerData() + mUpdateIdx;
+        for (decltype(mRecord.fieldCount()) i = 0; i < mRecord.fieldCount(); ++i) {
+            auto& fieldMeta = mRecord.getFieldMeta(i);
+            auto& field = fieldMeta.field;
+            if (field.isNotNull()) {
+                continue;
+            }
+            *headerData = mRecord.isFieldNull(data, fieldMeta.nullIdx);
+            headerData += mUpdatePage->count;
+        }
     }
 
     // Copy all fixed size fields into the update page
@@ -617,11 +625,13 @@ void ColumnMapPageModifier::flushFillPage() {
     // Copy all header into the fill page
     if (mRecord.headerSize() != 0) {
         auto headerData = mFillPage->headerData();
-        for (const auto& action : mCleanActions) {
-            auto srcData = action.page->headerData() + action.startIdx * mRecord.headerSize();
-            auto length = (action.endIdx - action.startIdx) * mRecord.headerSize();
-            memcpy(headerData, srcData, length);
-            headerData += length;
+        for (decltype(mRecord.headerSize()) i = 0; i < mRecord.headerSize(); ++i) {
+            for (const auto& action : mCleanActions) {
+                auto srcData = action.page->headerData() + action.page->count * i + action.startIdx;
+                auto length = (action.endIdx - action.startIdx);
+                memcpy(headerData, srcData, length);
+                headerData += length;
+            }
         }
     }
 

@@ -66,6 +66,10 @@ public:
         return getInt8VectorTy(vectorSize)->getPointerTo(AddrSpace);
     }
 
+    llvm::Constant* getInt8Vector(uint64_t vectorSize, uint8_t C) {
+        return getVector(vectorSize, getInt8(C));
+    }
+
     llvm::PointerType* getInt16PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt16PtrTy(Context, AddrSpace);
     }

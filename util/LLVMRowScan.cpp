@@ -56,14 +56,11 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
         // Load the null status of the value if it can be null
         llvm::Value* nullValue = nullptr;
         if (!fieldAst.isNotNull) {
-            auto idx = fieldAst.id / 8u;
-            uint8_t mask = (0x1u << (fieldAst.id % 8u));
-
-            auto nullBitmap = getParam(recordData);
-            if (idx != 0) {
-                nullBitmap = CreateInBoundsGEP(nullBitmap, getInt64(idx));
+            auto nullData = getParam(recordData);
+            if (fieldAst.nullIdx != 0) {
+                nullData = CreateInBoundsGEP(nullData, getInt64(fieldAst.nullIdx));
             }
-            nullValue = CreateAnd(CreateLoad(nullBitmap), getInt8(mask));
+            nullValue = CreateAlignedLoad(nullData, 1u);
         }
 
         // Load the field value from the record
@@ -92,12 +89,11 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
             auto& predicateAst = fieldAst.predicates[i];
 
             llvm::Value* res;
-            if (predicateAst.type == PredicateType::IS_NULL || predicateAst.type == PredicateType::IS_NOT_NULL) {
+            if (predicateAst.type == PredicateType::IS_NULL) {
                 // Check if the field is null
-                auto predicate = (predicateAst.type == PredicateType::IS_NULL
-                        ? llvm::CmpInst::ICMP_NE
-                        : llvm::CmpInst::ICMP_EQ);
-                res = CreateICmp(predicate, nullValue, getInt8(0));
+                res = nullValue;
+            } else if (predicateAst.type == PredicateType::IS_NOT_NULL) {
+                res = CreateXor(nullValue, getInt8(1));
             } else if (fieldAst.isFixedSize) {
                 LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
                 auto& rhsAst = predicateAst.fixed;
@@ -106,10 +102,11 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
                 res = (rhsAst.isFloat
                         ? CreateFCmp(rhsAst.predicate, lhs, rhsAst.value)
                         : CreateICmp(rhsAst.predicate, lhs, rhsAst.value));
+                res = CreateZExtOrBitCast(res, getInt8Ty());
 
                 // The predicate evaluates to false if the value is null
-                if (!fieldAst.isNotNull) {
-                    res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
                 }
             } else {
                 LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
@@ -180,12 +177,13 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
                 } break;
                 }
 
+                res = CreateZExtOrBitCast(res, getInt8Ty());
+
                 // The predicate evaluates to false if the value is null
-                if (!fieldAst.isNotNull) {
-                    res = CreateAnd(CreateICmp(llvm::CmpInst::ICMP_EQ, nullValue, getInt8(0)), res);
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
                 }
             }
-            res = CreateZExtOrBitCast(res, getInt8Ty());
 
             // Store resulting conjunct value
             auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(predicateAst.conjunct));

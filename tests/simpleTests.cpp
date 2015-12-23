@@ -292,7 +292,7 @@ public:
         if (!record.idOf(name, recordField)) {
             LOG_ERROR("%1% field not found", name);
         }
-        bool fieldIsNull;
+        bool fieldIsNull = false;
         auto fieldData = record.data(data, recordField, fieldIsNull);
         return fieldData;
     }

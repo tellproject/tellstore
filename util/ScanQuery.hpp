@@ -198,10 +198,6 @@ public:
         return mRecord;
     }
 
-    uint32_t headerLength() const {
-        return mHeaderLength;
-    }
-
     uint32_t minimumLength() const {
         return mMinimumLength;
     }
@@ -268,9 +264,6 @@ private:
 
     /// Record containing the target schema
     Record mRecord;
-
-    /// Size of the header of the target schema
-    uint32_t mHeaderLength;
 
     /// Minimum size a tuple requires (i.e. minimum static size)
     uint32_t mMinimumLength;

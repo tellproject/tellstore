@@ -60,6 +60,16 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
     auto count = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(0) });
     count = CreateZExt(CreateAlignedLoad(count, 4u), getInt64Ty());
 
+    llvm::Value* headerData = nullptr;
+    if (!destRecord.allNotNull()) {
+        // -> auto headerOffset = static_cast<uint64_t>(mainPage->headerOffset);
+        auto headerOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(1) });
+        headerOffset = CreateZExt(CreateAlignedLoad(headerOffset, 4u), getInt64Ty());
+
+        // -> auto headerData = page + headerOffset;
+        headerData = CreateInBoundsGEP(getParam(page), headerOffset);
+    }
+
     // -> auto fixedOffset = static_cast<uint64_t>(mainPage->fixedOffset);
     auto fixedOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(2) });
     fixedOffset = CreateZExt(CreateAlignedLoad(fixedOffset, 4u), getInt64Ty());
@@ -150,6 +160,15 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         auto scalarBodyBlock = createBasicBlock("agg.scalarbody." + llvm::Twine(destFieldIdx));
         auto scalarEndBlock = createBasicBlock("agg.scalarend." + llvm::Twine(destFieldIdx));
 
+        // Compute the pointer to the first element in the null bytevector
+        llvm::Value* srcNullData = nullptr;
+        if (!srcField.isNotNull()) {
+            srcNullData = headerData;
+            if (srcMeta.nullIdx != 0) {
+                srcNullData = CreateInBoundsGEP(srcNullData, createConstMul(count, srcMeta.nullIdx));
+            }
+        }
+
         // Compute the pointer to the first element in the aggregation column
         llvm::Value* srcData = nullptr;
         if (aggregationType != AggregationType::CNT) {
@@ -158,6 +177,16 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
                 srcData = CreateInBoundsGEP(srcData, createConstMul(count, srcFieldOffset));
             }
             srcData = CreateBitCast(srcData, srcFieldPtrType);
+        }
+
+        llvm::Value* destNullData = nullptr;
+        llvm::Value* destNullValue = nullptr;
+        if (!destField.isNotNull()) {
+            destNullData = getParam(dest);
+            if (destMeta.nullIdx != 0) {
+                destNullData = CreateInBoundsGEP(destNullData, getInt64(destMeta.nullIdx));
+            }
+            destNullValue = CreateAlignedLoad(destNullData, 1u);
         }
 
         // Load the aggregation value from the previous run
@@ -173,8 +202,7 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         auto vectorCount = CreateSub(getParam(endIdx), getParam(startIdx));
         vectorCount = CreateAnd(vectorCount, getInt64(-vectorSize));
         auto vectorEndIdx = CreateAdd(getParam(startIdx), vectorCount);
-        CreateCondBr(
-                CreateICmp(llvm::CmpInst::ICMP_NE, vectorCount, getInt64(0)),
+        CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, vectorCount, getInt64(0)),
                 vectorHeaderBlock, vectorEndBlock);
 
         // Vector header
@@ -182,23 +210,35 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         // vector, for sum and count the current sum/cnt value is stored in the first element and the remaining vector
         // filled with zeroes.
         SetInsertPoint(vectorHeaderBlock);
+        llvm::Value* vectorDestNull = nullptr;
         llvm::Value* vectorDestValue;
         switch (aggregationType) {
         case AggregationType::MIN:
         case AggregationType::MAX: {
+            if (!destField.isNotNull()) {
+                vectorDestNull = CreateVectorSplat(vectorSize, destNullValue);
+            }
             vectorDestValue = CreateVectorSplat(vectorSize, destValue);
         } break;
 
         case AggregationType::SUM: {
+            if (!destField.isNotNull()) {
+                vectorDestNull = getInt8Vector(vectorSize, 1);
+                vectorDestNull = CreateInsertElement(vectorDestNull, destNullValue, getInt64(0));
+            }
             vectorDestValue = isFloat
                     ? getDoubleVector(vectorSize, 0)
                     : getInt64Vector(vectorSize, 0);
-            vectorDestValue = CreateInsertElement(vectorDestValue, destValue, static_cast<uint64_t>(0));
+            vectorDestValue = CreateInsertElement(vectorDestValue, destValue, getInt64(0));
         } break;
 
         case AggregationType::CNT: {
+            if (!destField.isNotNull()) {
+                vectorDestNull = getInt8Vector(vectorSize, 1);
+                vectorDestNull = CreateInsertElement(vectorDestNull, destNullValue, getInt64(0));
+            }
             vectorDestValue = getInt64Vector(vectorSize, 0);
-            vectorDestValue = CreateInsertElement(vectorDestValue, destValue, static_cast<uint64_t>(0));
+            vectorDestValue = CreateInsertElement(vectorDestValue, destValue, getInt64(0));
         } break;
 
         default: {
@@ -213,6 +253,13 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         SetInsertPoint(vectorBodyBlock);
         auto vectorIdx = CreatePHI(getInt64Ty(), 2);
         vectorIdx->addIncoming(getParam(startIdx), vectorHeaderBlock);
+
+        // Create PHI node containing the immediate null bytes in the loop
+        llvm::PHINode* vectorNull = nullptr;
+        if (!destField.isNotNull()) {
+            vectorNull = CreatePHI(getInt8VectorTy(vectorSize), 2);
+            vectorNull->addIncoming(vectorDestNull, vectorHeaderBlock);
+        }
 
         // Create PHI node containing the immediate result in the loop
         auto vectorDest = CreatePHI(destFieldVectorType, 2);
@@ -230,6 +277,24 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         auto vectorResult = CreateInBoundsGEP(getParam(result), vectorIdx);
         vectorResult = CreateBitCast(vectorResult, getInt8VectorPtrTy(vectorSize));
         vectorResult = CreateAlignedLoad(vectorResult, 1u);
+
+        // Load null vector
+        if (!srcField.isNotNull()) {
+            auto srcNullValue = CreateInBoundsGEP(srcNullData, vectorIdx);
+            srcNullValue = CreateBitCast(srcNullValue, getInt8VectorPtrTy(vectorSize));
+            srcNullValue = CreateAlignedLoad(srcNullValue, 1u);
+
+            vectorResult = CreateAnd(vectorResult, CreateXor(srcNullValue, getInt8Vector(vectorSize, 1)));
+        }
+
+        // Aggregate null vectors
+        llvm::Value* vectorNullAgg = nullptr;
+        if (!destField.isNotNull()) {
+            vectorNullAgg = CreateXor(vectorResult, getInt8Vector(vectorSize, 1));
+            vectorNullAgg = CreateAnd(vectorNull, vectorNullAgg);
+            vectorNull->addIncoming(vectorNullAgg, vectorBodyBlock);
+        }
+
         vectorResult = CreateTruncOrBitCast(vectorResult, getInt1VectorTy(vectorSize));
 
         // Evaluate aggregation
@@ -239,8 +304,7 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         // Advance the loop
         auto vectorNextIdx = CreateAdd(vectorIdx, getInt64(vectorSize));
         vectorIdx->addIncoming(vectorNextIdx, vectorBodyBlock);
-        CreateCondBr(
-                CreateICmp(llvm::CmpInst::ICMP_NE, vectorNextIdx, vectorEndIdx),
+        CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, vectorNextIdx, vectorEndIdx),
                 vectorBodyBlock, vectorMergeBlock);
 
         // Vector Merge
@@ -256,6 +320,13 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
             for (auto j = i / 2; j < vectorSize; ++j) {
                 reduceIdx.emplace_back(llvm::UndefValue::get(getInt32Ty()));
             }
+
+            if (!destField.isNotNull()) {
+                auto nullReduce = CreateShuffleVector(vectorNullAgg, llvm::UndefValue::get(getInt8VectorTy(vectorSize)),
+                        llvm::ConstantVector::get(reduceIdx));
+                vectorNullAgg = CreateAnd(vectorNullAgg, nullReduce);
+            }
+
             auto reduce = CreateShuffleVector(vectorAgg, llvm::UndefValue::get(destFieldVectorType),
                     llvm::ConstantVector::get(reduceIdx));
 
@@ -290,18 +361,29 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
             }
             reduceIdx.clear();
         }
-        vectorAgg = CreateExtractElement(vectorAgg, static_cast<uint64_t>(0));
+        if (!destField.isNotNull()) {
+            vectorNullAgg = CreateExtractElement(vectorNullAgg, getInt64(0));
+        }
+        vectorAgg = CreateExtractElement(vectorAgg, getInt64(0));
         CreateBr(vectorEndBlock);
 
         // Vector end block
         // Merge result from vectorized code or the result from the previous run if no vector iterations were executed.
         // Branch to scalar code if additional scalar iterations are required.
         SetInsertPoint(vectorEndBlock);
+
+        llvm::PHINode* vectorNullResult = nullptr;
+        if (!destField.isNotNull()) {
+            vectorNullResult = CreatePHI(getInt8Ty(), 2);
+            vectorNullResult->addIncoming(destNullValue, previousBlock);
+            vectorNullResult->addIncoming(vectorNullAgg, vectorMergeBlock);
+        }
+
         auto vectorAggResult = CreatePHI(destFieldType, 2);
         vectorAggResult->addIncoming(destValue, previousBlock);
         vectorAggResult->addIncoming(vectorAgg, vectorMergeBlock);
-        CreateCondBr(
-                CreateICmp(llvm::CmpInst::ICMP_NE, vectorEndIdx, getParam(endIdx)),
+
+        CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, vectorEndIdx, getParam(endIdx)),
                 scalarBodyBlock, scalarEndBlock);
 
         // Scalar Body
@@ -310,20 +392,44 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         auto scalarIdx = CreatePHI(getInt64Ty(), 2);
         scalarIdx->addIncoming(vectorEndIdx, vectorEndBlock);
 
+        // Create PHI node containing the immediate null byte in the loop
+        llvm::PHINode* scalarNull = nullptr;
+        if (!destField.isNotNull()) {
+            scalarNull = CreatePHI(getInt8Ty(), 2);
+            scalarNull->addIncoming(vectorNullResult, vectorEndBlock);
+        }
+
         // Create PHI node containing the immediate result in the loop
         auto scalarDest = CreatePHI(destFieldType, 2);
         scalarDest->addIncoming(vectorAggResult, vectorEndBlock);
 
-        // Load source vector (not required for count aggregation)
+        // Load source scalar (not required for count aggregation)
         llvm::Value* scalarSrc = nullptr;
         if (aggregationType != AggregationType::CNT) {
             scalarSrc = CreateInBoundsGEP(srcData, scalarIdx);
             scalarSrc = CreateAlignedLoad(scalarSrc, srcFieldAlignment);
         }
 
-        // Load result vector
+        // Load result scalar
         auto scalarResult = CreateInBoundsGEP(getParam(result), scalarIdx);
         scalarResult = CreateAlignedLoad(scalarResult, 1u);
+
+        // Load null scalar
+        if (!srcField.isNotNull()) {
+            auto srcNullValue = CreateInBoundsGEP(srcNullData, scalarIdx);
+            srcNullValue = CreateAlignedLoad(srcNullValue, 1u);
+
+            scalarResult = CreateAnd(scalarResult, CreateXor(srcNullValue, getInt8(1)));
+        }
+
+        // Aggregate null scalars
+        llvm::Value* scalarNullAgg = nullptr;
+        if (!destField.isNotNull()) {
+            scalarNullAgg = CreateXor(scalarResult, getInt8(1));
+            scalarNullAgg = CreateAnd(scalarNull, scalarNullAgg);
+            scalarNull->addIncoming(scalarNullAgg, scalarBodyBlock);
+        }
+
         scalarResult = CreateTruncOrBitCast(scalarResult, getInt1Ty());
 
         // Evaluate aggregation
@@ -333,15 +439,25 @@ void LLVMColumnMapAggregationBuilder::build(ScanQuery* query) {
         // Advance the loop
         auto scalarNextIdx = CreateAdd(scalarIdx, getInt64(1));
         scalarIdx->addIncoming(scalarNextIdx, scalarBodyBlock);
-        CreateCondBr(
-                CreateICmp(llvm::CmpInst::ICMP_NE, scalarNextIdx, getParam(endIdx)),
+        CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, scalarNextIdx, getParam(endIdx)),
                 scalarBodyBlock, scalarEndBlock);
 
         // Scalar end block
         SetInsertPoint(scalarEndBlock);
+        llvm::PHINode* nullResult = nullptr;
+        if (!destField.isNotNull()) {
+            nullResult = CreatePHI(getInt8Ty(), 2);
+            nullResult->addIncoming(vectorNullResult, vectorEndBlock);
+            nullResult->addIncoming(scalarNullAgg, scalarBodyBlock);
+        }
         auto aggResult = CreatePHI(destFieldType, 2);
         aggResult->addIncoming(vectorAggResult, vectorEndBlock);
         aggResult->addIncoming(scalarAgg, scalarBodyBlock);
+
+        if (!destField.isNotNull()) {
+            CreateAlignedStore(nullResult, destNullData, 1u);
+        }
+
         CreateAlignedStore(aggResult, destData, destFieldAlignment);
     }
 

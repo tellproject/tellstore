@@ -191,11 +191,14 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
                 FieldAST fieldAst;
                 fieldAst.id = currentColumn;
                 fieldAst.isNotNull = field.isNotNull();
+                fieldAst.nullIdx = (field.isNotNull() ? 0 : fieldMeta.nullIdx);
                 fieldAst.isFixedSize = field.isFixedSized();
                 fieldAst.type = field.type();
                 fieldAst.offset = fieldMeta.offset;
                 fieldAst.alignment = field.alignOf();
                 fieldAst.size = field.staticSize();
+
+                mScanAst.needsNull |= !field.isNotNull();
 
                 auto res = mScanAst.fields.emplace(currentColumn, std::move(fieldAst));
                 LOG_ASSERT(res.second, "Field already in map");

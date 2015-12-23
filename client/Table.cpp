@@ -56,7 +56,7 @@ GenericTuple Table::toGenericTuple(const char* data) const {
     for (decltype(mRecord.fieldCount()) id = 0; id < mRecord.fieldCount(); ++id) {
         auto& fieldMeta = mRecord.getFieldMeta(id);
 
-        bool isNull;
+        bool isNull = false;
         FieldType type;
         auto field = mRecord.data(data, id, isNull, &type);
         if (isNull) {

@@ -74,10 +74,11 @@ public:
      * @brief Worst case padding overhead on a page
      *
      * If the number of elements is uneven a 4-byte padding has to be added after the size array so that the following
-     * record data is 8-byte aligned. In addition a maximum padding of 6 byte has to be inserted to ensure that the
-     * ColumnMapHeapEntry array is 8 byte aligned after the last fixed size field.
+     * record data is 8-byte aligned. A padding of up to 7 bytes needs to be added after the null bytevector so that the
+     * first fixed size field is 8-byte aligned. In addition a maximum padding of 6 byte has to be inserted to ensure
+     * that the ColumnMapHeapEntry array is 8-byte aligned after the last fixed size field.
      */
-    static constexpr uint32_t PAGE_PADDING_OVERHEAD = 10u;
+    static constexpr uint32_t PAGE_PADDING_OVERHEAD = 17u;
 
     /**
      * @brief Maximum number of bytes that fit into a column map page

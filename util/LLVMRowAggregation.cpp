@@ -68,34 +68,27 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
         auto destFieldOffset = destFieldMeta.offset;
         LOG_ASSERT(srcField.isFixedSized() && destField.isFixedSized(), "Only fixed size supported");
 
-        llvm::Value* srcNullBitmap = nullptr;
+        llvm::Value* nullValue = nullptr;
         if (!srcField.isNotNull()) {
-            auto srcIdx = srcFieldIdx / 8u;
-            auto srcBitIdx = srcFieldIdx % 8u;
-            uint8_t srcMask = (0x1u << srcBitIdx);
-
-            srcNullBitmap = getParam(src);
-            if (srcIdx != 0) {
-                srcNullBitmap = CreateInBoundsGEP(srcNullBitmap, getInt64(srcIdx));
+            auto srcNullData = getParam(src);
+            if (srcFieldMeta.nullIdx != 0) {
+                srcNullData = CreateInBoundsGEP(srcNullData, getInt64(srcFieldMeta.nullIdx));
             }
-            srcNullBitmap = CreateAnd(CreateAlignedLoad(srcNullBitmap, 1u), getInt8(srcMask));
-
-            auto destIdx = destFieldIdx / 8u;
-            auto destBitIdx = destFieldIdx % 8u;
-
-            if (destBitIdx > srcBitIdx) {
-                srcNullBitmap = CreateShl(srcNullBitmap, getInt64(destBitIdx - srcBitIdx));
-            } else if (destBitIdx < srcBitIdx) {
-                srcNullBitmap = CreateLShr(srcNullBitmap, getInt64(srcBitIdx - destBitIdx));
+            nullValue = CreateAlignedLoad(srcNullData, 1u);
+        }
+        if (!destField.isNotNull()) {
+            auto destNullData = getParam(dest);
+            if (destFieldMeta.nullIdx != 0) {
+                destNullData = CreateInBoundsGEP(destNullData, getInt64(destFieldMeta.nullIdx));
             }
-
-            auto destNullBitmap = getParam(dest);
-            if (destIdx != 0) {
-                destNullBitmap = CreateInBoundsGEP(destNullBitmap, getInt64(destIdx));
+            llvm::Value* destNullValue;
+            if (nullValue) {
+                destNullValue = CreateAlignedLoad(destNullData, 1u);
+                destNullValue = CreateAnd(destNullValue, nullValue);
+            } else {
+                destNullValue = getInt8(0);
             }
-
-            auto res = CreateAnd(CreateAlignedLoad(destNullBitmap, 1u), CreateNeg(srcNullBitmap));
-            CreateStore(res, destNullBitmap);
+            CreateAlignedStore(destNullValue, destNullData, 1u);
         }
 
         auto srcData = getParam(src);
@@ -113,7 +106,8 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
         llvm::Value* destValue = CreateAlignedLoad(destData, destFieldAlignment);
 
         if (!srcField.isNotNull()) {
-            srcNullBitmap = CreateICmp(llvm::CmpInst::ICMP_EQ, srcNullBitmap, getInt8(0));
+            nullValue = CreateXor(nullValue, getInt8(1));
+            nullValue = CreateTruncOrBitCast(nullValue, getInt1Ty());
         }
 
         auto isFloat = (srcField.type() == FieldType::FLOAT) || (srcField.type() == FieldType::DOUBLE);
@@ -124,7 +118,7 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
                     ? CreateFCmp(llvm::CmpInst::FCMP_OLT, srcData, destValue)
                     : CreateICmp(llvm::CmpInst::ICMP_SLT, srcData, destValue));
             if (!srcField.isNotNull()) {
-                cond = CreateAnd(cond, srcNullBitmap);
+                cond = CreateAnd(cond, nullValue);
             }
             destValue = CreateSelect(cond, srcData, destValue);
         } break;
@@ -134,7 +128,7 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
                     ? CreateFCmp(llvm::CmpInst::FCMP_OGT, srcData, destValue)
                     : CreateICmp(llvm::CmpInst::ICMP_SGT, srcData, destValue));
             if (!srcField.isNotNull()) {
-                cond = CreateAnd(cond, srcNullBitmap);
+                cond = CreateAnd(cond, nullValue);
             }
             destValue = CreateSelect(cond, srcData, destValue);
         } break;
@@ -150,7 +144,7 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
                     ? CreateFAdd(destValue, srcData)
                     : CreateAdd(destValue, srcData));
             if (!srcField.isNotNull()) {
-                destValue = CreateSelect(srcNullBitmap, res, destValue);
+                destValue = CreateSelect(nullValue, res, destValue);
             } else {
                 destValue = res;
             }
@@ -158,7 +152,7 @@ void LLVMRowAggregationBuilder::build(ScanQuery* query) {
 
         case AggregationType::CNT: {
             if (!srcField.isNotNull()) {
-                destValue = CreateAdd(destValue, CreateZExt(srcNullBitmap, getInt64Ty()));
+                destValue = CreateAdd(destValue, CreateZExt(nullValue, getInt64Ty()));
             } else {
                 destValue = CreateAdd(destValue, getInt64(1));
             }

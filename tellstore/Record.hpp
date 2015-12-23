@@ -305,7 +305,7 @@ public:
     using IndexMap = std::unordered_map<crossbow::string, std::pair<bool, std::vector<id_t>>>;
 private:
     TableType mType = TableType::UNKNOWN;
-    bool mAllNotNull = true;
+    size_t mNullFields = 0;
     std::vector<Field> mFixedSizeFields;
     std::vector<Field> mVarSizeFields;
     IndexMap mIndexes;
@@ -337,7 +337,11 @@ public:
     }
 
     bool allNotNull() const {
-        return mAllNotNull;
+        return (mNullFields == 0);
+    }
+
+    size_t nullFields() const {
+        return mNullFields;
     }
 
     const std::vector<Field>& fixedSizeFields() const {
@@ -390,13 +394,15 @@ public: // Serialization
 };
 
 struct FieldMetaData {
-    FieldMetaData(const Field& _field, uint32_t _offset)
+    FieldMetaData(const Field& _field, uint32_t _offset, uint16_t _nullIdx)
             : field(_field),
-              offset(_offset) {
+              offset(_offset),
+              nullIdx(_nullIdx) {
     }
 
     Field field;
     uint32_t offset;
+    uint16_t nullIdx;
 };
 
 /**
@@ -406,7 +412,7 @@ struct FieldMetaData {
 * table itself (it depends on the approach).
 *
 * The format look as follows (in the following order):
-*  - NULL bitmap (size of bitmap is (|Columns|+7)/8 bytes)
+*  - NULL bytevector containing a byte for every column that might be null if it is null (set to 1) or not (set to 0)
 *    This is omitted, if all columns are declared as NOT NULL
 *  - A padding to the next multiple of 8 byte
 *  - The row Data of all fixed size fields
@@ -424,7 +430,6 @@ private:
     Schema mSchema;
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<FieldMetaData> mFieldMetaData;
-    uint32_t mHeaderSize;
     uint32_t mStaticSize;
 public:
     Record();
@@ -440,7 +445,7 @@ public:
     size_t sizeOfTuple(const char* ptr) const;
 
     size_t headerSize() const {
-        return mHeaderSize;
+        return mSchema.nullFields();
     }
 
     /**
@@ -454,7 +459,7 @@ public:
 
     bool idOf(const crossbow::string& name, id_t& result) const;
 
-    const char* data(const char* const ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
+    const char* data(const char* ptr, id_t id, bool& isNull, FieldType* type = nullptr) const;
 
     bool create(char* result, const GenericTuple& tuple, uint32_t recSize) const;
     char* create(const GenericTuple& tuple, size_t& size) const;
@@ -479,9 +484,15 @@ public:
         return mSchema.allNotNull();
     }
 
-    bool isFieldNull(const char* ptr, id_t id) const;
+    bool isFieldNull(const char* ptr, id_t id) const {
+        LOG_ASSERT(id < mSchema.nullFields(), "Trying to get null status from a non-NULL field");
+        return ptr[id];
+    }
 
-    void setFieldNull(char* ptr, Record::id_t id, bool isNull) const;
+    void setFieldNull(char* ptr, Record::id_t id, bool isNull) const {
+        LOG_ASSERT(id < mSchema.nullFields(), "Trying to set a null field on non-NULL field");
+        ptr[id] = (isNull ? 1 : 0);
+    }
 };
 
 } // namespace store

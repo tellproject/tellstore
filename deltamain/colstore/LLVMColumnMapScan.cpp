@@ -71,6 +71,15 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
         mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
         mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
 
+        if (scanAst.needsNull) {
+            // -> auto headerOffset = static_cast<uint64_t>(mainPage->headerOffset);
+            auto headerOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(1) });
+            headerOffset = CreateZExt(CreateAlignedLoad(headerOffset, 4u), getInt64Ty());
+
+            // -> auto headerData = page + headerOffset;
+            mHeaderData = CreateInBoundsGEP(getParam(page), headerOffset);
+        }
+
         auto i = scanAst.fields.begin();
 
         if (i != scanAst.fields.end() && i->second.isFixedSize) {
@@ -114,38 +123,57 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
 }
 
 void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
+    // Load the start pointer to the null bytevector
+    llvm::Value* nullData = nullptr;
+    if (!fieldAst.isNotNull) {
+        nullData = mHeaderData;
+        if (fieldAst.nullIdx != 0) {
+            nullData = CreateInBoundsGEP(nullData, createConstMul(mCount, fieldAst.nullIdx));
+        }
+    }
+
     // Load the start pointer of the column
-    llvm::Value* recordPtr = nullptr;
+    llvm::Value* srcData = nullptr;
     if (fieldAst.needsValue) {
         auto& fixedMetaData = mContext.fixedMetaData();
         auto offset = fixedMetaData[fieldAst.id].offset;
 
-        recordPtr = mFixedData;
+        srcData = mFixedData;
         if (offset != 0) {
-            recordPtr = CreateInBoundsGEP(recordPtr, createConstMul(mCount, offset));
+            srcData = CreateInBoundsGEP(srcData, createConstMul(mCount, offset));
         }
-        recordPtr = CreateBitCast(recordPtr, getFieldPtrTy(fieldAst.type));
+        srcData = CreateBitCast(srcData, getFieldPtrTy(fieldAst.type));
     }
 
     // Vectorized field evaluation
     auto vectorSize = mRegisterWidth / (fieldAst.size * 8);
-    auto vectorEndIdx = buildFixedFieldEvaluation(recordPtr, getParam(startIdx), vectorSize, mVectorConjunctsGenerated,
-            fieldAst, llvm::Twine("vector"));
+    auto vectorEndIdx = buildFixedFieldEvaluation(srcData, nullData, getParam(startIdx), vectorSize,
+            mVectorConjunctsGenerated, fieldAst, llvm::Twine("vector"));
 
     // Scalar field evaluation
-    buildFixedFieldEvaluation(recordPtr, vectorEndIdx, 1, mScalarConjunctsGenerated, fieldAst, llvm::Twine("scalar"));
+    buildFixedFieldEvaluation(srcData, nullData, vectorEndIdx, 1, mScalarConjunctsGenerated, fieldAst,
+            llvm::Twine("scalar"));
 }
 
-llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* recordPtr, llvm::Value* startIdx,
-        uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst,
+llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* srcData, llvm::Value* nullData,
+        llvm::Value* startIdx, uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst,
         const llvm::Twine& name) {
     return createLoop(startIdx, getParam(endIdx), vectorSize, "col." + llvm::Twine(fieldAst.id) + "." + name,
-            [this, recordPtr, vectorSize, &conjunctsGenerated, &fieldAst] (llvm::Value* idx) {
+            [this, srcData, nullData, vectorSize, &conjunctsGenerated, &fieldAst] (llvm::Value* idx) {
+        auto nullTy = getInt8VectorTy(vectorSize);
         auto fieldTy = getFieldVectorTy(fieldAst.type, vectorSize);
         auto conjunctTy = getInt8VectorTy(vectorSize);
 
+        // Load the null status of the value if it can be null
+        llvm::Value* nullValue = nullData;
+        if (nullValue) {
+            nullValue = CreateInBoundsGEP(nullValue, idx);
+            nullValue = CreateBitCast(nullValue, nullTy->getPointerTo());
+            nullValue = CreateAlignedLoad(nullValue, 1u);
+        }
+
         // Load the field value from the record
-        llvm::Value* lhs = recordPtr;
+        llvm::Value* lhs = srcData;
         if (lhs) {
             lhs = CreateInBoundsGEP(lhs, idx);
             lhs = CreateBitCast(lhs, fieldTy->getPointerTo());
@@ -154,15 +182,28 @@ llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* re
 
         // Evaluate all predicates attached to this field
         for (auto& predicateAst : fieldAst.predicates) {
-            LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
             auto& rhsAst = predicateAst.fixed;
 
-            // Execute the comparison
-            auto rhs = getVector(vectorSize, rhsAst.value);
-            auto res = (rhsAst.isFloat
-                ? CreateFCmp(rhsAst.predicate, lhs, rhs)
-                : CreateICmp(rhsAst.predicate, lhs, rhs));
-            res = CreateZExtOrBitCast(res, conjunctTy);
+            llvm::Value* res;
+            if (predicateAst.type == PredicateType::IS_NULL) {
+                // Check if the field is null
+                res = nullValue;
+            } else if (predicateAst.type == PredicateType::IS_NOT_NULL) {
+                res = CreateXor(nullValue, getInt8Vector(vectorSize, 1));
+            } else {
+                LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
+                // Execute the comparison
+                auto rhs = getVector(vectorSize, rhsAst.value);
+                res = (rhsAst.isFloat
+                    ? CreateFCmp(rhsAst.predicate, lhs, rhs)
+                    : CreateICmp(rhsAst.predicate, lhs, rhs));
+                res = CreateZExtOrBitCast(res, conjunctTy);
+
+                // The predicate evaluates to false if the value is null
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8Vector(vectorSize, 1)));
+                }
+            }
 
             // Store resulting conjunct value
             auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
@@ -179,6 +220,15 @@ llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* re
 }
 
 void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
+    // Load the start pointer to the null bytevector
+    llvm::Value* nullData = nullptr;
+    if (!fieldAst.isNotNull) {
+        nullData = mHeaderData;
+        if (fieldAst.nullIdx != 0) {
+            nullData = CreateInBoundsGEP(nullData, createConstMul(mCount, fieldAst.nullIdx));
+        }
+    }
+
     // Load the start pointer of the column
     llvm::Value* srcData = nullptr;
     if (fieldAst.needsValue) {
@@ -192,7 +242,14 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
     }
 
     createLoop(getParam(startIdx), getParam(endIdx), 1, "col." + llvm::Twine(fieldAst.id),
-            [this, srcData, &fieldAst] (llvm::Value* idx) {
+            [this, srcData, nullData, &fieldAst] (llvm::Value* idx) {
+        // Load the null status of the value if it can be null
+        llvm::Value* nullValue = nullData;
+        if (nullValue) {
+            nullValue = CreateInBoundsGEP(nullValue, idx);
+            nullValue = CreateAlignedLoad(nullValue, 1u);
+        }
+
         // Load the field value from the record
         llvm::Value* lhsStart = nullptr;
         llvm::Value* length = nullptr;
@@ -231,6 +288,15 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
             // Execute the comparison
             llvm::Value* res = nullptr;
             switch (predicateAst.type) {
+
+            case PredicateType::IS_NULL: {
+                res = nullValue;
+            } break;
+
+            case PredicateType::IS_NOT_NULL: {
+                res = CreateXor(nullValue, getInt8(1));
+            } break;
+
             case PredicateType::EQUAL:
             case PredicateType::NOT_EQUAL: {
                 auto negateResult = (predicateAst.type == PredicateType::NOT_EQUAL);
@@ -255,6 +321,12 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                     if (negateResult) {
                         res = CreateNot(res);
                     }
+                }
+                res = CreateZExtOrBitCast(res, getInt8Ty());
+
+                // The predicate evaluates to false if the value is null
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
                 }
             } break;
 
@@ -289,6 +361,12 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                         res = CreateNot(res);
                     }
                 }
+                res = CreateZExtOrBitCast(res, getInt8Ty());
+
+                // The predicate evaluates to false if the value is null
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+                }
             } break;
 
             case PredicateType::POSTFIX_LIKE:
@@ -303,6 +381,12 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                         res = CreateNot(res);
                     }
                 }
+                res = CreateZExtOrBitCast(res, getInt8Ty());
+
+                // The predicate evaluates to false if the value is null
+                if (nullValue) {
+                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+                }
             } break;
 
             default: {
@@ -310,7 +394,6 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                 res = nullptr;
             } break;
             }
-            res = CreateZExtOrBitCast(res, getInt8Ty());
 
             // Store resulting conjunct value
             auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);

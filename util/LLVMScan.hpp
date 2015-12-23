@@ -101,7 +101,10 @@ struct PredicateAST {
 struct FieldAST {
     uint16_t id;
     FieldType type;
+
     bool isNotNull;
+    uint16_t nullIdx;
+
     bool needsValue;
     bool isFixedSize;
 
@@ -141,7 +144,8 @@ struct QueryAST {
 struct ScanAST {
     ScanAST()
             : numConjunct(0),
-              needsKey(false) {
+              needsKey(false),
+              needsNull(false) {
     }
 
     /// Number of conjuncts in total
@@ -149,6 +153,9 @@ struct ScanAST {
 
     /// Whether any scan has a partition on it (and as such the key is needed)
     bool needsKey;
+
+    /// Whether any scanned field can be null
+    bool needsNull;
 
     std::map<uint16_t, FieldAST> fields;
 

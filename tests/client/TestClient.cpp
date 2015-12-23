@@ -108,7 +108,7 @@ private:
     /// Number of concurrent transactions to start
     size_t mNumTransactions;
 
-    std::array<GenericTuple, 4> mTuple;
+    std::array<GenericTuple, 16> mTuple;
 
     Table mTable;
 };
@@ -122,8 +122,8 @@ TestClient::TestClient(const ClientConfig& config, size_t scanMemoryLength, size
     for (decltype(mTuple.size()) i = 0; i < mTuple.size(); ++i) {
         mTuple[i] = GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("number", static_cast<int32_t>(i)),
-                std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
                 std::make_pair<crossbow::string, boost::any>("largenumber", gTupleLargenumber),
+                std::make_pair<crossbow::string, boost::any>("text1", gTupleText1),
                 std::make_pair<crossbow::string, boost::any>("text2", gTupleText2)
         });
     }
@@ -153,6 +153,12 @@ void TestClient::run(bool check) {
             check));
     TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.25,
             check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0.125,
+            check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1,
+            0.0625, check));
+    TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeScan, this, std::placeholders::_1, 0,
+            check));
     TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1,
             1.0, check));
     TransactionRunner::executeBlocking(mManager, std::bind(&TestClient::executeProjection, this, std::placeholders::_1,
@@ -181,8 +187,8 @@ void TestClient::addTable(ClientHandle& client) {
     LOG_TRACE("Adding table");
     Schema schema(TableType::TRANSACTIONAL);
     schema.addField(FieldType::INT, "number", true);
-    schema.addField(FieldType::TEXT, "text1", true);
     schema.addField(FieldType::BIGINT, "largenumber", true);
+    schema.addField(FieldType::TEXT, "text1", true);
     schema.addField(FieldType::TEXT, "text2", true);
 
     auto startTime = std::chrono::steady_clock::now();
@@ -234,22 +240,31 @@ void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uin
 
         if (check) {
             LOG_TRACE("Check tuple");
-            if (mTable.field<int32_t>("number", tuple->data()) != static_cast<int32_t>(key % mTuple.size())) {
-                LOG_ERROR("Number value does not match");
+
+            auto numberValue = mTable.field<int32_t>("number", tuple->data());
+            if (numberValue != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value of tuple %1% does not match [actual = %2%]", key, numberValue);
                 return;
             }
-            if (mTable.field<crossbow::string>("text1", tuple->data()) != gTupleText1) {
-                LOG_ERROR("Text1 value does not match");
+
+            auto largeNumberValue = mTable.field<int64_t>("largenumber", tuple->data());
+            if (largeNumberValue != gTupleLargenumber) {
+                LOG_ERROR("Largenumber value of tuple %1% does not match [actual = %2%]", key, largeNumberValue);
                 return;
             }
-            if (mTable.field<int64_t>("largenumber", tuple->data()) != gTupleLargenumber) {
-                LOG_ERROR("Text2 value does not match");
+
+            auto text1Value = mTable.field<crossbow::string>("text1", tuple->data());
+            if (text1Value != gTupleText1) {
+                LOG_ERROR("Text1 value of tuple %1% does not match [actual = %2%]", key, text1Value);
                 return;
             }
-            if (mTable.field<crossbow::string>("text2", tuple->data()) != gTupleText2) {
-                LOG_ERROR("Text2 value does not match");
+
+            auto text2Value = mTable.field<crossbow::string>("text2", tuple->data());
+            if (text2Value != gTupleText2) {
+                LOG_ERROR("Text2 value of tuple %1% does not match [actual = %2%]", key, text2Value);
                 return;
             }
+
             LOG_TRACE("Tuple check successful");
         }
     }
@@ -313,22 +328,31 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
 
         if (check) {
             LOG_TRACE("Check tuple");
-            if (mTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
-                LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+
+            auto numberValue = mTable.field<int32_t>("number", tuple);
+            if (numberValue != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value of tuple %1% does not match [actual = %2%]", scanCount, numberValue);
                 return;
             }
-            if (mTable.field<crossbow::string>("text1", tuple) != gTupleText1) {
-                LOG_ERROR("Text1 value does not match of tuple %1%", scanCount);
+
+            auto largeNumberValue = mTable.field<int64_t>("largenumber", tuple);
+            if (largeNumberValue != gTupleLargenumber) {
+                LOG_ERROR("Largenumber value of tuple %1% does not match [actual = %2%]", scanCount, largeNumberValue);
                 return;
             }
-            if (mTable.field<int64_t>("largenumber", tuple) != gTupleLargenumber) {
-                LOG_ERROR("largenumber value of tuple %1% does not match", scanCount);
+
+            auto text1Value = mTable.field<crossbow::string>("text1", tuple);
+            if (text1Value != gTupleText1) {
+                LOG_ERROR("Text1 value of tuple %1% does not match [actual = %2%]", scanCount, text1Value);
                 return;
             }
-            if (mTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
-                LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+
+            auto text2Value = mTable.field<crossbow::string>("text2", tuple);
+            if (text2Value != gTupleText2) {
+                LOG_ERROR("Text2 value of tuple %1% does not match [actual = %2%]", scanCount, text2Value);
                 return;
             }
+
             LOG_TRACE("Tuple check successful");
             if (scanCount % 1000 == 0) {
                 fiber.yield();
@@ -418,14 +442,19 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
 
         if (check) {
             LOG_TRACE("Check tuple");
-            if (resultTable.field<int32_t>("number", tuple) != static_cast<int32_t>(key % mTuple.size())) {
-                LOG_ERROR("Number value of tuple %1% does not match", scanCount);
+
+            auto numberValue = resultTable.field<int32_t>("number", tuple);
+            if (numberValue != static_cast<int32_t>(key % mTuple.size())) {
+                LOG_ERROR("Number value of tuple %1% does not match [actual = %2%]", scanCount, numberValue);
                 return;
             }
-            if (resultTable.field<crossbow::string>("text2", tuple) != gTupleText2) {
-                LOG_ERROR("Text2 value of tuple %1% does not match", scanCount);
+
+            auto text2Value = resultTable.field<crossbow::string>("text2", tuple);
+            if (text2Value != gTupleText2) {
+                LOG_ERROR("Text2 value of tuple %1% does not match [actual = %2%]", scanCount, text2Value);
                 return;
             }
+
             LOG_TRACE("Tuple check successful");
             if (scanCount % 1000 == 0) {
                 fiber.yield();
@@ -495,9 +524,9 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
     aggregationWriter.write<uint16_t>(crossbow::to_underlying(AggregationType::CNT));
 
     Schema resultSchema(mTable.tableType());
-    resultSchema.addField(FieldType::BIGINT, "sum", true);
-    resultSchema.addField(FieldType::INT, "min", true);
-    resultSchema.addField(FieldType::INT, "max", true);
+    resultSchema.addField(FieldType::BIGINT, "sum", false);
+    resultSchema.addField(FieldType::INT, "min", false);
+    resultSchema.addField(FieldType::INT, "max", false);
     resultSchema.addField(FieldType::BIGINT, "cnt", true);
     Table resultTable(mTable.tableId(), std::move(resultSchema));
 

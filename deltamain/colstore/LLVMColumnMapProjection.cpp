@@ -54,75 +54,56 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
     // -> auto mainPage = reinterpret_cast<const ColumnMapMainPage*>(page);
     auto mainPage = CreateBitCast(getParam(page), mMainPageStructTy->getPointerTo());
 
+    // -> auto count = static_cast<uint64_t>(mainPage->count);
+    auto count = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(0) });
+    count = CreateZExt(CreateAlignedLoad(count, 4u), getInt64Ty());
+
     // -> auto index = static_cast<uint64_t>(idx);
     auto index = CreateZExt(getParam(idx), getInt64Ty());
 
     if (destRecord.headerSize() != 0u) {
-        // -> memset(dest, 0, destRecord.headerSize());
-        CreateMemSet(getParam(dest), getInt8(0), destRecord.headerSize(), 8u);
-
         // -> auto headerOffset = static_cast<uint64_t>(mainPage->headerOffset);
         auto headerOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(1) });
         headerOffset = CreateZExt(CreateAlignedLoad(headerOffset, 4u), getInt64Ty());
 
-        // -> auto headerData = page + headerOffset + index * destRecord.headerSize();
-        auto headerData = CreateInBoundsGEP(getParam(page), headerOffset);
-        headerData = CreateInBoundsGEP(headerData, createConstMul(index, destRecord.headerSize()));
+        // -> auto headerData = page + headerOffset + idx;
+        auto headerData = CreateAdd(headerOffset, index);
+        headerData = CreateInBoundsGEP(getParam(page), headerData);
 
         auto i = query->projectionBegin();
         for (decltype(destRecord.fieldCount()) destFieldIdx = 0u; destFieldIdx < destRecord.fieldCount();
                 ++i, ++destFieldIdx) {
             auto srcFieldIdx = *i;
-            auto& field = srcRecord.getFieldMeta(srcFieldIdx).field;
+            auto& srcMeta = srcRecord.getFieldMeta(srcFieldIdx);
+            auto& destMeta = destRecord.getFieldMeta(destFieldIdx);
+            auto& field = destMeta.field;
             if (field.isNotNull()) {
                 continue;
             }
 
-            auto srcIdx = srcFieldIdx / 8u;
-            auto srcBitIdx = srcFieldIdx % 8u;
-            uint8_t srcMask = (0x1u << srcBitIdx);
-
-            // -> auto srcNullBitmap = *(headerData + srcIdx) & srcMask;
-            auto srcNullBitmap = headerData;
-            if (srcIdx != 0) {
-                srcNullBitmap = CreateInBoundsGEP(srcNullBitmap, getInt64(srcIdx));
-            }
-            srcNullBitmap = CreateAlignedLoad(srcNullBitmap, 1u);
-            srcNullBitmap = CreateAnd(srcNullBitmap, getInt8(srcMask));
-
-            auto destIdx = destFieldIdx / 8u;
-            auto destBitIdx = destFieldIdx % 8u;
-
-            if (destBitIdx > srcBitIdx) {
-                // -> srcNullBitmap = srcNullBitmap << (destBitIdx - srcBitIdx);
-                srcNullBitmap = CreateShl(srcNullBitmap, getInt64(destBitIdx - srcBitIdx));
-            } else if (destBitIdx < srcBitIdx) {
-                // -> srcNullBitmap = srcNullBitmap >> (srcBitIdx - destBitIdx);
-                srcNullBitmap = CreateLShr(srcNullBitmap, getInt64(srcBitIdx - destBitIdx));
+            // -> auto srcData = headerData + page->count * srcNullIdx
+            auto srcData = headerData;
+            if (srcMeta.nullIdx != 0) {
+                srcData = CreateInBoundsGEP(headerData, createConstMul(count, srcMeta.nullIdx));
             }
 
-            // -> auto destNullBitmapPtr = dest + destIdx;
-            auto destNullBitmapPtr = getParam(dest);
-            if (destIdx != 0) {
-                destNullBitmapPtr = CreateInBoundsGEP(destNullBitmapPtr, getInt64(destIdx));
+            // -> auto nullValue = *srcData;
+            auto nullValue = CreateAlignedLoad(srcData, 1u);
+
+            // -> auto destData = dest + destNullIdx;
+            auto destData = getParam(dest);
+            if (destMeta.nullIdx != 0) {
+                destData = CreateInBoundsGEP(destData, getInt64(destMeta.nullIdx));
             }
 
-            // -> auto destNullBitmap = *destNullBitmapPtr | srcNullBitmap;
-            llvm::Value* destNullBitmap = CreateAlignedLoad(destNullBitmapPtr, 1u);
-            destNullBitmap = CreateOr(destNullBitmapPtr, srcNullBitmap);
-
-            // -> *destNullBitmapPtr = destNullBitmap;
-            CreateAlignedStore(destNullBitmap, destNullBitmapPtr, 1u);
+            // -> *destData = srcValue;
+            CreateAlignedStore(nullValue, destData, 1u);
         }
     }
 
-    // -> auto count = static_cast<uint64_t>(mainPage->count);
-    auto count = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(0) });
-    count = CreateZExt(CreateAlignedLoad(count, 4u), getInt64Ty());
-
     auto i = query->projectionBegin();
     if (destRecord.fixedSizeFieldCount() != 0) {
-        // auto fixedOffset = static_cast<uint64_t>(mainPage->fixedOffset);
+        // -> auto fixedOffset = static_cast<uint64_t>(mainPage->fixedOffset);
         auto fixedOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(2) });
         fixedOffset = CreateZExt(CreateAlignedLoad(fixedOffset, 4u), getInt64Ty());
 
