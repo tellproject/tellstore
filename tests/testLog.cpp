@@ -723,7 +723,7 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
 template <typename Impl>
 class LogTestThreaded : public TestBase {
 protected:
-    static constexpr int pageCount = 100; // Number of pages to reserve in the page manager - 100
+    static constexpr int pageCount = 400; // Number of pages to reserve in the page manager - 400
 
     LogTestThreaded()
             : TestBase(pageCount),
