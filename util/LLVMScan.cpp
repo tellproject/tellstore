@@ -262,10 +262,10 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
                         queryReader.align(8u);
 
                         predicateAst.variable.size = size;
-                        memset(predicateAst.variable.prefix, 0, sizeof(predicateAst.variable.prefix));
+                        predicateAst.variable.prefix = 0;
                         if (size > 0) {
-                            memcpy(predicateAst.variable.prefix, data, size < sizeof(predicateAst.variable.prefix)
-                                   ? size : sizeof(predicateAst.variable.prefix));
+                            memcpy(&predicateAst.variable.prefix, data,
+                                    size < sizeof(uint32_t) ? size : sizeof(uint32_t));
 
                             auto value = ConstantDataArray::get(builder.getContext(),
                                     makeArrayRef(reinterpret_cast<const uint8_t*>(data), size));

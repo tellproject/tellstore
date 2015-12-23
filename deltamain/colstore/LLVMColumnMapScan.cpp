@@ -305,8 +305,7 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                             getInt32(0));
                 } else {
                     auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_EQ, length, getInt32(rhsAst.size));
-                    auto prefixValue = *reinterpret_cast<const uint32_t*>(rhsAst.prefix);
-                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, prefix, getInt32(prefixValue));
+                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, prefix, getInt32(rhsAst.prefix));
                     res = CreateAnd(lengthComp, prefixComp);
 
                     if (rhsAst.size > 4) {
@@ -339,13 +338,11 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                     auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_UGE, length, getInt32(rhsAst.size));
                     auto maskedPrefix = prefix;
                     if (rhsAst.size < 4) {
-                        alignas(4) char mask[4] = {};
-                        memset(mask, 0xFFu, rhsAst.size);
-                        auto maskValue = *reinterpret_cast<const uint32_t*>(mask);
-                        maskedPrefix = CreateAnd(maskedPrefix, getInt32(maskValue));
+                        uint32_t mask = 0;
+                        memset(&mask, 0xFFu, rhsAst.size);
+                        maskedPrefix = CreateAnd(maskedPrefix, getInt32(mask));
                     }
-                    auto prefixValue = *reinterpret_cast<const uint32_t*>(rhsAst.prefix);
-                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, maskedPrefix, getInt32(prefixValue));
+                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, maskedPrefix, getInt32(rhsAst.prefix));
                     res = CreateAnd(lengthComp, prefixComp);
 
                     if (rhsAst.size > 4) {

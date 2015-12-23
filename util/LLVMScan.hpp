@@ -64,7 +64,7 @@ struct VariablePredicateAST {
     uint32_t size;
 
     /// First bytes of the data the predicate must match
-    alignas(4) char prefix[4];
+    uint32_t prefix;
 
     /// Data the predicate must match
     llvm::GlobalVariable* value;
