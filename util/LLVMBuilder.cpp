@@ -48,7 +48,7 @@ llvm::Value* LLVMBuilder::createConstMul(llvm::Value* lhs, uint64_t rhs) {
     return CreateShl(lhs, getInt64(log2));
 }
 
-llvm::Value* LLVMBuilder::createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize /* = 0 */) {
+llvm::Value* LLVMBuilder::createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize /* = 1 */) {
     if (rhs == 0u) {
         throw std::invalid_argument("Modulo by 0");
     }

@@ -154,7 +154,7 @@ public:
     /**
      * @brief Create an optimized modulo operation with a constant
      */
-    llvm::Value* createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize = 0);
+    llvm::Value* createConstMod(llvm::Value* lhs, uint64_t rhs, uint64_t vectorSize = 1);
 
     /**
      * @brief Create an pointer alignment operation with a constant
