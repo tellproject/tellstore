@@ -408,9 +408,10 @@ void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t sta
 
     // Determine begin and end offset of the variable size heap
     auto heapEntries = page->variableData();
-    auto beginOffset = heapEntries[endIdx - 1].offset;
-    auto endOffset = heapEntries[startIdx - 1].offset;
+    auto beginOffset = heapEntries[static_cast<int32_t>(endIdx) - 1].offset;
+    auto endOffset = heapEntries[static_cast<int32_t>(startIdx) - 1].offset;
     LOG_ASSERT(beginOffset <= endOffset, "Begin offset larger than end offset");
+    LOG_ASSERT(endOffset <= TELL_PAGE_SIZE, "End offset larger than page size")
 
     auto length = endOffset - beginOffset;
 
@@ -419,7 +420,7 @@ void ColumnMapPageModifier::addCleanAction(ColumnMapMainPage* page, uint32_t sta
     memcpy(mFillHeap, reinterpret_cast<const char*>(page) + beginOffset, length);
 
     // Add clean action with varsize heap offset correct
-    auto offsetCorrect = static_cast<int32_t>(mFillHeap - reinterpret_cast<const char*>(page))
+    auto offsetCorrect = static_cast<int32_t>(mFillHeap - reinterpret_cast<const char*>(mFillPage))
             - static_cast<int32_t>(beginOffset);
     mCleanActions.emplace_back(page, startIdx, endIdx, offsetCorrect);
 }
@@ -658,6 +659,10 @@ void ColumnMapPageModifier::flushFillPage() {
     // If the offset correction is 0 we can do a single memory copy otherwise we have to adjust the offset for every
     // element.
     if (mRecord.varSizeFieldCount() != 0) {
+#ifndef NDEBUG
+        auto minOffset = mFillPage->variableOffset + sizeof(ColumnMapHeapEntry) * mFillPage->count
+                * mRecord.varSizeFieldCount();
+#endif
         auto variableData = mFillPage->variableData();
         for (decltype(mRecord.varSizeFieldCount()) i = 0; i < mRecord.varSizeFieldCount(); ++i) {
             for (const auto& action : mCleanActions) {
@@ -669,7 +674,10 @@ void ColumnMapPageModifier::flushFillPage() {
                 } else {
                     for (auto endData = heapEntries + count; heapEntries != endData; ++heapEntries, ++variableData) {
                         auto newOffset = static_cast<int32_t>(heapEntries->offset) + action.offsetCorrection;
-                        LOG_ASSERT(newOffset > 0, "Corrected offset must be larger than 0");
+                        LOG_ASSERT(newOffset >= static_cast<int32_t>(minOffset),
+                                "Corrected offset must be larger than page metadata");
+                        LOG_ASSERT(newOffset <= static_cast<int32_t>(TELL_PAGE_SIZE),
+                                "Corrected offset larger than page size")
                         new (variableData) ColumnMapHeapEntry(static_cast<uint32_t>(newOffset), heapEntries->prefix);
                     }
                 }
