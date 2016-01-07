@@ -306,10 +306,9 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
                 if (result[j] == 0u) {
                     continue;
                 }
-                auto length = sizeData[j];
-                mQueries[i].writeRecord(entries[j].key, length, entries[j].version, mValidToData[j],
-                        [fun, page, j, length] (char* dest) {
-                    return fun(reinterpret_cast<const char*>(page), j, length, dest);
+                mQueries[i].writeRecord(entries[j].key, sizeData[j], entries[j].version, mValidToData[j],
+                        [fun, page, j] (char* dest) {
+                    return fun(reinterpret_cast<const char*>(page), j, dest);
                 });
             }
         } break;

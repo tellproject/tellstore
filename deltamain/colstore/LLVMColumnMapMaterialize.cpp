@@ -42,7 +42,7 @@ LLVMColumnMapMaterializeBuilder::LLVMColumnMapMaterializeBuilder(const ColumnMap
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);
     mFunction->setOnlyReadsMemory(1);
-    mFunction->setDoesNotAlias(4);
+    mFunction->setDoesNotAlias(3);
 }
 
 void LLVMColumnMapMaterializeBuilder::build() {
@@ -72,7 +72,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
         auto srcValue = CreateAlignedLoad(srcData, 8u);
 
         // -> auto destData = data;
-        auto destData = getParam(data);
+        auto destData = getParam(dest);
 
         // -> *destData = srcValue;
         CreateAlignedStore(srcValue, destData, 8u);
@@ -120,16 +120,19 @@ void LLVMColumnMapMaterializeBuilder::build() {
             auto value = CreateAlignedLoad(src, fieldAlignment);
 
             // -> auto dest = reinterpret_cast<const T*>(data + fieldOffset);
-            auto dest = getParam(data);
+            auto destData = getParam(dest);
             if (rowMeta.offset != 0u) {
-                dest = CreateInBoundsGEP(dest, getInt64(rowMeta.offset));
+                destData = CreateInBoundsGEP(destData, getInt64(rowMeta.offset));
             }
-            dest = CreateBitCast(dest, fieldPtrTy);
+            destData = CreateBitCast(destData, fieldPtrTy);
 
             // -> *dest = value;
-            CreateAlignedStore(value, dest, fieldAlignment);
+            CreateAlignedStore(value, destData, fieldAlignment);
         }
     }
+
+    // -> auto destHeapOffset = record.staticSize();
+    llvm::Value* destHeapOffset = getInt32(record.staticSize());
 
     // Copy all variable size fields in one batch
     if (record.varSizeFieldCount() != 0u) {
@@ -137,79 +140,72 @@ void LLVMColumnMapMaterializeBuilder::build() {
         auto variableOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(3) });
         variableOffset = CreateZExt(CreateAlignedLoad(variableOffset, 4u), getInt64Ty());
 
-        // -> auto src = reinterpret_cast<const ColumnMapHeapEntry*>(page + variableOffset) + idx;
-        auto src = CreateInBoundsGEP(getParam(page), variableOffset);
-        src = CreateBitCast(src, mHeapEntryStructTy->getPointerTo());
-        src = CreateInBoundsGEP(src, index);
+        // -> auto variableData = reinterpret_cast<const ColumnMapHeapEntry*>(page + variableOffset) + idx;
+        auto variableData = CreateInBoundsGEP(getParam(page), variableOffset);
+        variableData = CreateBitCast(variableData, mHeapEntryStructTy->getPointerTo());
+        variableData = CreateInBoundsGEP(variableData, index);
 
-        // -> auto startOffset = src->offset;
-        auto startOffset = CreateInBoundsGEP(src, { getInt64(0), getInt32(0) });
-        startOffset = CreateAlignedLoad(startOffset, 8u);
+        // -> auto srcData = variableData;
+        auto srcData = variableData;
 
-        // The first offset is always the static size of the row record
-        {
-            auto& rowMeta = record.getFieldMeta(record.fixedSizeFieldCount());
+        // -> auto destData = reinterpret_cast<uint32_t*>(dest + mContext.variableOffset());
+        auto destData = getParam(dest);
+        if (record.variableOffset() != 0) {
+            destData = CreateInBoundsGEP(destData, getInt64(record.variableOffset()));
+        }
+        destData = CreateBitCast(destData, getInt32PtrTy());
 
-            // -> auto dest = reinterpret_cast<uint32_t*>(data + fieldOffset);
-            auto dest = getParam(data);
-            if (rowMeta.offset != 0) {
-                dest = CreateInBoundsGEP(dest, getInt64(rowMeta.offset));
+        // -> *destData = destHeapOffset;
+        CreateAlignedStore(destHeapOffset, destData, 4u);
+
+        // -> auto srcHeapOffset = srcData->offset;
+        auto srcHeapOffset = CreateInBoundsGEP(srcData, { getInt64(0), getInt32(0) });
+        srcHeapOffset = CreateAlignedLoad(srcHeapOffset, 8u);
+
+        // -> auto offsetCorrection = srcHeapOffset - destHeapOffset;
+        auto offsetCorrection = CreateSub(srcHeapOffset, destHeapOffset);
+
+        // End offsets of all fields have to be calculated
+        llvm::Value* offset;
+        for (decltype(record.varSizeFieldCount()) i = 0; i < record.varSizeFieldCount(); ++i) {
+            if (i + 1 == record.varSizeFieldCount()) {
+                // -> srcData = variableData - 1;
+                srcData = CreateGEP(variableData, getInt64(-1));
+            } else {
+                // -> srcData += count;
+                srcData = CreateInBoundsGEP(srcData, count);
             }
-            dest = CreateBitCast(dest, getInt32PtrTy());
 
-            // -> *dest = record.staticSize();
-            CreateAlignedStore(getInt32(record.staticSize()), dest, 4u);
+            // -> auto offset = srcData->offset - offsetCorrection;
+            offset = CreateInBoundsGEP(srcData, { getInt64(0), getInt32(0) });
+            offset = CreateAlignedLoad(offset, 8u);
+            offset = CreateSub(offset, offsetCorrection);
+
+            // -> ++destData;
+            destData = CreateInBoundsGEP(destData, getInt64(1));
+
+            // -> *destData = offset;
+            CreateAlignedStore(offset, destData, 4u);
         }
 
-        // Offsets of the remaining fields have to be calculated
-        if (record.varSizeFieldCount() > 1) {
-            // -> auto offsetCorrection = startOffset - record.staticSize();
-            auto offsetCorrection = CreateSub(startOffset, getInt32(record.staticSize()));
-            for (decltype(record.varSizeFieldCount()) i = 1; i < record.varSizeFieldCount(); ++i) {
-                // -> src += count;
-                src = CreateInBoundsGEP(src, count);
+        // -> auto srcHeap = page + static_cast<uint64_t>(srcHeapOffset);
+        auto srcHeap = CreateInBoundsGEP(getParam(page), CreateZExt(srcHeapOffset, getInt64Ty()));
 
-                // -> auto offset = src->offset - offsetCorrection;
-                auto offset = CreateInBoundsGEP(src, { getInt64(0), getInt32(0) });
-                offset = CreateAlignedLoad(offset, 8u);
-                offset = CreateSub(offset, offsetCorrection);
+        // -> auto destHeap = dest + static_cast<uint64_t>(destHeapOffset);
+        auto destHeap = CreateInBoundsGEP(getParam(dest), CreateZExt(destHeapOffset, getInt64Ty()));
 
-                auto& rowMeta = record.getFieldMeta(record.fixedSizeFieldCount() + i);
+        // -> auto length = offset - destHeapOffset
+        auto length = CreateSub(offset, destHeapOffset);
 
-                // -> auto dest = reinterpret_cast<uint32_t*>(data + fieldOffset);
-                auto dest = CreateInBoundsGEP(getParam(data), getInt64(rowMeta.offset));
-                dest = CreateBitCast(dest, getInt32PtrTy());
+        // -> memcpy(destHeap, srcHeap, length);
+        CreateMemCpy(destHeap, srcHeap, length, 1u);
 
-                // -> *dest = offset;
-                CreateAlignedStore(offset, dest, 4u);
-            }
-        }
-
-        // The last offset is always the size
-        {
-            // -> auto dest = reinterpret_cast<uint32_t*>(dest + record.staticSize() - sizeof(uint32_t));
-            auto dest = CreateInBoundsGEP(getParam(data), getInt64(record.staticSize() - sizeof(uint32_t)));
-            dest = CreateBitCast(dest, getInt32PtrTy());
-
-            // -> *dest = size;
-            CreateAlignedStore(getParam(size), dest, 4u);
-        }
-
-        // -> auto heapSrc = page + static_cast<uint64_t>(startOffset);
-        auto heapSrc = CreateInBoundsGEP(getParam(page), CreateZExt(startOffset, getInt64Ty()));
-
-        // -> auto dest = data + record.staticSize();
-        auto dest = CreateInBoundsGEP(getParam(data), getInt64(record.staticSize()));
-
-        // -> auto length = size - record.staticSize();
-        auto length = CreateSub(getParam(size), getInt32(record.staticSize()));
-
-        // -> memcpy(dest, heapSrc, length);
-        CreateMemCpy(dest, heapSrc, length, 1u);
+        // -> destHeapOffset = offset;
+        destHeapOffset = offset;
     }
 
-    // Return
-    CreateRet(getParam(size));
+    // -> return destHeapOffset;
+    CreateRet(destHeapOffset);
 }
 
 } // namespace deltamain

@@ -101,6 +101,11 @@ bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
     auto entries = page->entryData();
     auto sizes = page->sizeData();
 
+    const ColumnMapHeapEntry* heapEntries = nullptr;
+    if (mRecord.varSizeFieldCount() != 0) {
+        heapEntries = page->variableData();
+    }
+
     uint32_t mainStartIdx = 0;
     uint32_t mainEndIdx = 0;
 
@@ -204,7 +209,12 @@ START:
                 }
                 wasDelete = true;
             } else {
-                size += (sizes[i] - mRecord.staticSize());
+                // Add size of variable heap
+                if (heapEntries != nullptr) {
+                    auto beginOffset = heapEntries[i].offset;
+                    auto endOffset = heapEntries[static_cast<int32_t>(i) - 1].offset;
+                    size += (endOffset - beginOffset);
+                }
                 wasDelete = false;
             }
 
@@ -316,15 +326,15 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
                 LOG_ASSERT(mUpdateIdx > mUpdateEndIdx, "No element written before the delete");
                 --mUpdateIdx;
             } else if (lowestVersion > std::max(mMinVersion, oldRecord.baseVersion())) {
-                auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(oldRecord.value()));
+                auto value = oldRecord.value();
 
-                mFillSize += mContext.staticSize() + (logEntry->size() - sizeof(InsertLogEntry) - mRecord.staticSize());
+                mFillSize += mContext.calculateFillSize(value->data());
                 if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
                     flush();
                     continue;
                 }
 
-                writeInsert(oldRecord.value());
+                writeInsert(value);
             }
 
             // Invalidate the element if it can be removed completely
@@ -336,15 +346,15 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
                 return false;
             }
         } else {
-            auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(oldRecord.value()));
+            auto value = oldRecord.value();
 
-            mFillSize += mContext.staticSize() + (logEntry->size() - sizeof(InsertLogEntry) - mRecord.staticSize());
+            mFillSize += mContext.calculateFillSize(value->data());
             if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
                 flush();
                 continue;
             }
 
-            writeInsert(oldRecord.value());
+            writeInsert(value);
         }
 
         LOG_ASSERT(mFillIdx - mFillEndIdx == mUpdateIdx - mUpdateEndIdx,
@@ -431,7 +441,8 @@ bool ColumnMapPageModifier::processUpdates(const UpdateLogEntry* newest, uint64_
 
     // Loop over update log
     for (; !updateIter.done(); updateIter.next()) {
-        auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(updateIter.value()));
+        auto value = updateIter.value();
+        auto logEntry = LogEntry::entryFromData(reinterpret_cast<const char*>(value));
         // If the previous update was a delete and the element is below the lowest active version then the
         // delete can be discarded. In this case the update index counter can simply be decremented by one as a
         // delete only writes the header entry in the fill page.
@@ -448,24 +459,23 @@ bool ColumnMapPageModifier::processUpdates(const UpdateLogEntry* newest, uint64_
             }
         }
 
-        auto size = mContext.staticSize();
         if (logEntry->type() == crossbow::to_underlying(RecordType::DELETE)) {
             // The entry this entry marks as deleted can not be read, skip deletion and break
             if (updateIter->version <= mMinVersion) {
                 break;
             }
+            mFillSize += mContext.staticSize();
             wasDelete = true;
         } else {
-            size += (logEntry->size() - sizeof(UpdateLogEntry) - mRecord.staticSize());
+            mFillSize += mContext.calculateFillSize(value->data());
             wasDelete = false;
         }
 
-        mFillSize += size;
         if (mFillSize > ColumnMapContext::MAX_DATA_SIZE) {
             return false;
         }
 
-        writeUpdate(updateIter.value());
+        writeUpdate(value);
 
         // Check if the element is already the oldest readable element
         if (updateIter->version <= mMinVersion) {
@@ -553,17 +563,16 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
 
     // Copy all variable sized fields into the fill page
     if (mRecord.varSizeFieldCount() != 0) {
-        auto heapLength = static_cast<size_t>(size - mRecord.staticSize());
+        auto heapLength = mRecord.heapSize(data);
         mFillHeap -= heapLength;
         memcpy(mFillHeap, data + mRecord.staticSize(), heapLength);
         auto heapOffset = static_cast<uint32_t>(mFillHeap - reinterpret_cast<const char*>(mFillPage));
 
         auto variableData = mUpdatePage->variableData() + mUpdateIdx;
+        auto offsetData = reinterpret_cast<const uint32_t*>(data + mRecord.variableOffset());
         for (decltype(mRecord.varSizeFieldCount()) i = 0; i < mRecord.varSizeFieldCount(); ++i) {
-            auto& fieldMeta = mRecord.getFieldMeta(mRecord.fixedSizeFieldCount() + i);
-            auto offsetData = reinterpret_cast<const uint32_t*>(data + fieldMeta.offset);
-            auto varOffset = offsetData[0];
-            auto varSize = offsetData[1] - varOffset;
+            auto varOffset = offsetData[i];
+            auto varSize = offsetData[i + 1] - varOffset;
 
             // Write heap entry and advance to next field
             new (variableData) ColumnMapHeapEntry(heapOffset, varSize, data + varOffset);

@@ -117,22 +117,17 @@ void LLVMRowProjectionBuilder::build(ScanQuery* query) {
         auto srcFieldIdx = mRecord.fixedSizeFieldCount();
         decltype(destRecord.varSizeFieldCount()) destFieldIdx = 0;
 
-        auto& srcMeta = mRecord.getFieldMeta(srcFieldIdx);
-        auto& destMeta = destRecord.getFieldMeta(destRecord.fixedSizeFieldCount());
-        auto& field = srcMeta.field;
-        LOG_ASSERT(!field.isFixedSized(), "Field must be variable size");
-
-        // -> auto srcData = reinterpret_cast<uint32_t*>(src + srcMeta.offset);
+        // -> auto srcData = reinterpret_cast<const uint32_t*>(src + mRecord.variableOffset());
         auto srcData = getParam(src);
-        if (srcMeta.offset != 0) {
-            srcData = CreateInBoundsGEP(srcData, getInt64(srcMeta.offset));
+        if (mRecord.variableOffset() != 0) {
+            srcData = CreateInBoundsGEP(srcData, getInt64(mRecord.variableOffset()));
         }
         srcData = CreateBitCast(srcData, getInt32PtrTy());
 
-        // -> auto destData = reinterpret_cast<uint32_t*>(dest + destMeta.offset);
+        // -> auto destData = reinterpret_cast<uint32_t*>(dest + destRecord.variableOffset());
         auto destData = getParam(dest);
-        if (destMeta.offset != 0) {
-            destData = CreateInBoundsGEP(destData, getInt64(destMeta.offset));
+        if (destRecord.variableOffset() != 0) {
+            destData = CreateInBoundsGEP(destData, getInt64(destRecord.variableOffset()));
         }
         destData = CreateBitCast(destData, getInt32PtrTy());
 

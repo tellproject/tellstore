@@ -48,7 +48,6 @@ public:
     using Signature = uint32_t (*) (
             const char* /* page */,
             uint32_t /* idx */,
-            uint32_t /* size */,
             char* /* dest */);
 
     static const std::string FUNCTION_NAME;
@@ -68,8 +67,7 @@ public:
 private:
     static constexpr size_t page = 0;
     static constexpr size_t idx = 1;
-    static constexpr size_t size = 2;
-    static constexpr size_t dest = 3;
+    static constexpr size_t dest = 2;
 
     static llvm::Type* buildReturnTy(llvm::LLVMContext& context) {
         return llvm::Type::getInt32Ty(context);
@@ -79,7 +77,6 @@ private:
         return {
             { llvm::Type::getInt8Ty(context)->getPointerTo(), "page" },
             { llvm::Type::getInt32Ty(context), "idx" },
-            { llvm::Type::getInt32Ty(context), "size" },
             { llvm::Type::getInt8Ty(context)->getPointerTo(), "dest" }
         };
     }

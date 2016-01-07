@@ -197,11 +197,13 @@ Schema Schema::deserialize(crossbow::buffer_reader& reader)
 }
 
 Record::Record()
-        : mStaticSize(0u) {
+        : mStaticSize(0u),
+          mVariableOffset(0u) {
 }
 
 Record::Record(Schema schema)
-        : mSchema(std::move(schema)) {
+        : mSchema(std::move(schema)),
+          mVariableOffset(0u) {
     auto count = mSchema.fixedSizeFields().size() + mSchema.varSizeFields().size();
     mIdMap.reserve(count);
     mFieldMetaData.reserve(count);
@@ -228,6 +230,7 @@ Record::Record(Schema schema)
 
     if (!mSchema.varSizeFields().empty()) {
         mStaticSize = crossbow::align(mStaticSize, 4u);
+        mVariableOffset = mStaticSize;
         for (const auto& field : mSchema.varSizeFields()) {
             mIdMap.insert(std::make_pair(field.name(), idx));
             mFieldMetaData.emplace_back(field, mStaticSize, field.isNotNull() ? 0 : nullIdx++);
@@ -251,17 +254,16 @@ size_t Record::sizeOfTuple(const GenericTuple& tuple) const {
             result += boost::any_cast<const crossbow::string&>(iter->second).size();
         }
     }
-    return result;
+    return crossbow::align(result, 8u);
 }
 
 size_t Record::sizeOfTuple(const char* ptr) const {
-    if (mSchema.varSizeFields().empty()) {
-        return mStaticSize;
-    }
-
     // In case the record has variable sized fields the total size can be calculated by getting the end offset of
-    // the variable sized field
-    return *reinterpret_cast<const uint32_t*>(ptr + mStaticSize - sizeof(uint32_t));
+    // the variable sized field otherwise it is the static size.
+    auto result = (mSchema.varSizeFields().empty()
+            ? mStaticSize
+            : *reinterpret_cast<const uint32_t*>(ptr + mStaticSize - sizeof(uint32_t)));
+    return crossbow::align(result, 8u);
 }
 
 char* Record::create(const GenericTuple& tuple, size_t& size) const {

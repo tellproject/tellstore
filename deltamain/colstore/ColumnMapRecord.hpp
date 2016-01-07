@@ -97,14 +97,13 @@ int ColumnMapRecordImpl<T>::get(uint64_t highestVersion, const commitmanager::Sn
             continue;
         }
 
-
         auto recordSizes = page->sizeData();
         if (recordSizes[i] == 0) {
             return (isNewest ? error::not_found : error::not_in_snapshot);
         }
 
         auto dest = fun(recordSizes[i], entries[i].version, isNewest);
-        mContext.materialize(page, i, recordSizes[i], dest);
+        mContext.materialize(page, i, dest);
         return 0;
     }
 

@@ -122,7 +122,8 @@ int RowStoreRecord::canUpdate(uint64_t highestVersion, const commitmanager::Snap
     return (type == actualType ? 0 : error::invalid_write);
 }
 
-int RowStoreRecord::canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot, bool& needsRevert) const {
+int RowStoreRecord::canRevert(uint64_t highestVersion, const commitmanager::SnapshotDescriptor& snapshot,
+        bool& needsRevert) const {
     auto versions = mEntry->versionData();
 
     // Skip elements already overwritten by an element in the update log

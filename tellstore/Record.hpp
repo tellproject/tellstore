@@ -417,11 +417,12 @@ struct FieldMetaData {
 *  - A padding to the next multiple of 8 byte
 *  - The row Data of all fixed size fields
 *  In case the schema also contains variable size fields
-*  - A padding to the next multiple of 4 byte
-*  - A uint32_t array of size #variable-size-fields + 1 containing the offsets into the heap where the data for the
-*    field is stored. The offset is calculated from the start of the record and the last offset contains points to the
-*    end of the variable heap.
-*  - The variable size heap storing the variable sized data
+*    - A padding to the next multiple of 4 byte
+*    - A uint32_t array of size #variable-size-fields + 1 containing the offsets into the heap where the data for the
+*      field is stored. The offset is calculated from the start of the record and the last offset contains points to the
+*      end of the variable heap.
+*    - The variable size heap storing the variable sized data
+* - A padding to the next multiple of 8 byte
 */
 class Record {
 public:
@@ -431,6 +432,7 @@ private:
     std::unordered_map<crossbow::string, id_t> mIdMap;
     std::vector<FieldMetaData> mFieldMetaData;
     uint32_t mStaticSize;
+    uint32_t mVariableOffset;
 public:
     Record();
 
@@ -455,6 +457,23 @@ public:
      */
     uint32_t staticSize() const {
         return mStaticSize;
+    }
+
+    /**
+     * @brief The offset to the first variable sized field
+     */
+    uint32_t variableOffset() const {
+        return mVariableOffset;
+    }
+
+    /**
+     * @brief The total size of the variable heap of the given record
+     */
+    uint32_t heapSize(const char* ptr) const {
+        if (mSchema.varSizeFields().empty()) {
+            return 0;
+        }
+        return *reinterpret_cast<const uint32_t*>(ptr + mStaticSize - sizeof(uint32_t)) - mStaticSize;
     }
 
     bool idOf(const crossbow::string& name, id_t& result) const;

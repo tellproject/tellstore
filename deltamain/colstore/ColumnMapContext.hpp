@@ -151,8 +151,8 @@ public:
     /**
      * @brief Materialize the tuple from the page into the destination buffer
      */
-    void materialize(const ColumnMapMainPage* page, uint32_t idx, uint32_t size, char* dest) const {
-        mMaterializeFun(reinterpret_cast<const char*>(page), idx, size, dest);
+    void materialize(const ColumnMapMainPage* page, uint32_t idx, char* dest) const {
+        mMaterializeFun(reinterpret_cast<const char*>(page), idx, dest);
     }
 
     /**
@@ -160,6 +160,13 @@ public:
      */
     LLVMColumnMapMaterializeBuilder::Signature materializeFunction() const {
         return mMaterializeFun;
+    }
+
+    /**
+     * @brief The complete size a record will fill in a page
+     */
+    uint32_t calculateFillSize(const char* data) const {
+        return mStaticSize + mRecord.heapSize(data);
     }
 
 private:

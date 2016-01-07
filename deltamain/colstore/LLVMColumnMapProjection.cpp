@@ -44,7 +44,7 @@ LLVMColumnMapProjectionBuilder::LLVMColumnMapProjectionBuilder(const ColumnMapCo
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);
     mFunction->setOnlyReadsMemory(1);
-    mFunction->setDoesNotAlias(4);
+    mFunction->setDoesNotAlias(3);
 }
 
 void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
@@ -151,9 +151,6 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
         auto srcFieldIdx = srcRecord.fixedSizeFieldCount();
         decltype(destRecord.varSizeFieldCount()) destFieldIdx = 0;
 
-        auto& destMeta = destRecord.getFieldMeta(destRecord.fixedSizeFieldCount());
-        LOG_ASSERT(!destMeta.field.isFixedSized(), "Field must be variable size");
-
         // auto variableOffset = static_cast<uint64_t>(mainPage->variableOffset);
         auto variableOffset = CreateInBoundsGEP(mainPage, { getInt64(0), getInt32(3) });
         variableOffset = CreateZExt(CreateAlignedLoad(variableOffset, 4u), getInt64Ty());
@@ -166,10 +163,10 @@ void LLVMColumnMapProjectionBuilder::build(ScanQuery* query) {
         // -> auto srcData = variableData;
         auto srcData = variableData;
 
-        // -> auto destData = reinterpret_cast<uint32_t*>(dest + destMeta.offset);
+        // -> auto destData = reinterpret_cast<uint32_t*>(dest + destRecord.variableOffset());
         auto destData = getParam(dest);
-        if (destMeta.offset != 0) {
-            destData = CreateInBoundsGEP(destData, getInt64(destMeta.offset));
+        if (destRecord.variableOffset() != 0) {
+            destData = CreateInBoundsGEP(destData, getInt64(destRecord.variableOffset()));
         }
         destData = CreateBitCast(destData, getInt32PtrTy());
 
