@@ -82,6 +82,10 @@ public:
         return getVectorTy(getInt32Ty(), vectorSize);
     }
 
+    llvm::Constant* getInt32Vector(uint64_t vectorSize, uint32_t C) {
+        return getVector(vectorSize, getInt32(C));
+    }
+
     llvm::PointerType* getInt64PtrTy(unsigned AddrSpace = 0) {
         return llvm::Type::getInt64PtrTy(Context, AddrSpace);
     }

@@ -301,7 +301,8 @@ void TestClient::executeScan(ClientHandle& client, float selectivity, bool check
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint32_t>(0x1u); // Number of columns
-    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x0u); // Partition shift
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);
@@ -403,7 +404,8 @@ void TestClient::executeProjection(ClientHandle& client, float selectivity, bool
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint32_t>(0x1u); // Number of columns
-    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x0u); // Partition shift
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(numberField);
@@ -499,7 +501,8 @@ void TestClient::executeAggregation(ClientHandle& client, float selectivity) {
 
     crossbow::buffer_writer selectionWriter(selection.get(), selectionLength);
     selectionWriter.write<uint32_t>(0x1u); // Number of columns
-    selectionWriter.write<uint32_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x1u); // Number of conjuncts
+    selectionWriter.write<uint16_t>(0x0u); // Partition shift
     selectionWriter.write<uint32_t>(0x0u); // Partition key
     selectionWriter.write<uint32_t>(0x0u); // Partition value
     selectionWriter.write<uint16_t>(recordField);

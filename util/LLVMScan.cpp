@@ -169,7 +169,8 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
         queryAst.baseVersion = snapshot->baseVersion();
         queryAst.version = snapshot->version();
         queryAst.conjunctOffset = mScanAst.numConjunct;
-        queryAst.numConjunct = queryReader.read<uint32_t>();
+        queryAst.numConjunct = queryReader.read<uint16_t>();
+        queryAst.partitionShift = queryReader.read<uint16_t>();
         queryAst.partitionModulo = queryReader.read<uint32_t>();
         queryAst.partitionNumber = queryReader.read<uint32_t>();
 

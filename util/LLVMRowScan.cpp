@@ -205,10 +205,14 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
         auto validToRes = CreateICmp(llvm::CmpInst::ICMP_UGT, getParam(validTo), getInt64(query.baseVersion));
         auto res = CreateAnd(validFromRes, validToRes);
 
-        // Evaluate key % partitionModulo == partitionNumber
+        // Evaluate (key >> partitionShift) % partitionModulo == partitionNumber
         if (query.partitionModulo != 0u) {
+            auto keyValue = getParam(key);
+            if (query.partitionShift != 0) {
+                keyValue = CreateLShr(keyValue, getInt32(query.partitionShift));
+            }
             auto keyRes = CreateICmp(llvm::CmpInst::ICMP_EQ,
-                    createConstMod(getParam(key), query.partitionModulo),
+                    createConstMod(keyValue, query.partitionModulo),
                     getInt64(query.partitionNumber));
             res = CreateAnd(res, keyRes);
         }

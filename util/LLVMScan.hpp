@@ -129,7 +129,10 @@ struct QueryAST {
     uint32_t conjunctOffset;
 
     /// Number of conjuncts in the query
-    uint32_t numConjunct;
+    uint16_t numConjunct;
+
+    /// Number of bits the key should be shifted before calculating partition
+    uint16_t partitionShift;
 
     /// Overall number of partitions (or 0 if no partitioning)
     uint32_t partitionModulo;

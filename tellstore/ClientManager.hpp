@@ -148,27 +148,27 @@ public:
 
     std::shared_ptr<GetResponse> get(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->get(fiber, tableId, key, snapshot);
+        return shard(key)->get(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> insert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(tableId, key)->insert(fiber, tableId, key, snapshot, tuple);
+        return shard(key)->insert(fiber, tableId, key, snapshot, tuple);
     }
 
     std::shared_ptr<ModificationResponse> update(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot, const AbstractTuple& tuple) {
-        return shard(tableId, key)->update(fiber, tableId, key, snapshot, tuple);
+        return shard(key)->update(fiber, tableId, key, snapshot, tuple);
     }
 
     std::shared_ptr<ModificationResponse> remove(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->remove(fiber, tableId, key, snapshot);
+        return shard(key)->remove(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ModificationResponse> revert(crossbow::infinio::Fiber& fiber, uint64_t tableId, uint64_t key,
             const commitmanager::SnapshotDescriptor& snapshot) {
-        return shard(tableId, key)->revert(fiber, tableId, key, snapshot);
+        return shard(key)->revert(fiber, tableId, key, snapshot);
     }
 
     std::shared_ptr<ScanIterator> scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,
@@ -192,10 +192,8 @@ private:
     /**
      * @brief The socket associated with the shard for the given table and key
      */
-    store::ClientSocket* shard(uint64_t tableId, uint64_t key) {
-        auto hash = std::hash<uint64_t>()(tableId);
-        boost::hash_combine(hash, std::hash<uint64_t>()(key));
-        return mTellStoreSocket.at(hash % mTellStoreSocket.size()).get();
+    store::ClientSocket* shard(uint64_t key) {
+        return mTellStoreSocket.at(key % mTellStoreSocket.size()).get();
     }
 
     std::unique_ptr<crossbow::infinio::InfinibandProcessor> mProcessor;
