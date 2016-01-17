@@ -260,8 +260,7 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
             auto heapStartOffset = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(0) });
             heapStartOffset = CreateAlignedLoad(heapStartOffset, 4u);
 
-            lhsStart = CreateAdd(heapStartOffset, getInt32(4));
-            lhsStart = CreateZExt(lhsStart, getInt64Ty());
+            lhsStart = CreateZExt(heapStartOffset, getInt64Ty());
             lhsStart = CreateInBoundsGEP(getParam(page), lhsStart);
 
             prefix = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(1) });
@@ -309,12 +308,13 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                     res = CreateAnd(lengthComp, prefixComp);
 
                     if (rhsAst.size > 4) {
+                        auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
                         auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
                                 { getInt64(0), getInt32(4) });
                         auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
                                 { getInt64(1), getInt32(0) });
 
-                        res = createMemCmp(res, lhsStart, rhsStart, rhsEnd,
+                        res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
                                 "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
                     }
                     if (negateResult) {
@@ -346,12 +346,13 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
                     res = CreateAnd(lengthComp, prefixComp);
 
                     if (rhsAst.size > 4) {
+                        auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
                         auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
                                 { getInt64(0), getInt32(4) });
                         auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
                                 { getInt64(1), getInt32(0) });
 
-                        res = createMemCmp(res, lhsStart, rhsStart, rhsEnd,
+                        res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
                                 "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
                     }
                     if (negateResult) {
