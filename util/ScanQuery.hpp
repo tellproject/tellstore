@@ -136,7 +136,8 @@ private:
  *
  * A query has the following form
  * - 4 bytes for the number of columns it has to check
- * - 4 bytes for the number of conjuncts in the query
+ * - 2 bytes for the number of conjuncts in the query
+ * - 2 bytes for the number of bits to shift the key before partitioning
  * - 4 bytes for the number of total scan partitions (or 0 if no partitioning)
  * - 4 bytes for the number of the scan partition (if partitioning)
  * - For each column:
