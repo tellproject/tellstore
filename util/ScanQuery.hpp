@@ -284,6 +284,7 @@ public:
             : mData(data),
               mBuffer(nullptr),
               mBufferWriter(static_cast<char*>(nullptr), 0),
+              mTotalWritten(0u),
               mTupleCount(0u) {
     }
 
@@ -335,6 +336,9 @@ public:
 
     /// Writer used to write the tuples into the buffer
     crossbow::buffer_writer mBufferWriter;
+
+    /// Total number of bytes written
+    size_t mTotalWritten;
 
     /// Number of tuples written to the buffer
     uint16_t mTupleCount;

@@ -114,6 +114,14 @@ void ServerScanQuery::writeLast(const char* start, const char* end, std::error_c
     --mActive;
     auto status = (mActive == 0 ? ScanStatusIndicator::DONE : ScanStatusIndicator::ONGOING);
     doWrite(start, end, status, ec);
+
+    if (ec == crossbow::infinio::error::out_of_range && mActive == 0) {
+        auto userId = (static_cast<uint32_t>(mScanId) << 16) | static_cast<uint32_t>(ScanStatusIndicator::DONE);
+        crossbow::infinio::ScatterGatherBuffer buffer(crossbow::infinio::InfinibandBuffer::INVALID_ID);
+
+        std::error_code ec2;
+        mSocket.writeScanBuffer(buffer, mDestRegion, mOffset, userId, ec2);
+    }
 }
 
 void ServerScanQuery::writeLast(std::error_code& ec) {
@@ -125,11 +133,6 @@ void ServerScanQuery::writeLast(std::error_code& ec) {
         crossbow::infinio::ScatterGatherBuffer buffer(crossbow::infinio::InfinibandBuffer::INVALID_ID);
 
         mSocket.writeScanBuffer(buffer, mDestRegion, mOffset, userId, ec);
-        if (ec) {
-            LOG_ERROR("Error while sending scan buffer [error = %1% %2%]", ec, ec.message());
-            // TODO Error handling
-            return;
-        }
     }
 }
 
@@ -153,8 +156,7 @@ void ServerScanQuery::doWrite(const char* start, const char* end, ScanStatusIndi
 
     mSocket.writeScanBuffer(buffer, mDestRegion, mOffset, userId, ec);
     if (ec) {
-        LOG_ERROR("Error while sending scan buffer [error = %1% %2%]", ec, ec.message());
-        // TODO Error handling
+        mScanBufferManager.releaseBuffer(buffer.id());
         return;
     }
     mOffset += length;

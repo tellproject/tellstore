@@ -72,16 +72,22 @@ public:
      * @brief Writes the buffer into the scan destination region
      */
     template <typename Buffer>
-    void writeScanBuffer(Buffer& buffer, crossbow::infinio::RemoteMemoryRegion& destRegion, size_t offset, uint32_t userId, std::error_code& ec) {
+    void writeScanBuffer(Buffer& buffer, crossbow::infinio::RemoteMemoryRegion& destRegion, size_t offset,
+            uint32_t userId, std::error_code& ec) {
         // Wait in case the network is overloaded
         // For performance reasons this is not really thread safe but as the number of threads accessing this variable
         // is bounded and small (2-4) the actual limit will not be exceeded by much.
         while (mInflightScanBuffer >= mMaxInflightScanBuffer) {
             std::this_thread::yield();
         }
-        mInflightScanBuffer += 1u;
 
+        ec = std::error_code();
         mSocket->write(buffer, destRegion, offset, userId, ec);
+        if (ec) {
+            return;
+        }
+
+        ++mInflightScanBuffer;
     }
 
     /**

@@ -114,21 +114,23 @@ ScanQueryProcessor::~ScanQueryProcessor() {
         LOG_ASSERT(mTupleCount == 0, "Invalid buffer containing tuples");
         mData->writeLast(ec);
     }
-
     if (ec) {
         // TODO FIXME This leads to a leak (the ServerSocket does not notice that the scan has finished)
         LOG_ERROR("Error while flushing buffer [error = %1% %2%]", ec, ec.message());
-        return;
     }
+
+    LOG_DEBUG("Scan processor done [totalWritten = %1%]", mTotalWritten);
 }
 
 ScanQueryProcessor::ScanQueryProcessor(ScanQueryProcessor&& other)
         : mData(other.mData),
           mBuffer(std::move(other.mBuffer)),
           mBufferWriter(other.mBufferWriter),
+          mTotalWritten(other.mTotalWritten),
           mTupleCount(other.mTupleCount) {
     other.mData = nullptr;
     other.mBuffer = nullptr;
+    other.mTotalWritten = 0u;
     other.mTupleCount = 0u;
 }
 
@@ -140,6 +142,9 @@ ScanQueryProcessor& ScanQueryProcessor::operator=(ScanQueryProcessor&& other) {
     other.mBuffer = nullptr;
 
     mBufferWriter = std::move(other.mBufferWriter);
+
+    mTotalWritten = other.mTotalWritten;
+    other.mTotalWritten = 0u;
 
     mTupleCount = other.mTupleCount;
     other.mTupleCount = 0u;
@@ -178,11 +183,12 @@ void ScanQueryProcessor::ensureBufferSpace(uint32_t length) {
     }
 
     if (mBuffer) {
+        mTotalWritten += static_cast<uint64_t>(mBufferWriter.data() - mBuffer);
+
         std::error_code ec;
         mData->writeOngoing(mBuffer, mBufferWriter.data(), ec);
         if (ec) {
-            // TODO Handle error (Release buffer)
-            throw std::system_error(ec);
+            LOG_ERROR("Error while sending buffer [error = %1% %2%]", ec, ec.message());
         }
     }
 
