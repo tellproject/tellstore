@@ -356,6 +356,10 @@ public:
         return mIndexes;
     }
 
+    uint32_t fieldCount() const {
+        return mFixedSizeFields.size() + mVarSizeFields.size();
+    }
+
     id_t idOf(const crossbow::string& name) const {
         id_t res = 0;
         for (const auto& field : mFixedSizeFields) {
