@@ -48,13 +48,28 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Vectorize.h>
 
+#include <boost/functional/hash.hpp>
+
 #include <array>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
-namespace tell {
-namespace store {
 namespace {
+
+struct QueryHolder {
+    QueryHolder(const char* _data, const char* _end)
+        : data(_data),
+          length(static_cast<size_t>(_end - data)) {
+    }
+
+    const char* data;
+    size_t length;
+};
+
+bool operator==(const QueryHolder& lhs, const QueryHolder& rhs) {
+    return (lhs.length == rhs.length) && (memcmp(lhs.data, rhs.data, lhs.length) == 0);
+}
 
 uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
     memcpy(dest, src, length);
@@ -62,6 +77,20 @@ uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
 }
 
 } // anonymous namespace
+
+namespace std {
+
+template <>
+struct hash<QueryHolder> {
+    size_t operator()(const QueryHolder& value) const {
+        return boost::hash_range(value.data, value.data + value.length);
+    }
+};
+
+} // namespace std
+
+namespace tell {
+namespace store {
 
 LLVMScanBase::LLVMScanBase()
         :  mCompilerModule("ScanQuery", mCompilerContext) {
@@ -159,6 +188,7 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
 
     mScanAst.numConjunct = mQueries.size();
 
+    std::unordered_map<QueryHolder, uint32_t> queryCache;
     for (auto q : mQueries) {
         crossbow::buffer_reader queryReader(q->selection(), q->selectionLength());
         auto snapshot = q->snapshot();
@@ -176,6 +206,19 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
 
         if (queryAst.partitionModulo != 0) {
             mScanAst.needsKey = true;
+        }
+
+        if (queryAst.numConjunct > 0) {
+            QueryHolder holder(queryReader.data(), queryReader.end());
+            auto i = queryCache.find(holder);
+            if (i != queryCache.end()) {
+                queryAst.conjunctOffset = i->second;
+                queryAst.numConjunct = 1;
+                mScanAst.queries.emplace_back(std::move(queryAst));
+                continue;
+            } else {
+                queryCache.emplace(holder, queryAst.conjunctOffset);
+            }
         }
 
         for (decltype(numColumns) i = 0; i < numColumns; ++i) {
