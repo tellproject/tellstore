@@ -94,9 +94,9 @@ ScanQuery::ScanQuery(ScanQueryType queryType, std::unique_ptr<char[]> selectionD
           mSelectionData(std::move(selectionData)),
           mSelectionLength(selectionLength),
           mQueryData(std::move(queryData)),
-          mQueryDataEnd(mQueryData.get() + queryLength),
+          mQueryLength(queryLength),
           mSnapshot(std::move(snapshot)),
-          mRecord(buildScanRecord(mQueryType, mQueryData.get(), mQueryDataEnd, record)),
+          mRecord(buildScanRecord(mQueryType, mQueryData.get(), mQueryData.get() + mQueryLength, record)),
           mMinimumLength(mRecord.staticSize() + ScanQueryProcessor::TUPLE_OVERHEAD) {
 }
 

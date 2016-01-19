@@ -32,12 +32,9 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
-const std::string LLVMColumnMapProjectionBuilder::FUNCTION_NAME = "columnMaterialize.";
-
 LLVMColumnMapProjectionBuilder::LLVMColumnMapProjectionBuilder(const ColumnMapContext& context, llvm::Module& module,
-        llvm::TargetMachine* target, uint32_t index)
-        : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()),
-                createFunctionName(index)),
+        llvm::TargetMachine* target, const std::string& name)
+        : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()), name),
           mContext(context),
           mMainPageStructTy(getColumnMapMainPageTy(module.getContext())),
           mHeapEntryStructTy(getColumnMapHeapEntriesTy(module.getContext())) {

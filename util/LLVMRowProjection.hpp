@@ -28,7 +28,6 @@
 #include <crossbow/string.hpp>
 
 #include <cstddef>
-#include <sstream>
 #include <string>
 
 namespace tell {
@@ -49,16 +48,10 @@ public:
 
     static const std::string FUNCTION_NAME;
 
-    static void createFunction(const Record& record, llvm::Module& module, llvm::TargetMachine* target, uint32_t index,
-            ScanQuery* query) {
-        LLVMRowProjectionBuilder builder(record, module, target, index);
+    static void createFunction(const Record& record, llvm::Module& module, llvm::TargetMachine* target,
+                const std::string& name, ScanQuery* query) {
+        LLVMRowProjectionBuilder builder(record, module, target, name);
         builder.build(query);
-    }
-
-    static std::string createFunctionName(uint32_t index) {
-        std::stringstream ss;
-        ss << FUNCTION_NAME << index;
-        return ss.str();
     }
 
 private:
@@ -78,7 +71,8 @@ private:
         };
     }
 
-    LLVMRowProjectionBuilder(const Record& record, llvm::Module& module, llvm::TargetMachine* target, uint32_t index);
+    LLVMRowProjectionBuilder(const Record& record, llvm::Module& module, llvm::TargetMachine* target,
+            const std::string& name);
 
     void build(ScanQuery* query);
 

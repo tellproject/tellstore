@@ -37,6 +37,12 @@ namespace tell {
 namespace store {
 namespace deltamain {
 
+namespace {
+
+const std::string COLUMN_MATERIALIZE_NAME = "colMaterialize.";
+
+} // anonymous namespace
+
 ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries)
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table),
@@ -45,18 +51,35 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
     auto targetMachine = mCompiler.getTargetMachine();
     LLVMColumnMapScanBuilder::createFunction(context, mCompilerModule, targetMachine, mScanAst);
 
+    std::unordered_map<QueryDataHolder, std::string> materializeCache;
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
+        if (q->queryType() == ScanQueryType::FULL) {
+            continue;
+        }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        if (materializeCache.find(holder) != materializeCache.end()) {
+            continue;
+        }
+
+        std::stringstream ss;
+        ss << COLUMN_MATERIALIZE_NAME << i;
+        auto name = ss.str();
+        materializeCache.emplace(holder, name);
+
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            LLVMColumnMapProjectionBuilder::createFunction(context, mCompilerModule, targetMachine, i, q);
+            LLVMColumnMapProjectionBuilder::createFunction(context, mCompilerModule, targetMachine, name, q);
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            LLVMColumnMapAggregationBuilder::createFunction(context, mCompilerModule, targetMachine, i, q);
+            LLVMColumnMapAggregationBuilder::createFunction(context, mCompilerModule, targetMachine, name, q);
         } break;
-        default:
-            break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown query type");
+        } break;
         }
     }
 
@@ -65,46 +88,34 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
     mColumnScanFun = mCompiler.findFunction<ColumnScanFun>(LLVMColumnMapScanBuilder::FUNCTION_NAME);
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
-        switch (mQueries[i]->queryType()) {
-        case ScanQueryType::FULL: {
-            mColumnProjectionFuns.emplace_back(context.materializeFunction());
-            mColumnAggregationFuns.emplace_back(nullptr);
-        } break;
+        auto q = mQueries[i];
 
-        case ScanQueryType::PROJECTION: {
-            auto fun = mCompiler.findFunction<ColumnProjectionFun>(
-                    LLVMColumnMapProjectionBuilder::createFunctionName(i));
-            mColumnProjectionFuns.emplace_back(fun);
-            mColumnAggregationFuns.emplace_back(nullptr);
-        } break;
-
-        case ScanQueryType::AGGREGATION: {
-            auto fun = mCompiler.findFunction<ColumnAggregationFun>(
-                    LLVMColumnMapAggregationBuilder::createFunctionName(i));
-            mColumnAggregationFuns.emplace_back(fun);
-            mColumnProjectionFuns.emplace_back(nullptr);
-        } break;
+        if (q->queryType() == ScanQueryType::FULL) {
+            mColumnMaterializeFuns.emplace_back(reinterpret_cast<void*>(context.materializeFunction()));
+            continue;
         }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        auto& name = materializeCache.at(holder);
+        auto fun = mCompiler.findFunction<void*>(name);
+        mColumnMaterializeFuns.emplace_back(fun);
     }
 }
 
 std::vector<std::unique_ptr<ColumnMapScanProcessor>> ColumnMapScan::startScan(size_t numThreads) {
-    return mTable->startScan(numThreads, mQueries, mColumnScanFun, mColumnProjectionFuns, mColumnAggregationFuns,
-            mRowScanFun, mRowMaterializeFuns, mScanAst.numConjunct);
+    return mTable->startScan(numThreads, mQueries, mColumnScanFun, mColumnMaterializeFuns, mRowScanFun,
+            mRowMaterializeFuns, mScanAst.numConjunct);
 }
 
 ColumnMapScanProcessor::ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
         const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
         const LogIterator& logIter, const LogIterator& logEnd, ColumnMapScan::ColumnScanFun columnScanFun,
-        const std::vector<ColumnMapScan::ColumnProjectionFun>& columnProjectionFuns,
-        const std::vector<ColumnMapScan::ColumnAggregationFun>& columnAggregationFuns,
-        ColumnMapScan::RowScanFun rowScanFun, const std::vector<ColumnMapScan::RowMaterializeFun>& rowMaterializeFuns,
-        uint32_t numConjuncts)
+        const std::vector<void*>& columnMaterializeFuns, ColumnMapScan::RowScanFun rowScanFun,
+        const std::vector<ColumnMapScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts)
         : LLVMRowScanProcessorBase(record, queries, rowScanFun, rowMaterializeFuns, numConjuncts),
           mContext(context),
           mColumnScanFun(columnScanFun),
-          mColumnProjectionFuns(columnProjectionFuns),
-          mColumnAggregationFuns(columnAggregationFuns),
+          mColumnMaterializeFuns(columnMaterializeFuns),
           pages(pages),
           pageIdx(pageIdx),
           pageEndIdx(pageEndIdx),
@@ -301,7 +312,7 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
         switch (mQueries[i].data()->queryType()) {
         case ScanQueryType::FULL: {
         case ScanQueryType::PROJECTION:
-            auto fun = mColumnProjectionFuns[i];
+            auto fun = reinterpret_cast<ColumnMapScan::ColumnProjectionFun>(mColumnMaterializeFuns[i]);
             for (decltype(startIdx) j = startIdx; j < endIdx; ++j) {
                 if (result[j] == 0u) {
                     continue;
@@ -314,8 +325,8 @@ void ColumnMapScanProcessor::evaluateMainQueries(const ColumnMapMainPage* page, 
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            mColumnAggregationFuns[i](reinterpret_cast<const char*>(page), startIdx, endIdx, result,
-                    mQueries[i].mBuffer + 8);
+            auto fun = reinterpret_cast<ColumnMapScan::ColumnAggregationFun>(mColumnMaterializeFuns[i]);
+            fun(reinterpret_cast<const char*>(page), startIdx, endIdx, result, mQueries[i].mBuffer + 8);
         } break;
 
         }

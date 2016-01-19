@@ -73,9 +73,7 @@ private:
 
     ColumnScanFun mColumnScanFun;
 
-    std::vector<ColumnProjectionFun> mColumnProjectionFuns;
-
-    std::vector<ColumnAggregationFun> mColumnAggregationFuns;
+    std::vector<void*> mColumnMaterializeFuns;
 
     crossbow::allocator mAllocator;
 };
@@ -88,9 +86,7 @@ public:
     ColumnMapScanProcessor(const ColumnMapContext& context, const Record& record,
             const std::vector<ScanQuery*>& queries, const PageList& pages, size_t pageIdx, size_t pageEndIdx,
             const LogIterator& logIter, const LogIterator& logEnd, ColumnMapScan::ColumnScanFun columnScanFun,
-            const std::vector<ColumnMapScan::ColumnProjectionFun>& columnProjectionFuns,
-            const std::vector<ColumnMapScan::ColumnAggregationFun>& columnAggregationFuns,
-            ColumnMapScan::RowScanFun rowScanFun,
+            const std::vector<void*>& columnMaterializeFuns, ColumnMapScan::RowScanFun rowScanFun,
             const std::vector<ColumnMapScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
 
     void process();
@@ -106,9 +102,7 @@ private:
 
     ColumnMapScan::ColumnScanFun mColumnScanFun;
 
-    std::vector<ColumnMapScan::ColumnProjectionFun> mColumnProjectionFuns;
-
-    std::vector<ColumnMapScan::ColumnAggregationFun> mColumnAggregationFuns;
+    std::vector<void*> mColumnMaterializeFuns;
 
     const PageList& pages;
     size_t pageIdx;

@@ -28,7 +28,6 @@
 #include <crossbow/string.hpp>
 
 #include <cstddef>
-#include <sstream>
 #include <string>
 
 namespace tell {
@@ -50,18 +49,10 @@ public:
             uint32_t /* idx */,
             char* /* dest */);
 
-    static const std::string FUNCTION_NAME;
-
     static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
-            uint32_t index, ScanQuery* query) {
-        LLVMColumnMapProjectionBuilder builder(context, module, target, index);
+            const std::string& name, ScanQuery* query) {
+        LLVMColumnMapProjectionBuilder builder(context, module, target, name);
         builder.build(query);
-    }
-
-    static std::string createFunctionName(uint32_t index) {
-        std::stringstream ss;
-        ss << FUNCTION_NAME << index;
-        return ss.str();
     }
 
 private:
@@ -82,7 +73,7 @@ private:
     }
 
     LLVMColumnMapProjectionBuilder(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
-            uint32_t index);
+            const std::string& name);
 
     void build(ScanQuery* query);
 

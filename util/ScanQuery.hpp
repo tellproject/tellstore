@@ -171,6 +171,14 @@ public:
         return mSelectionLength;
     }
 
+    const char* query() const {
+        return mQueryData.get();
+    }
+
+    size_t queryLength() const {
+        return mQueryLength;
+    }
+
     ProjectionIterator projectionBegin() const {
         LOG_ASSERT(mQueryType == ScanQueryType::PROJECTION, "Query type not projection");
         return ProjectionIterator(mQueryData.get());
@@ -178,7 +186,7 @@ public:
 
     ProjectionIterator projectionEnd() const {
         LOG_ASSERT(mQueryType == ScanQueryType::PROJECTION, "Query type not projection");
-        return ProjectionIterator(mQueryDataEnd);
+        return ProjectionIterator(mQueryData.get() + mQueryLength);
     }
 
     AggregationIterator aggregationBegin() const {
@@ -188,7 +196,7 @@ public:
 
     AggregationIterator aggregationEnd() const {
         LOG_ASSERT(mQueryType == ScanQueryType::AGGREGATION, "Query type not aggregation");
-        return AggregationIterator(mQueryDataEnd);
+        return AggregationIterator(mQueryData.get() + mQueryLength);
     }
 
     const commitmanager::SnapshotDescriptor* snapshot() const {
@@ -257,8 +265,8 @@ private:
     /// an aggregation query in case the query type is an aggregation.
     std::unique_ptr<char[]> mQueryData;
 
-    /// Pointer to the end of the query data
-    const char* mQueryDataEnd;
+    /// Length of the query data string
+    size_t mQueryLength;
 
     /// Snapshot to check the validity of tuples against
     std::unique_ptr<commitmanager::SnapshotDescriptor> mSnapshot;

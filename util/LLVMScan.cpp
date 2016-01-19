@@ -48,28 +48,16 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Vectorize.h>
 
-#include <boost/functional/hash.hpp>
-
 #include <array>
 #include <sstream>
 #include <string>
-#include <unordered_map>
+
+namespace tell {
+namespace store {
 
 namespace {
 
-struct QueryHolder {
-    QueryHolder(const char* _data, const char* _end)
-        : data(_data),
-          length(static_cast<size_t>(_end - data)) {
-    }
-
-    const char* data;
-    size_t length;
-};
-
-bool operator==(const QueryHolder& lhs, const QueryHolder& rhs) {
-    return (lhs.length == rhs.length) && (memcmp(lhs.data, rhs.data, lhs.length) == 0);
-}
+const std::string ROW_MATERIALIZE_NAME = "rowMaterialize.";
 
 uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
     memcpy(dest, src, length);
@@ -77,20 +65,6 @@ uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
 }
 
 } // anonymous namespace
-
-namespace std {
-
-template <>
-struct hash<QueryHolder> {
-    size_t operator()(const QueryHolder& value) const {
-        return boost::hash_range(value.data, value.data + value.length);
-    }
-};
-
-} // namespace std
-
-namespace tell {
-namespace store {
 
 LLVMScanBase::LLVMScanBase()
         :  mCompilerModule("ScanQuery", mCompilerContext) {
@@ -137,16 +111,32 @@ LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> q
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
+        if (q->queryType() == ScanQueryType::FULL) {
+            continue;
+        }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        if (mRowMaterializeCache.find(holder) != mRowMaterializeCache.end()) {
+            continue;
+        }
+
+        std::stringstream ss;
+        ss << ROW_MATERIALIZE_NAME << i;
+        auto name = ss.str();
+        mRowMaterializeCache.emplace(holder, name);
+
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            LLVMRowProjectionBuilder::createFunction(record, mCompilerModule, targetMachine, i, q);
+            LLVMRowProjectionBuilder::createFunction(record, mCompilerModule, targetMachine, name, q);
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            LLVMRowAggregationBuilder::createFunction(record, mCompilerModule, targetMachine, i, q);
+            LLVMRowAggregationBuilder::createFunction(record, mCompilerModule, targetMachine, name, q);
         } break;
-        default:
-            break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown query type");
+        } break;
         }
     }
 }
@@ -158,27 +148,18 @@ void LLVMRowScanBase::finalizeRowScan() {
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
-        switch (q->queryType()) {
-        case ScanQueryType::FULL: {
+
+        if (q->queryType() == ScanQueryType::FULL) {
             mRowMaterializeFuns.emplace_back(&memcpyWrapper);
-        } break;
-
-        case ScanQueryType::PROJECTION: {
-            auto fun = mCompiler.findFunction<RowMaterializeFun>(LLVMRowProjectionBuilder::createFunctionName(i));
-            mRowMaterializeFuns.emplace_back(fun);
-        } break;
-
-        case ScanQueryType::AGGREGATION: {
-            auto fun = mCompiler.findFunction<RowMaterializeFun>(LLVMRowAggregationBuilder::createFunctionName(i));
-            mRowMaterializeFuns.emplace_back(fun);
-        } break;
-
-        default: {
-            LOG_ASSERT(false, "Unknown query type");
-            mRowMaterializeFuns.emplace_back(nullptr);
-        } break;
+            continue;
         }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        auto& name = mRowMaterializeCache.at(holder);
+        auto fun = mCompiler.findFunction<RowMaterializeFun>(name);
+        mRowMaterializeFuns.emplace_back(fun);
     }
+    mRowMaterializeCache.clear();
 }
 
 void LLVMRowScanBase::buildScanAST(const Record& record) {
@@ -188,7 +169,7 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
 
     mScanAst.numConjunct = mQueries.size();
 
-    std::unordered_map<QueryHolder, uint32_t> queryCache;
+    std::unordered_map<QueryDataHolder, uint32_t> queryCache;
     for (auto q : mQueries) {
         crossbow::buffer_reader queryReader(q->selection(), q->selectionLength());
         auto snapshot = q->snapshot();
@@ -209,7 +190,7 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
         }
 
         if (queryAst.numConjunct != 0) {
-            QueryHolder holder(queryReader.data(), queryReader.end());
+            QueryDataHolder holder(queryReader.data(), queryReader.end());
             auto i = queryCache.find(holder);
             if (i != queryCache.end()) {
                 queryAst.conjunctOffset = i->second;

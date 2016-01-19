@@ -30,12 +30,9 @@
 namespace tell {
 namespace store {
 
-const std::string LLVMRowAggregationBuilder::FUNCTION_NAME = "rowMaterialize.";
-
 LLVMRowAggregationBuilder::LLVMRowAggregationBuilder(const Record& record, llvm::Module& module,
-        llvm::TargetMachine* target, uint32_t index)
-        : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()),
-                createFunctionName(index)),
+        llvm::TargetMachine* target, const std::string& name)
+        : FunctionBuilder(module, target, buildReturnTy(module.getContext()), buildParamTy(module.getContext()), name),
           mRecord(record) {
     // Set noalias hints (data pointers are not allowed to overlap)
     mFunction->setDoesNotAlias(1);

@@ -33,8 +33,11 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include <boost/functional/hash.hpp>
+
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace tell {
@@ -165,6 +168,47 @@ struct ScanAST {
     std::vector<QueryAST> queries;
 };
 
+struct QueryDataHolder {
+    QueryDataHolder(const char* _data, uint32_t _length, uint32_t _type = 0)
+        : data(_data),
+          length(_length),
+          type(_type) {
+    }
+
+    QueryDataHolder(const char* _data, const char* end, uint32_t _type = 0)
+        : QueryDataHolder(_data, static_cast<uint32_t>(end - _data), _type) {
+    }
+
+    const char* data;
+    uint32_t length;
+    uint32_t type;
+};
+
+inline bool operator==(const QueryDataHolder& lhs, const QueryDataHolder& rhs) {
+    return (lhs.type == rhs.type) && (lhs.length == rhs.length) && (memcmp(lhs.data, rhs.data, lhs.length) == 0);
+}
+
+} // namespace store
+} // namespace tell
+
+namespace std {
+
+using namespace tell::store;
+
+template <>
+struct hash<QueryDataHolder> {
+    size_t operator()(const QueryDataHolder& value) const {
+        auto seed = static_cast<size_t>(value.type);
+        boost::hash_range(seed, value.data, value.data + value.length);
+        return seed;
+    }
+};
+
+} // namespace std
+
+namespace tell {
+namespace store {
+
 class LLVMScanBase {
 public:
     template <typename Fun>
@@ -212,6 +256,8 @@ protected:
 
 private:
     void buildScanAST(const Record& record);
+
+    std::unordered_map<QueryDataHolder, std::string> mRowMaterializeCache;
 };
 
 class LLVMRowScanProcessorBase {
@@ -248,5 +294,5 @@ protected:
     std::vector<char> mResult;
 };
 
-} //namespace store
-} //namespace tell
+} // namespace store
+} // namespace tell
