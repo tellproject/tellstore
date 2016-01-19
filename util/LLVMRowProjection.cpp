@@ -145,7 +145,7 @@ void LLVMRowProjectionBuilder::build(ScanQuery* query) {
             // -> auto srcHeapOffset = *srcData;
             auto srcHeapOffset = CreateAlignedLoad(srcData, 4u);
 
-            // -> auto offsetCorrection = srcHeapOffset-+ destHeapOffset;
+            // -> auto offsetCorrection = srcHeapOffset - destHeapOffset;
             auto offsetCorrection = CreateSub(srcHeapOffset, destHeapOffset);
 
             llvm::Value* offset;
@@ -169,10 +169,10 @@ void LLVMRowProjectionBuilder::build(ScanQuery* query) {
             } while (destFieldIdx < destRecord.varSizeFieldCount() && *i == srcFieldIdx);
 
             // -> auto srcHeap = page + srcHeapOffset;
-            auto srcHeap = CreateInBoundsGEP(getParam(src), srcHeapOffset);
+            auto srcHeap = CreateInBoundsGEP(getParam(src), CreateZExt(srcHeapOffset, getInt64Ty()));
 
             // -> auto destHeap = dest + destHeapOffset;
-            auto destHeap = CreateInBoundsGEP(getParam(dest), destHeapOffset);
+            auto destHeap = CreateInBoundsGEP(getParam(dest), CreateZExt(destHeapOffset, getInt64Ty()));
 
             // -> auto length = offset - destHeapOffset
             auto length = CreateSub(offset, destHeapOffset);

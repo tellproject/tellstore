@@ -459,7 +459,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildQueryEvaluation(llvm::Value* startId
                 LOG_ASSERT(needsKey, "No partitioning in AST");
                 auto keyValue = key;
                 if (query.partitionShift != 0) {
-                    keyValue = CreateLShr(keyValue, getInt32Vector(vectorSize, query.partitionShift));
+                    keyValue = CreateLShr(keyValue, getInt64Vector(vectorSize, query.partitionShift));
                 }
                 auto keyRes = CreateICmp(llvm::CmpInst::ICMP_EQ,
                         createConstMod(keyValue, query.partitionModulo, vectorSize),
