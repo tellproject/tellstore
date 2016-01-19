@@ -208,17 +208,15 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
             mScanAst.needsKey = true;
         }
 
-        if (queryAst.numConjunct > 0) {
+        if (queryAst.numConjunct != 0) {
             QueryHolder holder(queryReader.data(), queryReader.end());
             auto i = queryCache.find(holder);
             if (i != queryCache.end()) {
                 queryAst.conjunctOffset = i->second;
-                queryAst.numConjunct = 1;
                 mScanAst.queries.emplace_back(std::move(queryAst));
                 continue;
-            } else {
-                queryCache.emplace(holder, queryAst.conjunctOffset);
             }
+            queryCache.emplace(holder, queryAst.conjunctOffset);
         }
 
         for (decltype(numColumns) i = 0; i < numColumns; ++i) {
@@ -330,6 +328,7 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
         mScanAst.numConjunct += queryAst.numConjunct;
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
+    LOG_ASSERT(mScanAst.queries.size() == mQueries.size(), "Did not process every query");
 }
 
 LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const std::vector<ScanQuery*>& queries,

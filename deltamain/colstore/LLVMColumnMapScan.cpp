@@ -481,6 +481,7 @@ llvm::Value* LLVMColumnMapScanBuilder::buildQueryEvaluation(llvm::Value* startId
 }
 
 void LLVMColumnMapScanBuilder::buildResult(const std::vector<QueryAST>& queries) {
+    uint32_t mergedOffset = queries.size();
     auto vectorSize = mRegisterWidth / 8;
     for (decltype(queries.size()) i = 0; i < queries.size(); ++i) {
         auto& query = queries.at(i);
@@ -488,16 +489,22 @@ void LLVMColumnMapScanBuilder::buildResult(const std::vector<QueryAST>& queries)
             continue;
         }
 
-        // Merge all conjunct of the query into the first conjunct
-        for (decltype(query.numConjunct) j = query.numConjunct - 1u; j > 0u; --j) {
-            auto src = query.conjunctOffset + j;
-            auto dest = src - 1;
+        LOG_ASSERT(query.conjunctOffset <= mergedOffset, "Query offsets must be in ascending order");
 
-            // Vectorized conjunct merge
-            auto vectorEndIdx = buildConjunctMerge(getParam(startIdx), vectorSize, src, dest, llvm::Twine("vector"));
+        // Merge all conjunct of the query into the first conjunct if the conjuncts were not already merged
+        if (mergedOffset == query.conjunctOffset) {
+            for (decltype(query.numConjunct) j = query.numConjunct - 1u; j > 0u; --j) {
+                auto src = query.conjunctOffset + j;
+                auto dest = src - 1;
 
-            // Scalar conjunct merge
-            buildConjunctMerge(vectorEndIdx, 1, src, dest, llvm::Twine("scalar"));
+                // Vectorized conjunct merge
+                auto vectorEndIdx = buildConjunctMerge(getParam(startIdx), vectorSize, src, dest,
+                        llvm::Twine("vector"));
+
+                // Scalar conjunct merge
+                buildConjunctMerge(vectorEndIdx, 1, src, dest, llvm::Twine("scalar"));
+            }
+            mergedOffset += query.numConjunct;
         }
 
         // Merge last conjunct of the query into the final result conjunct
