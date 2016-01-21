@@ -25,15 +25,20 @@
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 
+#include <stdexcept>
+
 namespace tell {
 namespace store {
 
 ScanMemoryManager::ScanMemoryManager(crossbow::infinio::InfinibandService& service, size_t chunkCount,
         size_t chunkLength)
         : mChunkLength(chunkLength),
-          mRegion(service.allocateMemoryRegion(chunkCount * mChunkLength,
-                IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE)),
           mChunkStack(chunkCount, nullptr) {
+    if (chunkLength % 8 != 0) {
+        throw std::runtime_error("Length of chunks must be divisible by 8");
+    }
+    mRegion = crossbow::infinio::AllocatedMemoryRegion(service.allocateMemoryRegion(chunkCount * mChunkLength,
+          IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE));
     auto data = mRegion.address();
     for (decltype(chunkCount) i = 0; i < chunkCount; ++i) {
         if (!mChunkStack.push(reinterpret_cast<void*>(data))) {
