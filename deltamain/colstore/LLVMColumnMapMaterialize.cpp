@@ -166,7 +166,7 @@ void LLVMColumnMapMaterializeBuilder::build() {
         auto offsetCorrection = CreateSub(srcHeapOffset, destHeapOffset);
 
         // End offsets of all fields have to be calculated
-        llvm::Value* offset;
+        llvm::Value* offset = nullptr;
         for (decltype(record.varSizeFieldCount()) i = 0; i < record.varSizeFieldCount(); ++i) {
             if (i + 1 == record.varSizeFieldCount()) {
                 // -> srcData = variableData - 1;
