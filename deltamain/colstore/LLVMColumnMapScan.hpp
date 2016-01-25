@@ -81,21 +81,24 @@ private:
 
     void buildFixedField(const FieldAST& fieldAst);
 
-    llvm::Value* buildFixedFieldEvaluation(llvm::Value* srcData, llvm::Value* nullData, llvm::Value* startIdx,
-            uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst,
-            const llvm::Twine& name);
+    std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> buildFixedFieldEvaluation(llvm::Value* srcData,
+            llvm::Value* nullData, llvm::Value* start, uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated,
+            const FieldAST& fieldAst, const llvm::Twine& name);
 
     void buildVariableField(const FieldAST& fieldAst);
 
     void buildQuery(bool needsKey, const std::vector<QueryAST>& queries);
 
-    llvm::Value* buildQueryEvaluation(llvm::Value* startIdx, uint64_t vectorSize, bool needsKey,
+    std::tuple<llvm::Value*, llvm::Value*, llvm::Value*, llvm::Value*> buildQueryEvaluation(llvm::Value* start,
+            llvm::Value* validFromStart, llvm::Value* validToStart, llvm::Value* keyStart, uint64_t vectorSize,
             const std::vector<QueryAST>& queries, const llvm::Twine& name);
 
     void buildResult(const std::vector<QueryAST>& queries);
 
-    llvm::Value* buildConjunctMerge(llvm::Value* startIdx, uint64_t vectorSize, uint32_t src, uint32_t dest,
-            const llvm::Twine& name);
+    void buildConjunctMerge(uint64_t vectorSize, uint32_t src, uint32_t dest);
+
+    llvm::Value* buildConjunctMerge(llvm::Value* lhsStart, llvm::Value* lhsEnd, llvm::Value* rhsStart,
+            uint64_t vectorSize, const llvm::Twine& name);
 
     const ColumnMapContext& mContext;
 

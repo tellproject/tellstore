@@ -31,6 +31,7 @@
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/MC/SubtargetFeature.h>
 #include <llvm/Support/CodeGen.h>
+#include <llvm/Support/CommandLine.h>
 #include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/Host.h>
 #include <llvm/Support/TargetRegistry.h>
@@ -48,6 +49,12 @@ namespace store {
 LLVMCompiler llvmCompiler;
 
 LLVMCompilerT::LLVMCompilerT() {
+    std::array<const char*, 2> args = {{
+        "tellstore",
+        "--disable-lsr"
+    }};
+    llvm::cl::ParseCommandLineOptions(args.size(), args.data());
+
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();

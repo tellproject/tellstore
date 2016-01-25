@@ -123,14 +123,8 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
 }
 
 void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
-    // Load the start pointer to the null bytevector
-    llvm::Value* nullData = nullptr;
-    if (!fieldAst.isNotNull) {
-        nullData = mHeaderData;
-        if (fieldAst.nullIdx != 0) {
-            nullData = CreateInBoundsGEP(nullData, createConstMul(mCount, fieldAst.nullIdx));
-        }
-    }
+    auto start = getParam(startIdx);
+    auto vectorSize = mRegisterWidth / (fieldAst.size * 8);
 
     // Load the start pointer of the column
     llvm::Value* srcData = nullptr;
@@ -143,341 +137,564 @@ void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
             srcData = CreateInBoundsGEP(srcData, createConstMul(mCount, offset));
         }
         srcData = CreateBitCast(srcData, getFieldPtrTy(fieldAst.type));
+        srcData = CreateInBoundsGEP(srcData, start);
     }
 
-    // Vectorized field evaluation
-    auto vectorSize = mRegisterWidth / (fieldAst.size * 8);
-    auto vectorEndIdx = buildFixedFieldEvaluation(srcData, nullData, getParam(startIdx), vectorSize,
-            mVectorConjunctsGenerated, fieldAst, llvm::Twine("vector"));
-
-    // Scalar field evaluation
-    buildFixedFieldEvaluation(srcData, nullData, vectorEndIdx, 1, mScalarConjunctsGenerated, fieldAst,
-            llvm::Twine("scalar"));
-}
-
-llvm::Value* LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(llvm::Value* srcData, llvm::Value* nullData,
-        llvm::Value* startIdx, uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst,
-        const llvm::Twine& name) {
-    return createLoop(startIdx, getParam(endIdx), vectorSize, "col." + llvm::Twine(fieldAst.id) + "." + name,
-            [this, srcData, nullData, vectorSize, &conjunctsGenerated, &fieldAst] (llvm::Value* idx) {
-        auto nullTy = getInt8VectorTy(vectorSize);
-        auto fieldTy = getFieldVectorTy(fieldAst.type, vectorSize);
-        auto conjunctTy = getInt8VectorTy(vectorSize);
-
-        // Load the null status of the value if it can be null
-        llvm::Value* nullValue = nullData;
-        if (nullValue) {
-            nullValue = CreateInBoundsGEP(nullValue, idx);
-            nullValue = CreateBitCast(nullValue, nullTy->getPointerTo());
-            nullValue = CreateAlignedLoad(nullValue, 1u);
-        }
-
-        // Load the field value from the record
-        llvm::Value* lhs = srcData;
-        if (lhs) {
-            lhs = CreateInBoundsGEP(lhs, idx);
-            lhs = CreateBitCast(lhs, fieldTy->getPointerTo());
-            lhs = CreateAlignedLoad(lhs, fieldAst.alignment);
-        }
-
-        // Evaluate all predicates attached to this field
-        for (auto& predicateAst : fieldAst.predicates) {
-            auto& rhsAst = predicateAst.fixed;
-
-            llvm::Value* res;
-            if (predicateAst.type == PredicateType::IS_NULL) {
-                // Check if the field is null
-                res = nullValue;
-            } else if (predicateAst.type == PredicateType::IS_NOT_NULL) {
-                res = CreateXor(nullValue, getInt8Vector(vectorSize, 1));
-            } else {
-                LOG_ASSERT(lhs != nullptr, "lhs must not be null for this kind of comparison");
-                // Execute the comparison
-                auto rhs = getVector(vectorSize, rhsAst.value);
-                res = (rhsAst.isFloat
-                    ? CreateFCmp(rhsAst.predicate, lhs, rhs)
-                    : CreateICmp(rhsAst.predicate, lhs, rhs));
-                res = CreateZExtOrBitCast(res, conjunctTy);
-
-                // The predicate evaluates to false if the value is null
-                if (nullValue) {
-                    res = CreateAnd(res, CreateXor(nullValue, getInt8Vector(vectorSize, 1)));
-                }
-            }
-
-            // Store resulting conjunct value
-            auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
-            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
-            conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
-            if (conjunctsGenerated[predicateAst.conjunct]) {
-                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
-            } else {
-                conjunctsGenerated[predicateAst.conjunct] = true;
-            }
-            CreateAlignedStore(res, conjunctPtr, 1u);
-        }
-    });
-}
-
-void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
     // Load the start pointer to the null bytevector
     llvm::Value* nullData = nullptr;
     if (!fieldAst.isNotNull) {
-        nullData = mHeaderData;
+        auto startOffset = start;
         if (fieldAst.nullIdx != 0) {
-            nullData = CreateInBoundsGEP(nullData, createConstMul(mCount, fieldAst.nullIdx));
+            startOffset = CreateAdd(startOffset, createConstMul(mCount, fieldAst.nullIdx));
+        }
+        nullData = CreateInBoundsGEP(mHeaderData, startOffset);
+    }
+
+    if (vectorSize != 1) {
+        // Vectorized field evaluation
+        std::tie(start, srcData, nullData) = buildFixedFieldEvaluation(srcData, nullData, start, vectorSize,
+                mVectorConjunctsGenerated, fieldAst, llvm::Twine("vector"));
+    }
+
+    // Scalar field evaluation
+    buildFixedFieldEvaluation(srcData, nullData, start, 1, mScalarConjunctsGenerated, fieldAst, llvm::Twine("scalar"));
+}
+
+std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(
+        llvm::Value* srcData, llvm::Value* nullData, llvm::Value* start, uint64_t vectorSize,
+        std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst, const llvm::Twine& name) {
+    auto end = getParam(endIdx);
+    if (vectorSize != 1) {
+        auto count = CreateSub(end, start);
+        count = CreateAnd(count, getInt64(-vectorSize));
+        end = CreateAdd(start, count);
+    }
+
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock("col." + llvm::Twine(fieldAst.id) + "." + name + ".body");
+    auto endBlock = llvm::BasicBlock::Create(Context, "col." + llvm::Twine(fieldAst.id) + "." + name + ".end");
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, start, end), bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
+
+    // -> auto idx = start;
+    auto idx = CreatePHI(getInt64Ty(), 2);
+    idx->addIncoming(start, previousBlock);
+
+    // -> auto lhsPhi = srcData;
+    llvm::PHINode* lhsPhi = nullptr;
+    if (srcData) {
+        lhsPhi = CreatePHI(srcData->getType(), 2);
+        lhsPhi->addIncoming(srcData, previousBlock);
+    }
+
+    // -> auto nullPhi = nullData;
+    llvm::PHINode* nullPhi = nullptr;
+    if (nullData) {
+        nullPhi = CreatePHI(nullData->getType(), 2);
+        nullPhi->addIncoming(nullData, previousBlock);
+    }
+
+    auto fieldTy = getFieldVectorTy(fieldAst.type, vectorSize);
+    auto nullTy = getInt8VectorTy(vectorSize);
+    auto conjunctTy = getInt8VectorTy(vectorSize);
+
+    // -> auto lhsValue = *lhsPhi;
+    llvm::Value* lhsValue = nullptr;
+    if (srcData) {
+        lhsValue = CreateBitCast(lhsPhi, fieldTy->getPointerTo());
+        lhsValue = CreateAlignedLoad(lhsValue, fieldAst.alignment);
+    }
+
+    // -> auto nullValue = *nullPhi;
+    llvm::Value* nullValue = nullptr;
+    if (nullData) {
+        nullValue = CreateBitCast(nullPhi, nullTy->getPointerTo());
+        nullValue = CreateAlignedLoad(nullValue, 1u);
+    }
+
+    // Evaluate all predicates attached to this field
+    for (auto& predicateAst : fieldAst.predicates) {
+        auto& rhsAst = predicateAst.fixed;
+
+        llvm::Value* res;
+        if (predicateAst.type == PredicateType::IS_NULL) {
+            // Check if the field is null
+            res = nullValue;
+        } else if (predicateAst.type == PredicateType::IS_NOT_NULL) {
+            res = CreateXor(nullValue, getInt8Vector(vectorSize, 1));
+        } else {
+            LOG_ASSERT(lhsValue != nullptr, "lhs must not be null for this kind of comparison");
+            // Execute the comparison
+            auto rhsValue = getVector(vectorSize, rhsAst.value);
+            res = (rhsAst.isFloat
+                ? CreateFCmp(rhsAst.predicate, lhsValue, rhsValue)
+                : CreateICmp(rhsAst.predicate, lhsValue, rhsValue));
+            res = CreateZExtOrBitCast(res, conjunctTy);
+
+            // The predicate evaluates to false if the value is null
+            if (nullData) {
+                res = CreateAnd(res, CreateXor(nullValue, getInt8Vector(vectorSize, 1)));
+            }
+        }
+
+        // Store resulting conjunct value
+        auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
+        conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+        conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
+        if (conjunctsGenerated[predicateAst.conjunct]) {
+            res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+        } else {
+            conjunctsGenerated[predicateAst.conjunct] = true;
+        }
+        CreateAlignedStore(res, conjunctPtr, 1u);
+    }
+
+    // -> idx += vectorSize;
+    auto idxNext = CreateAdd(idx, getInt64(vectorSize));
+    idx->addIncoming(idxNext, GetInsertBlock());
+
+    // -> lhs += vectorSize;
+    llvm::Value* lhsNext = nullptr;
+    if (srcData) {
+        lhsNext = CreateInBoundsGEP(lhsPhi, getInt64(vectorSize));
+        lhsPhi->addIncoming(lhsNext, GetInsertBlock());
+    }
+
+    // -> nullValue += vectorSize;
+    llvm::Value* nullNext = nullptr;
+    if (nullData) {
+        nullNext = CreateInBoundsGEP(nullPhi, getInt64(vectorSize));
+        nullPhi->addIncoming(nullNext, GetInsertBlock());
+    }
+
+    // -> idx != end
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, idxNext, end), bodyBlock, endBlock);
+
+    mFunction->getBasicBlockList().push_back(endBlock);
+    SetInsertPoint(endBlock);
+
+    llvm::PHINode* nullEnd = nullptr;
+    llvm::PHINode* lhsEnd = nullptr;
+    if (vectorSize != 1) {
+        if (nullData) {
+            nullEnd = CreatePHI(nullData->getType(), 2);
+            nullEnd->addIncoming(nullData, previousBlock);
+            nullEnd->addIncoming(nullNext, bodyBlock);
+        }
+
+        if (srcData) {
+            lhsEnd = CreatePHI(srcData->getType(), 2);
+            lhsEnd->addIncoming(srcData, previousBlock);
+            lhsEnd->addIncoming(lhsNext, bodyBlock);
         }
     }
 
+    return std::make_tuple(end, lhsEnd, nullEnd);
+}
+
+void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
+    auto start = getParam(startIdx);
+    auto end = getParam(endIdx);
+
     // Load the start pointer of the column
-    llvm::Value* srcData = nullptr;
+    llvm::Value* srcStartData = nullptr;
+    llvm::Value* srcEndData = nullptr;
     if (fieldAst.needsValue) {
         auto& record = mContext.record();
         auto destIdx = fieldAst.id - record.fixedSizeFieldCount();
 
-        srcData = mVariableData;
+        auto startOffset = start;
         if (destIdx != 0) {
-            srcData = CreateInBoundsGEP(srcData, createConstMul(mCount, destIdx));
+            startOffset = CreateAdd(startOffset, createConstMul(mCount, destIdx));
+        }
+        srcStartData = CreateInBoundsGEP(mVariableData, startOffset);
+
+        if (fieldAst.id + 1u == record.fieldCount()) {
+            srcEndData = CreateGEP(mVariableData, CreateSub(start, getInt64(1)));
+        } else {
+            srcEndData = CreateInBoundsGEP(srcStartData, mCount);
         }
     }
 
-    createLoop(getParam(startIdx), getParam(endIdx), 1, "col." + llvm::Twine(fieldAst.id),
-            [this, srcData, nullData, &fieldAst] (llvm::Value* idx) {
-        // Load the null status of the value if it can be null
-        llvm::Value* nullValue = nullData;
-        if (nullValue) {
-            nullValue = CreateInBoundsGEP(nullValue, idx);
-            nullValue = CreateAlignedLoad(nullValue, 1u);
+    // Load the start pointer to the null bytevector
+    llvm::Value* nullData = nullptr;
+    if (!fieldAst.isNotNull) {
+        auto startOffset = start;
+        if (fieldAst.nullIdx != 0) {
+            startOffset = CreateAdd(startOffset, createConstMul(mCount, fieldAst.nullIdx));
         }
+        nullData = CreateInBoundsGEP(mHeaderData, startOffset);
+    }
 
-        // Load the field value from the record
-        llvm::Value* lhsStart = nullptr;
-        llvm::Value* length = nullptr;
-        llvm::Value* prefix = nullptr;
-        if (srcData) {
-            auto heapEntry = CreateInBoundsGEP(srcData, idx);
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock("col." + llvm::Twine(fieldAst.id) + ".body");
+    auto endBlock = llvm::BasicBlock::Create(Context, "col." + llvm::Twine(fieldAst.id) + ".end");
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, start, end), bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
 
-            auto heapStartOffset = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(0) });
-            heapStartOffset = CreateAlignedLoad(heapStartOffset, 4u);
+    // -> auto idx = start;
+    auto idx = CreatePHI(getInt64Ty(), 2);
+    idx->addIncoming(start, previousBlock);
 
-            lhsStart = CreateZExt(heapStartOffset, getInt64Ty());
-            lhsStart = CreateInBoundsGEP(getParam(page), lhsStart);
+    // -> auto heapEntryStartPhi = srcStartData;
+    // -> auto heapEntryEndPhi = srcEndData;
+    llvm::PHINode* heapEntryStartPhi = nullptr;
+    llvm::PHINode* heapEntryEndPhi = nullptr;
+    if (srcStartData) {
+        heapEntryStartPhi = CreatePHI(srcStartData->getType(), 2);
+        heapEntryStartPhi->addIncoming(srcStartData, previousBlock);
 
-            prefix = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(1) });
-            prefix = CreateAlignedLoad(prefix, 4u);
+        heapEntryEndPhi = CreatePHI(srcEndData->getType(), 2);
+        heapEntryEndPhi->addIncoming(srcEndData, previousBlock);
+    }
 
-            auto& record = mContext.record();
-            if (fieldAst.id + 1u == record.fieldCount()) {
-                heapEntry = CreateGEP(mVariableData, CreateSub(idx, getInt64(1)));
+    // -> auto nullPhi = nullData;
+    llvm::PHINode* nullPhi = nullptr;
+    if (nullData) {
+        nullPhi = CreatePHI(nullData->getType(), 2);
+        nullPhi->addIncoming(nullData, previousBlock);
+    }
+
+    llvm::Value* lhsStart = nullptr;
+    llvm::Value* length = nullptr;
+    llvm::Value* prefix = nullptr;
+    if (srcStartData) {
+        // -> auto heapStartOffset = heapEntryStartPhi->offset;
+        auto heapStartOffset = CreateInBoundsGEP(heapEntryStartPhi, { getInt64(0), getInt32(0) });
+        heapStartOffset = CreateAlignedLoad(heapStartOffset, 4u);
+
+        // -> auto lhsStart = page + static_cast<uint64_t>(heapStartOffset);
+        lhsStart = CreateZExt(heapStartOffset, getInt64Ty());
+        lhsStart = CreateInBoundsGEP(getParam(page), lhsStart);
+
+        // -> auto prefix = heapEntryStartPhi->prefix;;
+        prefix = CreateInBoundsGEP(heapEntryStartPhi, { getInt64(0), getInt32(1) });
+        prefix = CreateAlignedLoad(prefix, 4u);
+
+        // -> auto heapEndOffset = heapEntryEndPhi->offset;
+        auto heapEndOffset = CreateInBoundsGEP(heapEntryEndPhi, { getInt64(0), getInt32(0) });
+        heapEndOffset = CreateAlignedLoad(heapEndOffset, 4u);
+
+        // -> auto length = heapEndOffset - heapStartOffset;
+        length = CreateSub(heapEndOffset, heapStartOffset);
+    }
+
+    // -> auto nullValue = *nullPhi;
+    llvm::Value* nullValue = nullptr;
+    if (nullData) {
+        nullValue = CreateAlignedLoad(nullPhi, 1u);
+    }
+
+    // Evaluate all predicates attached to this field
+    for (decltype(fieldAst.predicates.size()) i = 0; i < fieldAst.predicates.size(); ++i) {
+        auto& predicateAst = fieldAst.predicates[i];
+        auto& rhsAst = predicateAst.variable;
+
+        // Execute the comparison
+        llvm::Value* res = nullptr;
+        switch (predicateAst.type) {
+
+        case PredicateType::IS_NULL: {
+            res = nullValue;
+        } break;
+
+        case PredicateType::IS_NOT_NULL: {
+            res = CreateXor(nullValue, getInt8(1));
+        } break;
+
+        case PredicateType::EQUAL:
+        case PredicateType::NOT_EQUAL: {
+            LOG_ASSERT(srcStartData != nullptr, "lhs must not be null for this kind of comparison");
+
+            auto negateResult = (predicateAst.type == PredicateType::NOT_EQUAL);
+            if (rhsAst.size == 0) {
+                res = CreateICmp((negateResult ? llvm::CmpInst::ICMP_NE : llvm::CmpInst::ICMP_EQ), length, getInt32(0));
             } else {
-                heapEntry = CreateInBoundsGEP(heapEntry, mCount);
-            }
-            auto heapEndOffset = CreateInBoundsGEP(heapEntry, { getInt64(0), getInt32(0) });
-            heapEndOffset = CreateAlignedLoad(heapEndOffset, 4u);
+                auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_EQ, length, getInt32(rhsAst.size));
+                auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, prefix, getInt32(rhsAst.prefix));
+                res = CreateAnd(lengthComp, prefixComp);
 
-            length = CreateSub(heapEndOffset, heapStartOffset);
-        }
+                if (rhsAst.size > 4) {
+                    auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
+                    auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                            { getInt64(0), getInt32(4) });
+                    auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                            { getInt64(1), getInt32(0) });
 
-        // Evaluate all predicates attached to this field
-        for (decltype(fieldAst.predicates.size()) i = 0; i < fieldAst.predicates.size(); ++i) {
-            LOG_ASSERT(srcData != nullptr, "lhs must not be null for this kind of comparison");
-            auto& predicateAst = fieldAst.predicates[i];
-            auto& rhsAst = predicateAst.variable;
-
-            // Execute the comparison
-            llvm::Value* res = nullptr;
-            switch (predicateAst.type) {
-
-            case PredicateType::IS_NULL: {
-                res = nullValue;
-            } break;
-
-            case PredicateType::IS_NOT_NULL: {
-                res = CreateXor(nullValue, getInt8(1));
-            } break;
-
-            case PredicateType::EQUAL:
-            case PredicateType::NOT_EQUAL: {
-                auto negateResult = (predicateAst.type == PredicateType::NOT_EQUAL);
-                if (rhsAst.size == 0) {
-                    res = CreateICmp((negateResult ? llvm::CmpInst::ICMP_NE : llvm::CmpInst::ICMP_EQ), length,
-                            getInt32(0));
-                } else {
-                    auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_EQ, length, getInt32(rhsAst.size));
-                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, prefix, getInt32(rhsAst.prefix));
-                    res = CreateAnd(lengthComp, prefixComp);
-
-                    if (rhsAst.size > 4) {
-                        auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
-                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
-                                { getInt64(0), getInt32(4) });
-                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
-                                { getInt64(1), getInt32(0) });
-
-                        res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
-                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
-                    }
-                    if (negateResult) {
-                        res = CreateNot(res);
-                    }
-                }
-                res = CreateZExtOrBitCast(res, getInt8Ty());
-
-                // The predicate evaluates to false if the value is null
-                if (nullValue) {
-                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
-                }
-            } break;
-
-            case PredicateType::PREFIX_LIKE:
-            case PredicateType::PREFIX_NOT_LIKE: {
-                auto negateResult = (predicateAst.type == PredicateType::PREFIX_NOT_LIKE);
-                if (rhsAst.size == 0) {
-                    res = (negateResult ? getFalse() : getTrue());
-                } else {
-                    auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_UGE, length, getInt32(rhsAst.size));
-                    auto maskedPrefix = prefix;
-                    if (rhsAst.size < 4) {
-                        uint32_t mask = 0;
-                        memset(&mask, 0xFFu, rhsAst.size);
-                        maskedPrefix = CreateAnd(maskedPrefix, getInt32(mask));
-                    }
-                    auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, maskedPrefix, getInt32(rhsAst.prefix));
-                    res = CreateAnd(lengthComp, prefixComp);
-
-                    if (rhsAst.size > 4) {
-                        auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
-                        auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
-                                { getInt64(0), getInt32(4) });
-                        auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
-                                { getInt64(1), getInt32(0) });
-
-                        res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
-                                "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
-                    }
-                    if (negateResult) {
-                        res = CreateNot(res);
-                    }
-                }
-                res = CreateZExtOrBitCast(res, getInt8Ty());
-
-                // The predicate evaluates to false if the value is null
-                if (nullValue) {
-                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
-                }
-            } break;
-
-            case PredicateType::POSTFIX_LIKE:
-            case PredicateType::POSTFIX_NOT_LIKE: {
-                auto negateResult = (predicateAst.type == PredicateType::POSTFIX_NOT_LIKE);
-                if (rhsAst.size == 0) {
-                    res = (negateResult ? getFalse() : getTrue());
-                } else {
-                    res = createPostfixMemCmp(lhsStart, length, rhsAst.value, rhsAst.size,
+                    res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
                             "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
-                    if (negateResult) {
-                        res = CreateNot(res);
-                    }
                 }
-                res = CreateZExtOrBitCast(res, getInt8Ty());
-
-                // The predicate evaluates to false if the value is null
-                if (nullValue) {
-                    res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+                if (negateResult) {
+                    res = CreateNot(res);
                 }
-            } break;
-
-            default: {
-                LOG_ASSERT(false, "Unknown predicate");
-                res = nullptr;
-            } break;
             }
+            res = CreateZExtOrBitCast(res, getInt8Ty());
 
-            // Store resulting conjunct value
-            auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
-            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
-            conjunctPtr = CreateBitCast(conjunctPtr, getInt8PtrTy());
-            if (mScalarConjunctsGenerated[predicateAst.conjunct]) {
-                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            // The predicate evaluates to false if the value is null
+            if (nullData) {
+                res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+            }
+        } break;
+
+        case PredicateType::PREFIX_LIKE:
+        case PredicateType::PREFIX_NOT_LIKE: {
+            LOG_ASSERT(srcStartData != nullptr, "lhs must not be null for this kind of comparison");
+
+            auto negateResult = (predicateAst.type == PredicateType::PREFIX_NOT_LIKE);
+            if (rhsAst.size == 0) {
+                res = (negateResult ? getFalse() : getTrue());
             } else {
-                mScalarConjunctsGenerated[predicateAst.conjunct] = true;
+                auto lengthComp = CreateICmp(llvm::CmpInst::ICMP_UGE, length, getInt32(rhsAst.size));
+                auto maskedPrefix = prefix;
+                if (rhsAst.size < 4) {
+                    uint32_t mask = 0;
+                    memset(&mask, 0xFFu, rhsAst.size);
+                    maskedPrefix = CreateAnd(maskedPrefix, getInt32(mask));
+                }
+                auto prefixComp = CreateICmp(llvm::CmpInst::ICMP_EQ, maskedPrefix, getInt32(rhsAst.prefix));
+                res = CreateAnd(lengthComp, prefixComp);
+
+                if (rhsAst.size > 4) {
+                    auto dataStart = CreateInBoundsGEP(lhsStart, getInt64(4));
+                    auto rhsStart = CreateInBoundsGEP(rhsAst.value->getValueType(), rhsAst.value,
+                            { getInt64(0), getInt32(4) });
+                    auto rhsEnd = CreateGEP(rhsAst.value->getValueType(), rhsAst.value,
+                            { getInt64(1), getInt32(0) });
+
+                    res = createMemCmp(res, dataStart, rhsStart, rhsEnd,
+                            "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                }
+                if (negateResult) {
+                    res = CreateNot(res);
+                }
             }
-            CreateAlignedStore(res, conjunctPtr, 1u);
+            res = CreateZExtOrBitCast(res, getInt8Ty());
+
+            // The predicate evaluates to false if the value is null
+            if (nullData) {
+                res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+            }
+        } break;
+
+        case PredicateType::POSTFIX_LIKE:
+        case PredicateType::POSTFIX_NOT_LIKE: {
+            LOG_ASSERT(srcStartData != nullptr, "lhs must not be null for this kind of comparison");
+
+            auto negateResult = (predicateAst.type == PredicateType::POSTFIX_NOT_LIKE);
+            if (rhsAst.size == 0) {
+                res = (negateResult ? getFalse() : getTrue());
+            } else {
+                res = createPostfixMemCmp(lhsStart, length, rhsAst.value, rhsAst.size,
+                        "col." + llvm::Twine(fieldAst.id) + "." + llvm::Twine(i));
+                if (negateResult) {
+                    res = CreateNot(res);
+                }
+            }
+            res = CreateZExtOrBitCast(res, getInt8Ty());
+
+            // The predicate evaluates to false if the value is null
+            if (nullData) {
+                res = CreateAnd(res, CreateXor(nullValue, getInt8(1)));
+            }
+        } break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown predicate");
+            res = nullptr;
+        } break;
         }
-    });
+
+        // Store resulting conjunct value
+        auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
+        conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+        conjunctPtr = CreateBitCast(conjunctPtr, getInt8PtrTy());
+        if (mScalarConjunctsGenerated[predicateAst.conjunct]) {
+            res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+        } else {
+            mScalarConjunctsGenerated[predicateAst.conjunct] = true;
+        }
+        CreateAlignedStore(res, conjunctPtr, 1u);
+    }
+
+    // -> idx += 1;
+    auto idxNext = CreateAdd(idx, getInt64(1));
+    idx->addIncoming(idxNext, GetInsertBlock());
+
+    if (srcStartData) {
+        // -> heapEntryStartPhi += 1;
+        auto heapEntryStartNext = CreateInBoundsGEP(heapEntryStartPhi, getInt64(1));
+        heapEntryStartPhi->addIncoming(heapEntryStartNext, GetInsertBlock());
+
+        // -> heapEntryEndPhi += 1;
+        auto heapEntryEndNext = CreateInBoundsGEP(heapEntryEndPhi, getInt64(1));
+        heapEntryEndPhi->addIncoming(heapEntryEndNext, GetInsertBlock());
+    }
+
+    // -> nullPhi += 1;
+    if (nullData) {
+        auto nullNext = CreateInBoundsGEP(nullPhi, getInt64(1));
+        nullPhi->addIncoming(nullNext, GetInsertBlock());
+    }
+
+    // -> idx != end
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, idxNext, end), bodyBlock, endBlock);
+
+    mFunction->getBasicBlockList().push_back(endBlock);
+    SetInsertPoint(endBlock);
 }
 
 void LLVMColumnMapScanBuilder::buildQuery(bool needsKey, const std::vector<QueryAST>& queries) {
-    // Vectorized query evaluation
+    auto start = getParam(startIdx);
+    auto validFromStart = CreateInBoundsGEP(getParam(validFromData), start);
+    auto validToStart = CreateInBoundsGEP(getParam(validToData), start);
+    llvm::Value* keyStart = nullptr;
+    if (needsKey) {
+        keyStart = CreateInBoundsGEP(getParam(keyData), start);
+    }
     auto vectorSize = mRegisterWidth / (sizeof(uint64_t) * 8);
-    auto vectorEndIdx = buildQueryEvaluation(getParam(startIdx), vectorSize, needsKey, queries, llvm::Twine("vector"));
+
+    // Vectorized query evaluation
+    std::tie(start, validFromStart, validToStart, keyStart) = buildQueryEvaluation(start, validFromStart, validToStart,
+            keyStart, vectorSize, queries, llvm::Twine("vector"));
 
     // Scalar query evaluation
-    buildQueryEvaluation(vectorEndIdx, 1, needsKey, queries, llvm::Twine("scalar"));
+    buildQueryEvaluation(start, validFromStart, validToStart, keyStart, 1, queries, llvm::Twine("scalar"));
 }
 
-llvm::Value* LLVMColumnMapScanBuilder::buildQueryEvaluation(llvm::Value* startIdx, uint64_t vectorSize, bool needsKey,
-        const std::vector<QueryAST>& queries, const llvm::Twine& name) {
-    return createLoop(startIdx, getParam(endIdx), vectorSize, "check." + name,
-            [this, vectorSize, needsKey, &queries] (llvm::Value* idx) {
-        auto validFromTy = getInt64VectorTy(vectorSize);
-        auto validToTy = getInt64VectorTy(vectorSize);
-        auto keyTy = getInt64VectorTy(vectorSize);
-        auto conjunctTy = getInt8VectorTy(vectorSize);
+std::tuple<llvm::Value*, llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMapScanBuilder::buildQueryEvaluation(
+        llvm::Value* start, llvm::Value* validFromStart, llvm::Value* validToStart, llvm::Value* keyStart,
+        uint64_t vectorSize, const std::vector<QueryAST>& queries, const llvm::Twine& name) {
+    auto end = getParam(endIdx);
+    if (vectorSize != 1) {
+        auto count = CreateSub(end, start);
+        count = CreateAnd(count, getInt64(-vectorSize));
+        end = CreateAdd(start, count);
+    }
 
-        // Load the valid-from value of the record
-        auto validFrom = CreateInBoundsGEP(getParam(validFromData), idx);
-        validFrom = CreateBitCast(validFrom, validFromTy->getPointerTo());
-        validFrom = CreateAlignedLoad(validFrom, 8u);
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock("check." + name + ".body");
+    auto endBlock = llvm::BasicBlock::Create(Context, "check." + name + ".end");
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, start, end), bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
 
-        // Load the valid-to value of the record
-        auto validTo = CreateInBoundsGEP(getParam(validToData), idx);
-        validTo = CreateBitCast(validTo, validToTy->getPointerTo());
-        validTo = CreateAlignedLoad(validTo, 8u);
+    // -> auto idx = start;
+    auto idx = CreatePHI(getInt64Ty(), 2);
+    idx->addIncoming(start, previousBlock);
 
-        // Load the key value of the record
-        llvm::Value* key = nullptr;
-        if (needsKey) {
-            key = CreateInBoundsGEP(getParam(keyData), idx);
-            key = CreateBitCast(key, keyTy->getPointerTo());
-            key = CreateAlignedLoad(key, 8u);
-        }
+    // -> validFromPhi = validFromStart;
+    auto validFromPhi = CreatePHI(validFromStart->getType(), 2);
+    validFromPhi->addIncoming(validFromStart, previousBlock);
 
-        // Evaluate all queries
-        for (decltype(queries.size()) i = 0; i < queries.size(); ++i) {
-            auto& query = queries[i];
+    // -> validToPhi = validToStart;
+    auto validToPhi = CreatePHI(validToStart->getType(), 2);
+    validToPhi->addIncoming(validToStart, previousBlock);
 
-            // Evaluate validFrom <= version && validTo > baseVersion
-            auto validFromRes = CreateICmp(llvm::CmpInst::ICMP_ULE, validFrom,
-                    getInt64Vector(vectorSize, query.version));
-            auto validToRes = CreateICmp(llvm::CmpInst::ICMP_UGT, validTo,
-                    getInt64Vector(vectorSize, query.baseVersion));
-            auto res = CreateAnd(validFromRes, validToRes);
+    // -> keyPhi = keyStart;
+    llvm::PHINode* keyPhi = nullptr;
+    if (keyStart) {
+        keyPhi = CreatePHI(keyStart->getType(), 2);
+        keyPhi->addIncoming(keyStart, previousBlock);
+    }
 
-            // Evaluate (key >> partitionShift) % partitionModulo == partitionNumber
-            if (query.partitionModulo != 0u) {
-                LOG_ASSERT(needsKey, "No partitioning in AST");
-                auto keyValue = key;
-                if (query.partitionShift != 0) {
-                    keyValue = CreateLShr(keyValue, getInt64Vector(vectorSize, query.partitionShift));
-                }
-                auto keyRes = CreateICmp(llvm::CmpInst::ICMP_EQ,
-                        createConstMod(keyValue, query.partitionModulo, vectorSize),
-                        getInt64Vector(vectorSize, query.partitionNumber));
-                res = CreateAnd(res, keyRes);
+    auto validFromTy = getInt64VectorTy(vectorSize);
+    auto validToTy = getInt64VectorTy(vectorSize);
+    auto keyTy = getInt64VectorTy(vectorSize);
+    auto conjunctTy = getInt8VectorTy(vectorSize);
+
+    // Load the valid-from value of the record
+    auto validFrom = CreateBitCast(validFromPhi, validFromTy->getPointerTo());
+    validFrom = CreateAlignedLoad(validFrom, 8u);
+
+    // Load the valid-to value of the record
+    auto validTo = CreateBitCast(validToPhi, validToTy->getPointerTo());
+    validTo = CreateAlignedLoad(validTo, 8u);
+
+    // Load the key value of the record
+    llvm::Value* key = nullptr;
+    if (keyStart) {
+        key = CreateBitCast(keyPhi, keyTy->getPointerTo());
+        key = CreateAlignedLoad(key, 8u);
+    }
+
+    // Evaluate all queries
+    for (decltype(queries.size()) i = 0; i < queries.size(); ++i) {
+        auto& query = queries[i];
+
+        // Evaluate validFrom <= version && validTo > baseVersion
+        auto validFromRes = CreateICmp(llvm::CmpInst::ICMP_ULE, validFrom, getInt64Vector(vectorSize, query.version));
+        auto validToRes = CreateICmp(llvm::CmpInst::ICMP_UGT, validTo, getInt64Vector(vectorSize, query.baseVersion));
+        auto res = CreateAnd(validFromRes, validToRes);
+
+        // Evaluate (key >> partitionShift) % partitionModulo == partitionNumber
+        if (query.partitionModulo != 0u) {
+            LOG_ASSERT(keyStart != nullptr, "No partitioning in AST");
+            auto keyValue = key;
+            if (query.partitionShift != 0) {
+                keyValue = CreateLShr(keyValue, getInt64Vector(vectorSize, query.partitionShift));
             }
-            res = CreateZExtOrBitCast(res, conjunctTy);
-
-            // Store temporary result value
-            auto resultPtr = idx;
-            if (i > 0) {
-                resultPtr = CreateAdd(createConstMul(mCount, i), resultPtr);
-            }
-            resultPtr = CreateInBoundsGEP(getParam(resultData), resultPtr);
-            resultPtr = CreateBitCast(resultPtr, conjunctTy->getPointerTo());
-            CreateAlignedStore(res, resultPtr, 1u);
+            auto keyRes = CreateICmp(llvm::CmpInst::ICMP_EQ,
+                    createConstMod(keyValue, query.partitionModulo, vectorSize),
+                    getInt64Vector(vectorSize, query.partitionNumber));
+            res = CreateAnd(res, keyRes);
         }
-    });
+        res = CreateZExtOrBitCast(res, conjunctTy);
+
+        // Store temporary result value
+        llvm::Value* resultPtr = idx;
+        if (i > 0) {
+            resultPtr = CreateAdd(createConstMul(mCount, i), resultPtr);
+        }
+        resultPtr = CreateInBoundsGEP(getParam(resultData), resultPtr);
+        resultPtr = CreateBitCast(resultPtr, conjunctTy->getPointerTo());
+        CreateAlignedStore(res, resultPtr, 1u);
+    }
+
+    // -> idx += vectorSize;
+    auto idxNext = CreateAdd(idx, getInt64(vectorSize));
+    idx->addIncoming(idxNext, GetInsertBlock());
+
+    // -> validFromPhi += vectorSize;
+    auto validFromNext = CreateInBoundsGEP(validFromPhi, getInt64(vectorSize));
+    validFromPhi->addIncoming(validFromNext, GetInsertBlock());
+
+    // -> validToPhi += vectorSize;
+    auto validToNext = CreateInBoundsGEP(validToPhi, getInt64(vectorSize));
+    validToPhi->addIncoming(validToNext, GetInsertBlock());
+
+    // -> keyPhi += vectorSize;
+    llvm::Value* keyNext = nullptr;
+    if (keyStart) {
+        keyNext = CreateInBoundsGEP(keyPhi, getInt64(vectorSize));
+        keyPhi->addIncoming(keyNext, GetInsertBlock());
+    }
+
+    // -> idx != end
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, idxNext, end), bodyBlock, endBlock);
+
+    mFunction->getBasicBlockList().push_back(endBlock);
+    SetInsertPoint(endBlock);
+
+    llvm::PHINode* validFromEnd = nullptr;
+    llvm::PHINode* validToEnd = nullptr;
+    llvm::PHINode* keyEnd = nullptr;
+
+    if (vectorSize != 1) {
+        validFromEnd = CreatePHI(validFromStart->getType(), 2);
+        validFromEnd->addIncoming(validFromStart, previousBlock);
+        validFromEnd->addIncoming(validFromNext, bodyBlock);
+
+        validToEnd = CreatePHI(validToStart->getType(), 2);
+        validToEnd->addIncoming(validToStart, previousBlock);
+        validToEnd->addIncoming(validToNext, bodyBlock);
+
+        if (keyStart) {
+            keyEnd = CreatePHI(keyStart->getType(), 2);
+            keyEnd->addIncoming(keyStart, previousBlock);
+            keyEnd->addIncoming(keyNext, bodyBlock);
+        }
+    }
+
+    return std::make_tuple(end, validFromEnd, validToEnd, keyEnd);
 }
 
 void LLVMColumnMapScanBuilder::buildResult(const std::vector<QueryAST>& queries) {
@@ -497,54 +714,97 @@ void LLVMColumnMapScanBuilder::buildResult(const std::vector<QueryAST>& queries)
                 auto src = query.conjunctOffset + j;
                 auto dest = src - 1;
 
-                // Vectorized conjunct merge
-                auto vectorEndIdx = buildConjunctMerge(getParam(startIdx), vectorSize, src, dest,
-                        llvm::Twine("vector"));
-
-                // Scalar conjunct merge
-                buildConjunctMerge(vectorEndIdx, 1, src, dest, llvm::Twine("scalar"));
+                buildConjunctMerge(vectorSize, src, dest);
             }
             mergedOffset += query.numConjunct;
         }
 
         // Merge last conjunct of the query into the final result conjunct
-        // Vectorized conjunct merge
-        auto vectorEndIdx = buildConjunctMerge(getParam(startIdx), vectorSize, query.conjunctOffset, i,
-                llvm::Twine("vector"));
-
-        // Scalar conjunct merge
-        buildConjunctMerge(vectorEndIdx, 1, query.conjunctOffset, i, llvm::Twine("scalar"));
+        buildConjunctMerge(vectorSize, query.conjunctOffset, i);
     }
 }
 
-llvm::Value* LLVMColumnMapScanBuilder::buildConjunctMerge(llvm::Value* startIdx, uint64_t vectorSize, uint32_t src,
-        uint32_t dest, const llvm::Twine& name) {
-    return createLoop(startIdx, getParam(endIdx), vectorSize, "conj." + llvm::Twine(dest) + "." + name,
-            [this, src, dest, vectorSize] (llvm::Value* idx) {
-        auto conjunctTy = getInt8VectorTy(vectorSize);
+void LLVMColumnMapScanBuilder::buildConjunctMerge(uint64_t vectorSize, uint32_t src, uint32_t dest) {
+    auto start = getParam(startIdx);
 
-        // Load destination conjunct
-        auto lhsPtr = idx;
-        if (dest > 0) {
-            lhsPtr = CreateAdd(createConstMul(mCount, dest), lhsPtr);
-        }
-        lhsPtr = CreateInBoundsGEP(getParam(resultData), lhsPtr);
-        lhsPtr = CreateBitCast(lhsPtr, conjunctTy->getPointerTo());
-        auto lhs = CreateAlignedLoad(lhsPtr, 1u);
+    auto lhsBase = getParam(resultData);
+    if (dest > 0) {
+        lhsBase = CreateInBoundsGEP(lhsBase, createConstMul(mCount, dest));
+    }
+    auto lhsStart = CreateInBoundsGEP(lhsBase, start);
 
-        // Load source conjunct
-        auto rhsPtr = idx;
-        if (src > 0) {
-            rhsPtr = CreateAdd(createConstMul(mCount, src), rhsPtr);
-        }
-        rhsPtr = CreateInBoundsGEP(getParam(resultData), rhsPtr);
-        rhsPtr = CreateBitCast(rhsPtr, conjunctTy->getPointerTo());
-        auto rhs = CreateAlignedLoad(rhsPtr, 1u);
+    auto rhsStart = getParam(resultData);
+    if (src > 0) {
+        rhsStart = CreateInBoundsGEP(rhsStart, createConstMul(mCount, src));
+    }
+    rhsStart = CreateInBoundsGEP(rhsStart, start);
 
-        // Store merged conjuncts into destination conjunct
-        auto res = CreateAnd(lhs, rhs);
-        CreateAlignedStore(res, lhsPtr, 1u);
-    });
+    if (vectorSize != 1) {
+        auto count = CreateSub(getParam(endIdx), start);
+        count = CreateAnd(count, getInt64(-vectorSize));
+
+        auto lhsEnd = CreateAdd(start, count);
+        lhsEnd = CreateInBoundsGEP(lhsBase, lhsEnd);
+
+        rhsStart = buildConjunctMerge(lhsStart, lhsEnd, rhsStart, vectorSize, "conj." + llvm::Twine(dest) + ".vector");
+        lhsStart = lhsEnd;
+    }
+    auto lhsEnd = CreateInBoundsGEP(lhsBase, getParam(endIdx));
+    buildConjunctMerge(lhsStart, lhsEnd, rhsStart, 1, "conj." + llvm::Twine(dest) + ".scalar");
+}
+
+llvm::Value* LLVMColumnMapScanBuilder::buildConjunctMerge(llvm::Value* lhsStart, llvm::Value* lhsEnd,
+        llvm::Value* rhsStart, uint64_t vectorSize, const llvm::Twine& name) {
+    auto previousBlock = GetInsertBlock();
+    auto bodyBlock = createBasicBlock(name + ".body");
+    auto endBlock = llvm::BasicBlock::Create(Context, name + ".end");
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, lhsStart, lhsEnd), bodyBlock, endBlock);
+    SetInsertPoint(bodyBlock);
+
+    // -> auto lhsPhi = lhsStart;
+    auto lhsPhi = CreatePHI(lhsStart->getType(), 2);
+    lhsPhi->addIncoming(lhsStart, previousBlock);
+
+    // -> auto rhsPhi = rhsStart;
+    auto rhsPhi = CreatePHI(rhsStart->getType(), 2);
+    rhsPhi->addIncoming(rhsStart, previousBlock);
+
+    auto conjunctTy = getInt8VectorTy(vectorSize);
+
+    // Load destination conjunct
+    auto lhsPtr = CreateBitCast(lhsPhi, conjunctTy->getPointerTo());
+    auto lhs = CreateAlignedLoad(lhsPtr, 1u);
+
+    // Load source conjunct
+    auto rhsPtr = CreateBitCast(rhsPhi, conjunctTy->getPointerTo());
+    auto rhs = CreateAlignedLoad(rhsPtr, 1u);
+
+    // Store merged conjuncts into destination conjunct
+    auto res = CreateAnd(lhs, rhs);
+    CreateAlignedStore(res, lhsPtr, 1u);
+
+    // -> lhsPhi += vectorSize;
+    auto lhsNext = CreateInBoundsGEP(lhsPhi, getInt64(vectorSize));
+    lhsPhi->addIncoming(lhsNext, GetInsertBlock());
+
+    // -> rhsPhi += vectorSize;
+    auto rhsNext = CreateInBoundsGEP(rhsPhi, getInt64(vectorSize));
+    rhsPhi->addIncoming(rhsNext, GetInsertBlock());
+
+    // -> lhsPhi != lhsEnd
+    CreateCondBr(CreateICmp(llvm::CmpInst::ICMP_NE, lhsNext, lhsEnd), bodyBlock, endBlock);
+
+    mFunction->getBasicBlockList().push_back(endBlock);
+    SetInsertPoint(endBlock);
+
+    llvm::PHINode* rhsEnd = nullptr;
+    if (vectorSize != 1) {
+        rhsEnd = CreatePHI(rhsStart->getType(), 2);
+        rhsEnd->addIncoming(rhsStart, previousBlock);
+        rhsEnd->addIncoming(rhsNext, bodyBlock);
+    }
+
+    return rhsEnd;
 }
 
 } // namespace deltamain
