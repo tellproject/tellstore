@@ -26,7 +26,6 @@
 #include "ColumnMapContext.hpp"
 #include "ColumnMapPage.hpp"
 #include "ColumnMapRecord.hpp"
-#include "LLVMColumnMapScan.hpp"
 #include "LLVMColumnMapUtils.hpp"
 
 #include <deltamain/Table.hpp>
@@ -47,9 +46,21 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table),
           mColumnScanFun(nullptr) {
-    auto& context = table->context();
-    auto targetMachine = mCompiler.getTargetMachine();
-    LLVMColumnMapScanBuilder::createFunction(context, mCompilerModule, targetMachine, mScanAst);
+}
+
+void ColumnMapScan::prepareQuery() {
+    LOG_ASSERT(!mColumnScanFun, "Scan already finalized");
+    LLVMColumnMapScanBuilder::createFunction(mTable->context(), mQueryModule.getModule(),
+            mQueryModule.getTargetMachine(), mScanAst);
+
+    LLVMRowScanBase::prepareQuery();
+
+    mColumnScanFun = mQueryModule.findFunction<ColumnScanFun>(LLVMColumnMapScanBuilder::FUNCTION_NAME);
+}
+
+void ColumnMapScan::prepareMaterialization() {
+    LOG_ASSERT(mColumnMaterializeFuns.empty(), "Scan already finalized");
+    auto& context = mTable->context();
 
     std::unordered_map<QueryDataHolder, std::string> materializeCache;
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
@@ -70,11 +81,13 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
 
         switch (q->queryType()) {
         case ScanQueryType::PROJECTION: {
-            LLVMColumnMapProjectionBuilder::createFunction(context, mCompilerModule, targetMachine, name, q);
+            LLVMColumnMapProjectionBuilder::createFunction(context, mMaterializationModule.getModule(),
+                    mMaterializationModule.getTargetMachine(), name, q);
         } break;
 
         case ScanQueryType::AGGREGATION: {
-            LLVMColumnMapAggregationBuilder::createFunction(context, mCompilerModule, targetMachine, name, q);
+            LLVMColumnMapAggregationBuilder::createFunction(context, mMaterializationModule.getModule(),
+                    mMaterializationModule.getTargetMachine(), name, q);
         } break;
 
         default: {
@@ -83,9 +96,7 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
         }
     }
 
-    finalizeRowScan();
-
-    mColumnScanFun = mCompiler.findFunction<ColumnScanFun>(LLVMColumnMapScanBuilder::FUNCTION_NAME);
+    LLVMRowScanBase::prepareMaterialization();
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
         auto q = mQueries[i];
@@ -97,7 +108,7 @@ ColumnMapScan::ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQue
 
         QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
         auto& name = materializeCache.at(holder);
-        auto fun = mCompiler.findFunction<void*>(name);
+        auto fun = mMaterializationModule.findFunction<void*>(name);
         mColumnMaterializeFuns.emplace_back(fun);
     }
 }

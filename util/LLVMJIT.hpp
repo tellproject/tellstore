@@ -65,14 +65,18 @@ class LLVMCompilerT {
 public:
     LLVMCompilerT();
 
-    ~LLVMCompilerT();
-
-    llvm::TargetMachine* targetMachine() {
-        return mTargetMachine.get();
-    }
+    std::unique_ptr<llvm::TargetMachine> createTargetMachine();
 
 private:
-    std::unique_ptr<llvm::TargetMachine> mTargetMachine;
+    std::string mProcessTriple;
+
+    std::string mHostCPUName;
+
+    std::string mFeatures;
+
+    llvm::TargetOptions mOptions;
+
+    const llvm::Target* mTarget;
 };
 
 using LLVMCompiler = crossbow::singleton<LLVMCompilerT>;
@@ -90,8 +94,10 @@ public:
 
     LLVMJIT();
 
+    ~LLVMJIT();
+
     llvm::TargetMachine* getTargetMachine() {
-        return mTargetMachine;
+        return mTargetMachine.get();
     }
 
     /**
@@ -129,7 +135,7 @@ private:
         return mangledName;
     }
 
-    llvm::TargetMachine* mTargetMachine;
+    std::unique_ptr<llvm::TargetMachine> mTargetMachine;
     llvm::DataLayout mDataLayout;
     ObjectLayer mObjectLayer;
     CompileLayer mCompileLayer;

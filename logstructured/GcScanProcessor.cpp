@@ -47,7 +47,6 @@ constexpr size_t gGcThreshold = 50;
 GcScan::GcScan(Table* table, std::vector<ScanQuery*> queries)
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
-    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<GcScanProcessor>> GcScan::startScan(size_t numThreads) {

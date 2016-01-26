@@ -56,12 +56,14 @@ public:
 
     RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*> queries);
 
+    using LLVMRowScanBase::prepareQuery;
+
+    using LLVMRowScanBase::prepareMaterialization;
+
     std::vector<std::unique_ptr<RowStoreScanProcessor>> startScan(size_t numThreads);
 
 private:
     Table<RowStoreContext>* mTable;
-
-    crossbow::allocator mAllocator;
 };
 
 class RowStoreScanProcessor : public LLVMRowScanProcessorBase {

@@ -39,7 +39,6 @@ namespace logstructured {
 HashScan::HashScan(Table* table, std::vector<ScanQuery*> queries)
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
-    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<HashScanProcessor>> HashScan::startScan(size_t numThreads) {

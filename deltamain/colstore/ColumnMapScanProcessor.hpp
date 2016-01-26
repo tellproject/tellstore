@@ -25,6 +25,7 @@
 
 #include "LLVMColumnMapAggregation.hpp"
 #include "LLVMColumnMapProjection.hpp"
+#include "LLVMColumnMapScan.hpp"
 
 #include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
@@ -56,15 +57,17 @@ class ColumnMapScan : public LLVMRowScanBase {
 public:
     using ScanProcessor = ColumnMapScanProcessor;
 
-    using ColumnScanFun = void (*) (const uint64_t* /* keyData */, const uint64_t* /* validFromData */,
-            const uint64_t* /* validToData */, const char* /* page */, uint64_t /* startIdx */, uint64_t /* endIdx */,
-            char* /* resultData */);
+    using ColumnScanFun = LLVMColumnMapScanBuilder::Signature;
 
     using ColumnProjectionFun = LLVMColumnMapProjectionBuilder::Signature;
 
     using ColumnAggregationFun = LLVMColumnMapAggregationBuilder::Signature;
 
     ColumnMapScan(Table<ColumnMapContext>* table, std::vector<ScanQuery*> queries);
+
+    void prepareQuery();
+
+    void prepareMaterialization();
 
     std::vector<std::unique_ptr<ColumnMapScanProcessor>> startScan(size_t numThreads);
 
@@ -74,8 +77,6 @@ private:
     ColumnScanFun mColumnScanFun;
 
     std::vector<void*> mColumnMaterializeFuns;
-
-    crossbow::allocator mAllocator;
 };
 
 class ColumnMapScanProcessor : public LLVMRowScanProcessorBase {

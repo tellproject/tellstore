@@ -36,7 +36,6 @@ namespace deltamain {
 RowStoreScan::RowStoreScan(Table<RowStoreContext>* table, std::vector<ScanQuery*> queries)
         : LLVMRowScanBase(table->record(), std::move(queries)),
           mTable(table) {
-    finalizeRowScan();
 }
 
 std::vector<std::unique_ptr<RowStoreScanProcessor>> RowStoreScan::startScan(size_t numThreads) {

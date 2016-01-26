@@ -66,106 +66,40 @@ uint32_t memcpyWrapper(const char* src, uint32_t length, char* dest) {
 
 } // anonymous namespace
 
-LLVMScanBase::LLVMScanBase()
-        :  mCompilerModule("ScanQuery", mCompilerContext) {
-    mCompilerModule.setDataLayout(mCompiler.getTargetMachine()->createDataLayout());
-    mCompilerModule.setTargetTriple(mCompiler.getTargetMachine()->getTargetTriple().getTriple());
+LLVMCodeModule::LLVMCodeModule(const std::string& name)
+        : mModule(name, mContext) {
+    mModule.setDataLayout(mCompiler.getTargetMachine()->createDataLayout());
+    mModule.setTargetTriple(mCompiler.getTargetMachine()->getTargetTriple().getTriple());
 }
 
-LLVMScanBase::~LLVMScanBase() {
-    mCompiler.removeModule(mCompilerHandle);
+LLVMCodeModule::~LLVMCodeModule() {
+    mCompiler.removeModule(mHandle);
 }
 
-void LLVMScanBase::finalizeScan() {
-    using namespace llvm;
-
-    for (auto& func : mCompilerModule) {
-        // Add host CPU features
-        func.addFnAttr(Attribute::NoUnwind);
-        func.addFnAttr("target-cpu", mCompiler.getTargetMachine()->getTargetCPU());
-        func.addFnAttr("target-features", mCompiler.getTargetMachine()->getTargetFeatureString());
-    }
-
+void LLVMCodeModule::compile() {
 #ifndef NDEBUG
-    LOG_INFO("Dumping LLVM scan code");
-    mCompilerModule.dump();
+    LOG_INFO("[Module = %1%] Dumping LLVM scan code", mModule.getModuleIdentifier());
+    mModule.dump();
 
-    LOG_INFO("Verifying LLVM scan code");
-    if (llvm::verifyModule(mCompilerModule, &llvm::dbgs())) {
-        LOG_FATAL("Verifying LLVM scan code failed");
+    LOG_INFO("[Module = %1%] Verifying LLVM scan code", mModule.getModuleIdentifier());
+    if (llvm::verifyModule(mModule, &llvm::dbgs())) {
+        LOG_FATAL("[Module = %1%] Verifying LLVM scan code failed", mModule.getModuleIdentifier());
         std::terminate();
     }
 #endif
 
     // Compile the module
-    mCompilerHandle = mCompiler.addModule(&mCompilerModule);
+    mHandle = mCompiler.addModule(&mModule);
 }
 
-LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries)
-        : mQueries(std::move(queries)),
-          mRowScanFun(nullptr) {
-    buildScanAST(record);
-
-    auto targetMachine = mCompiler.getTargetMachine();
-    LLVMRowScanBuilder::createFunction(mCompilerModule, targetMachine, mScanAst);
-
-    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
-        auto q = mQueries[i];
-        if (q->queryType() == ScanQueryType::FULL) {
-            continue;
-        }
-
-        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
-        if (mRowMaterializeCache.find(holder) != mRowMaterializeCache.end()) {
-            continue;
-        }
-
-        std::stringstream ss;
-        ss << ROW_MATERIALIZE_NAME << i;
-        auto name = ss.str();
-        mRowMaterializeCache.emplace(holder, name);
-
-        switch (q->queryType()) {
-        case ScanQueryType::PROJECTION: {
-            LLVMRowProjectionBuilder::createFunction(record, mCompilerModule, targetMachine, name, q);
-        } break;
-
-        case ScanQueryType::AGGREGATION: {
-            LLVMRowAggregationBuilder::createFunction(record, mCompilerModule, targetMachine, name, q);
-        } break;
-
-        default: {
-            LOG_ASSERT(false, "Unknown query type");
-        } break;
-        }
-    }
-}
-
-void LLVMRowScanBase::finalizeRowScan() {
-    LOG_ASSERT(!mRowScanFun, "Scan already finalized");
-    finalizeScan();
-    mRowScanFun = mCompiler.findFunction<RowScanFun>(LLVMRowScanBuilder::FUNCTION_NAME);
-
-    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
-        auto q = mQueries[i];
-
-        if (q->queryType() == ScanQueryType::FULL) {
-            mRowMaterializeFuns.emplace_back(&memcpyWrapper);
-            continue;
-        }
-
-        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
-        auto& name = mRowMaterializeCache.at(holder);
-        auto fun = mCompiler.findFunction<RowMaterializeFun>(name);
-        mRowMaterializeFuns.emplace_back(fun);
-    }
-    mRowMaterializeCache.clear();
-}
-
-void LLVMRowScanBase::buildScanAST(const Record& record) {
+LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries)
+        : mRecord(record),
+          mQueries(std::move(queries)),
+          mQueryModule("ScanQuery"),
+          mMaterializationModule("Materialization") {
     using namespace llvm;
 
-    LLVMBuilder builder(mCompilerContext);
+    LLVMBuilder builder(mQueryModule.getModule().getContext());
 
     mScanAst.numConjunct = mQueries.size();
 
@@ -208,7 +142,7 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
             // Add a new FieldAST if the field does not yet exist
             auto iter = mScanAst.fields.find(currentColumn);
             if (iter == mScanAst.fields.end()) {
-                auto& fieldMeta = record.getFieldMeta(currentColumn);
+                auto& fieldMeta = mRecord.getFieldMeta(currentColumn);
                 auto& field = fieldMeta.field;
 
                 FieldAST fieldAst;
@@ -292,8 +226,8 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
 
                             auto value = ConstantDataArray::get(builder.getContext(),
                                     makeArrayRef(reinterpret_cast<const uint8_t*>(data), size));
-                            predicateAst.variable.value = new GlobalVariable(mCompilerModule, value->getType(), true,
-                                    GlobalValue::PrivateLinkage, value);
+                            predicateAst.variable.value = new GlobalVariable(mQueryModule.getModule(), value->getType(),
+                                    true, GlobalValue::PrivateLinkage, value);
                         }
                     } break;
 
@@ -310,6 +244,73 @@ void LLVMRowScanBase::buildScanAST(const Record& record) {
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
     LOG_ASSERT(mScanAst.queries.size() == mQueries.size(), "Did not process every query");
+}
+
+LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries)
+        : LLVMScanBase(record, std::move(queries)),
+          mRowScanFun(nullptr) {
+}
+
+void LLVMRowScanBase::prepareQuery() {
+    LOG_ASSERT(!mRowScanFun, "Scan already finalized");
+    LLVMRowScanBuilder::createFunction(mQueryModule.getModule(), mQueryModule.getTargetMachine(), mScanAst);
+
+    mQueryModule.compile();
+
+    mRowScanFun = mQueryModule.findFunction<RowScanFun>(LLVMRowScanBuilder::FUNCTION_NAME);
+}
+
+void LLVMRowScanBase::prepareMaterialization() {
+    LOG_ASSERT(mRowMaterializeFuns.empty(), "Scan already finalized");
+    std::unordered_map<QueryDataHolder, std::string> materializeCache;
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        auto q = mQueries[i];
+        if (q->queryType() == ScanQueryType::FULL) {
+            continue;
+        }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        if (materializeCache.find(holder) != materializeCache.end()) {
+            continue;
+        }
+
+        std::stringstream ss;
+        ss << ROW_MATERIALIZE_NAME << i;
+        auto name = ss.str();
+        materializeCache.emplace(holder, name);
+
+        switch (q->queryType()) {
+        case ScanQueryType::PROJECTION: {
+            LLVMRowProjectionBuilder::createFunction(mRecord, mMaterializationModule.getModule(),
+                    mMaterializationModule.getTargetMachine(), name, q);
+        } break;
+
+        case ScanQueryType::AGGREGATION: {
+            LLVMRowAggregationBuilder::createFunction(mRecord, mMaterializationModule.getModule(),
+                    mMaterializationModule.getTargetMachine(), name, q);
+        } break;
+
+        default: {
+            LOG_ASSERT(false, "Unknown query type");
+        } break;
+        }
+    }
+
+    mMaterializationModule.compile();
+
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        auto q = mQueries[i];
+
+        if (q->queryType() == ScanQueryType::FULL) {
+            mRowMaterializeFuns.emplace_back(&memcpyWrapper);
+            continue;
+        }
+
+        QueryDataHolder holder(q->query(), q->queryLength(), crossbow::to_underlying(q->queryType()));
+        auto& name = materializeCache.at(holder);
+        auto fun = mMaterializationModule.findFunction<RowMaterializeFun>(name);
+        mRowMaterializeFuns.emplace_back(fun);
+    }
 }
 
 LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const std::vector<ScanQuery*>& queries,

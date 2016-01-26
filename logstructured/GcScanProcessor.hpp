@@ -52,6 +52,10 @@ public:
 
     GcScan(Table* table, std::vector<ScanQuery*> queries);
 
+    using LLVMRowScanBase::prepareQuery;
+
+    using LLVMRowScanBase::prepareMaterialization;
+
     /**
      * @brief Start a full scan of this table
      *
@@ -62,8 +66,6 @@ public:
 
 private:
     Table* mTable;
-
-    crossbow::allocator mAllocator;
 };
 
 /**

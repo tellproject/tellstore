@@ -209,27 +209,52 @@ struct hash<QueryDataHolder> {
 namespace tell {
 namespace store {
 
-class LLVMScanBase {
+class LLVMCodeModule {
 public:
+    LLVMCodeModule(const std::string& name);
+
+    ~LLVMCodeModule();
+
+    llvm::TargetMachine* getTargetMachine() {
+        return mCompiler.getTargetMachine();
+    }
+
+    llvm::Module& getModule() {
+        return mModule;
+    }
+
+    void compile();
+
     template <typename Fun>
     Fun findFunction(const std::string& name) {
         return mCompiler.findFunction<Fun>(name);
     }
 
-protected:
-    LLVMScanBase();
-
-    ~LLVMScanBase();
-
-    void finalizeScan();
-
+private:
     LLVMJIT mCompiler;
 
-    llvm::LLVMContext mCompilerContext;
+    llvm::LLVMContext mContext;
 
-    llvm::Module mCompilerModule;
+    llvm::Module mModule;
 
-    LLVMJIT::ModuleHandle mCompilerHandle;
+    LLVMJIT::ModuleHandle mHandle;
+}
+;
+class LLVMScanBase {
+protected:
+    LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries);
+
+    const Record& mRecord;
+
+    std::vector<ScanQuery*> mQueries;
+
+    ScanAST mScanAst;
+
+    LLVMCodeModule mQueryModule;
+    LLVMCodeModule mMaterializationModule;
+
+private:
+    void buildScanAST(const Record& record);
 };
 
 class LLVMRowScanBase : public LLVMScanBase {
@@ -242,22 +267,13 @@ public:
 protected:
     LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries);
 
-    ~LLVMRowScanBase() = default;
+    void prepareQuery();
 
-    void finalizeRowScan();
-
-    std::vector<ScanQuery*> mQueries;
-
-    ScanAST mScanAst;
+    void prepareMaterialization();
 
     RowScanFun mRowScanFun;
 
     std::vector<RowMaterializeFun> mRowMaterializeFuns;
-
-private:
-    void buildScanAST(const Record& record);
-
-    std::unordered_map<QueryDataHolder, std::string> mRowMaterializeCache;
 };
 
 class LLVMRowScanProcessorBase {

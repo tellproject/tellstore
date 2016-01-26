@@ -45,17 +45,23 @@
 namespace tell {
 namespace store {
 
-template<class ScanProcessor>
+template<class Table>
 class ScanThread : crossbow::non_copyable, crossbow::non_movable {
 public:
     ScanThread()
         : mData(0),
-          mThread(&ScanThread<ScanProcessor>::operator(), this) {
+          mThread(&ScanThread<Table>::operator(), this) {
     }
 
     void stop();
 
-    void scan(ScanProcessor* processor);
+    void prepare(typename Table::Scan* scan) {
+        notify(scan, PointerTag::PREPARE);
+    }
+
+    void process(typename Table::ScanProcessor* processor) {
+        notify(processor, PointerTag::PROCESS);
+    }
 
     bool isBusy() const {
         return (mData.load() != 0);
@@ -64,10 +70,13 @@ public:
 private:
     enum class PointerTag : uintptr_t {
         STOP = 0x1u,
-        PROCESS = (0x1u << 1),
+        PREPARE = (0x1u << 1),
+        PROCESS = (0x1u << 2),
     };
 
     void operator()();
+
+    void notify(void* data, PointerTag tag);
 
     std::atomic<uintptr_t> mData;
 
@@ -77,28 +86,15 @@ private:
     std::thread mThread;
 };
 
-template <class ScanProcessor>
-void ScanThread<ScanProcessor>::stop() {
-    {
-        std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
-        mData.store(crossbow::to_underlying(PointerTag::STOP));
-    }
-    mWaitCondition.notify_one();
+template <class Table>
+void ScanThread<Table>::stop() {
+    notify(nullptr, PointerTag::STOP);
 
     mThread.join();
 }
 
-template <class ScanProcessor>
-void ScanThread<ScanProcessor>::scan(ScanProcessor* processor) {
-    {
-        std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
-        mData.store(reinterpret_cast<uintptr_t>(processor) | crossbow::to_underlying(PointerTag::PROCESS));
-    }
-    mWaitCondition.notify_one();
-}
-
-template <class ScanProcessor>
-void ScanThread<ScanProcessor>::operator()() {
+template <class Table>
+void ScanThread<Table>::operator()() {
     while (true) {
         uintptr_t data = 0;
         {
@@ -113,11 +109,28 @@ void ScanThread<ScanProcessor>::operator()() {
             break;
         }
 
-        auto processor = reinterpret_cast<ScanProcessor*>(data & ~crossbow::to_underlying(PointerTag::PROCESS));
-        processor->process();
+        if ((data & crossbow::to_underlying(PointerTag::PREPARE)) != 0) {
+            auto scan = reinterpret_cast<typename Table::Scan*>(data & ~crossbow::to_underlying(PointerTag::PREPARE));
+            scan->prepareMaterialization();
+        } else if ((data & crossbow::to_underlying(PointerTag::PROCESS)) != 0) {
+            auto processor = reinterpret_cast<typename Table::ScanProcessor*>(data &
+                    ~crossbow::to_underlying(PointerTag::PROCESS));
+            processor->process();
+        } else {
+            LOG_ASSERT(false, "Unknown pointer tag");
+        }
 
         mData.store(0);
     }
+}
+
+template <class Table>
+void ScanThread<Table>::notify(void* data, ScanThread::PointerTag tag) {
+    {
+        std::unique_lock<decltype(mWaitMutex)> waitLock(mWaitMutex);
+        mData.store(reinterpret_cast<uintptr_t>(data) | crossbow::to_underlying(tag));
+    }
+    mWaitCondition.notify_one();
 }
 
 template<class Table>
@@ -129,14 +142,14 @@ class ScanManager : crossbow::non_copyable, crossbow::non_movable {
     std::vector<ScanRequest> mEnqueuedQueries;
     std::atomic<bool> stopScans;
 
-    std::vector<std::unique_ptr<ScanThread<typename Table::ScanProcessor>>> mSlaves;
+    std::vector<std::unique_ptr<ScanThread<Table>>> mSlaves;
     std::thread mMasterThread;
 public:
     ScanManager(size_t numThreads)
         : mNumThreads(numThreads)
         , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
-        , stopScans(false)
-    {}
+        , stopScans(false) {
+    }
 
     ~ScanManager() {
         stopScans.store(true);
@@ -163,7 +176,7 @@ void ScanManager<Table>::run() {
 
     mSlaves.reserve(mNumThreads - 1);
     for (decltype(mNumThreads) i = 0; i < mNumThreads - 1; ++i) {
-        mSlaves.emplace_back(new ScanThread<typename Table::ScanProcessor>());
+        mSlaves.emplace_back(new ScanThread<Table>());
     }
 
     mMasterThread = std::thread(&ScanManager<Table>::operator(), this);
@@ -215,15 +228,28 @@ bool ScanManager<Table>::masterThread() {
         std::vector<ScanQuery*> queries;
         std::tie(table, queries) = std::move(q.second);
 
-        auto queryCount = queries.size();
         auto startTime = std::chrono::steady_clock::now();
+        auto queryCount = queries.size();
         typename Table::Scan scan(table, std::move(queries));
+
+        if (!mSlaves.empty()) {
+            mSlaves.front()->prepare(&scan);
+        } else {
+            scan.prepareMaterialization();
+        }
+        scan.prepareQuery();
+        if (!mSlaves.empty()) {
+            auto& slave = mSlaves.front();
+            while (slave->isBusy()) std::this_thread::yield();
+        }
         auto prepareTime = std::chrono::steady_clock::now();
+
+        crossbow::allocator _;
 
         auto processors = scan.startScan(mNumThreads);
         for (decltype(mSlaves.size()) i = 0; i < mSlaves.size(); ++i) {
             // we do not need to synchronize here, the scan threads start as soon as the processor is set
-            mSlaves[i]->scan(processors[i].get());
+            mSlaves[i]->process(processors[i].get());
         }
 
         // do the master thread part of the scan

@@ -50,12 +50,14 @@ public:
 
     HashScan(Table* table, std::vector<ScanQuery*> queries);
 
+    using LLVMRowScanBase::prepareQuery;
+
+    using LLVMRowScanBase::prepareMaterialization;
+
     std::vector<std::unique_ptr<HashScanProcessor>> startScan(size_t numThreads);
 
 private:
     Table* mTable;
-
-    crossbow::allocator mAllocator;
 };
 
 /**

@@ -48,7 +48,8 @@ namespace store {
 
 LLVMCompiler llvmCompiler;
 
-LLVMCompilerT::LLVMCompilerT() {
+LLVMCompilerT::LLVMCompilerT()
+        : mTarget(nullptr) {
     std::array<const char*, 2> args = {{
         "tellstore",
         "--disable-lsr"
@@ -59,6 +60,10 @@ LLVMCompilerT::LLVMCompilerT() {
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
 
+    // Get the architecture name of the host
+    mProcessTriple = llvm::sys::getProcessTriple();
+    mHostCPUName = llvm::sys::getHostCPUName();
+
     // Setup all CPU features available on the host
     llvm::SubtargetFeatures features;
     llvm::StringMap<bool> hostFeatures;
@@ -67,35 +72,31 @@ LLVMCompilerT::LLVMCompilerT() {
             features.AddFeature(feature.first(), feature.second);
         }
     }
-
-    // Get the architecture name of the host
-    auto processTriple = llvm::sys::getProcessTriple();
+    mFeatures = features.getString();
 
     // Lookup the LLVM target for the host
     std::string error;
-    auto target = llvm::TargetRegistry::lookupTarget(processTriple, error);
-    if (!target) {
+    mTarget = llvm::TargetRegistry::lookupTarget(mProcessTriple, error);
+    if (!mTarget) {
         throw std::runtime_error(error);
     }
-
-    // Setup target options
-    llvm::TargetOptions options;
-
-    // Create the target machine
-    mTargetMachine.reset(target->createTargetMachine(processTriple, llvm::sys::getHostCPUName(), features.getString(),
-            options, llvm::Reloc::Default, llvm::CodeModel::JITDefault, llvm::CodeGenOpt::Aggressive));
 
     // Load the standard library
     llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
 }
 
-LLVMCompilerT::~LLVMCompilerT() = default;
+std::unique_ptr<llvm::TargetMachine> LLVMCompilerT::createTargetMachine() {
+    return std::unique_ptr<llvm::TargetMachine>(mTarget->createTargetMachine(mProcessTriple, mHostCPUName, mFeatures,
+            mOptions, llvm::Reloc::Default, llvm::CodeModel::JITDefault, llvm::CodeGenOpt::Aggressive));
+}
 
 LLVMJIT::LLVMJIT()
-        : mTargetMachine(llvmCompiler->targetMachine()),
+        : mTargetMachine(llvmCompiler->createTargetMachine()),
           mDataLayout(mTargetMachine->createDataLayout()),
           mCompileLayer(mObjectLayer, llvm::orc::SimpleCompiler(*mTargetMachine)) {
 }
+
+LLVMJIT::~LLVMJIT() = default;
 
 LLVMJIT::ModuleHandle LLVMJIT::addModule(llvm::Module* module) {
     auto resolver = llvm::orc::createLambdaResolver([this] (const std::string& name) {

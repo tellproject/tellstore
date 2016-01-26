@@ -42,6 +42,15 @@ class ColumnMapContext;
  */
 class LLVMColumnMapScanBuilder : private FunctionBuilder {
 public:
+    using Signature = void (*) (
+            const uint64_t* /* keyData */,
+            const uint64_t* /* validFromData */,
+            const uint64_t* /* validToData */,
+            const char* /* page */,
+            uint64_t /* startIdx */,
+            uint64_t /* endIdx */,
+            char* /* resultData */);
+
     static const std::string FUNCTION_NAME;
 
     static void createFunction(const ColumnMapContext& context, llvm::Module& module, llvm::TargetMachine* target,
