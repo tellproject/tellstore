@@ -72,7 +72,7 @@ private:
     GC& mGC;
     PageManager& mPageManager;
     VersionManager& mVersionManager;
-    ScanThreads<Table> mScanThreads;
+    ScanManager<Table> mScanManager;
     std::atomic<bool> mShutDown;
     mutable tbb::spin_rw_mutex mTablesMutex;
     tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
@@ -111,12 +111,12 @@ public:
         , mGC(gc)
         , mPageManager(pageManager)
         , mVersionManager(versionManager)
-        , mScanThreads(config.numScanThreads)
+        , mScanManager(config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
         , mGCThread(std::bind(&TableManager::gcThread, this))
     {
-        mScanThreads.run();
+        mScanManager.run();
     }
 
     ~TableManager() {
@@ -216,7 +216,7 @@ public:
         if (query && query->snapshot()) {
             mVersionManager.addSnapshot(*query->snapshot());
         }
-        return mScanThreads.scan(tableId, lookupTable(tableId), query);
+        return mScanManager.scan(tableId, lookupTable(tableId), query);
     }
 
     void forceGC() {
