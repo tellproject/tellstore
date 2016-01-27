@@ -128,6 +128,9 @@ struct QueryAST {
     /// Version of the snapshot
     uint64_t version;
 
+    /// Whether the conjuncts are shared with other queries
+    bool shared;
+
     /// Offset to the first non-result conjunct of this query
     uint32_t conjunctOffset;
 
@@ -142,6 +145,16 @@ struct QueryAST {
 
     /// Partition the query is interested in
     uint32_t partitionNumber;
+};
+
+struct ConjunctProperties {
+    ConjunctProperties(size_t _queryIndex)
+            : queryIndex(_queryIndex),
+              predicateCount(0u) {
+    }
+
+    size_t queryIndex;
+    uint32_t predicateCount;
 };
 
 /**
@@ -166,6 +179,8 @@ struct ScanAST {
     std::map<uint16_t, FieldAST> fields;
 
     std::vector<QueryAST> queries;
+
+    std::vector<ConjunctProperties> conjunctProperties;
 };
 
 struct QueryDataHolder {

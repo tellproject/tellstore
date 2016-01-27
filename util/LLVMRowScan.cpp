@@ -186,16 +186,45 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
             }
 
             // Store resulting conjunct value
-            auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(predicateAst.conjunct));
-            if (mConjunctsGenerated[predicateAst.conjunct]) {
-                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            auto& conjunctProperties = scanAst.conjunctProperties[predicateAst.conjunct];
+            LOG_ASSERT(conjunctProperties.predicateCount > 0, "Conjunct must have predicates");
+
+            auto conjunctPtr = getParam(resultData);
+            if (conjunctProperties.predicateCount == 1) {
+                auto queryIndex = conjunctProperties.queryIndex;
+                auto& query = scanAst.queries[queryIndex];
+                decltype(predicateAst.conjunct) conjunctIdx;
+                if (!query.shared) {
+                    conjunctIdx = queryIndex;
+                } else {
+                    for (conjunctIdx = query.conjunctOffset; conjunctIdx < predicateAst.conjunct; ++conjunctIdx) {
+                        if (scanAst.conjunctProperties[conjunctIdx].predicateCount < 2) {
+                            break;
+                        }
+                    }
+                }
+
+                if (conjunctIdx > 0) {
+                    conjunctPtr = CreateInBoundsGEP(conjunctPtr, getInt64(conjunctIdx));
+                }
+                if (mConjunctsGenerated[conjunctIdx]) {
+                    res = CreateAnd(CreateAlignedLoad(conjunctPtr, 1u), res);
+                } else {
+                    mConjunctsGenerated[conjunctIdx] = true;
+                }
             } else {
-                mConjunctsGenerated[predicateAst.conjunct] = true;
+                if (predicateAst.conjunct > 0) {
+                    conjunctPtr = CreateInBoundsGEP(conjunctPtr, getInt64(predicateAst.conjunct));
+                }
+                if (mConjunctsGenerated[predicateAst.conjunct]) {
+                    res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+                } else {
+                    mConjunctsGenerated[predicateAst.conjunct] = true;
+                }
             }
             CreateAlignedStore(res, conjunctPtr, 1u);
         }
     }
-    mConjunctsGenerated.clear();
 
     for (decltype(scanAst.queries.size()) i = 0; i < scanAst.queries.size(); ++i) {
         auto& query = scanAst.queries[i];
@@ -220,12 +249,22 @@ void LLVMRowScanBuilder::buildScan(const ScanAST& scanAst) {
 
         // Merge conjuncts
         for (decltype(query.numConjunct) j = 0; j < query.numConjunct; ++j) {
-            auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(query.conjunctOffset + j));
+            auto src = query.conjunctOffset + j;
+            if (!mConjunctsGenerated[src]) {
+                continue;
+            }
+            auto conjunctPtr = CreateInBoundsGEP(getParam(resultData), getInt64(src));
             res = CreateAnd(res, CreateAlignedLoad(conjunctPtr, 1u));
         }
 
         // Store final result conjunct
-        auto resultPtr = CreateInBoundsGEP(getParam(resultData), getInt64(i));
+        auto resultPtr = getParam(resultData);
+        if (i > 0) {
+            resultPtr = CreateInBoundsGEP(resultPtr, getInt64(i));
+        }
+        if (mConjunctsGenerated[i]) {
+            res = CreateAnd(CreateAlignedLoad(resultPtr, 1u), res);
+        }
         CreateAlignedStore(res, resultPtr, 1u);
     }
 

@@ -102,9 +102,12 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
     LLVMBuilder builder(mQueryModule.getModule().getContext());
 
     mScanAst.numConjunct = mQueries.size();
+    mScanAst.conjunctProperties.resize(mQueries.size(), {0});
 
-    std::unordered_map<QueryDataHolder, uint32_t> queryCache;
-    for (auto q : mQueries) {
+    std::unordered_map<QueryDataHolder, size_t> queryCache;
+    for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
+        auto q = mQueries[i];
+
         crossbow::buffer_reader queryReader(q->selection(), q->selectionLength());
         auto snapshot = q->snapshot();
 
@@ -113,6 +116,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
         QueryAST queryAst;
         queryAst.baseVersion = snapshot->baseVersion();
         queryAst.version = snapshot->version();
+        queryAst.shared = false;
         queryAst.conjunctOffset = mScanAst.numConjunct;
         queryAst.numConjunct = queryReader.read<uint16_t>();
         queryAst.partitionShift = queryReader.read<uint16_t>();
@@ -125,16 +129,21 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
 
         if (queryAst.numConjunct != 0) {
             QueryDataHolder holder(queryReader.data(), queryReader.end());
-            auto i = queryCache.find(holder);
-            if (i != queryCache.end()) {
-                queryAst.conjunctOffset = i->second;
+            auto j = queryCache.find(holder);
+            if (j != queryCache.end()) {
+                auto& sharedQuery = mScanAst.queries[j->second];
+                sharedQuery.shared = true;
+
+                queryAst.shared = true;
+                queryAst.conjunctOffset = sharedQuery.conjunctOffset;
                 mScanAst.queries.emplace_back(std::move(queryAst));
                 continue;
             }
-            queryCache.emplace(holder, queryAst.conjunctOffset);
+            queryCache.emplace(holder, i);
+            mScanAst.conjunctProperties.insert(mScanAst.conjunctProperties.end(), queryAst.numConjunct, {i});
         }
 
-        for (decltype(numColumns) i = 0; i < numColumns; ++i) {
+        for (decltype(numColumns) j = 0; j < numColumns; ++j) {
             auto currentColumn = queryReader.read<uint16_t>();
             auto numPredicates = queryReader.read<uint16_t>();
             queryReader.advance(4);
@@ -167,6 +176,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
             for (decltype(numPredicates) j = 0; j < numPredicates; ++j) {
                 auto predicateType = queryReader.read<PredicateType>();
                 auto conjunct = queryAst.conjunctOffset + queryReader.read<uint8_t>();
+                ++mScanAst.conjunctProperties[conjunct].predicateCount;
 
                 PredicateAST predicateAst(predicateType, conjunct);
 
@@ -244,6 +254,7 @@ LLVMScanBase::LLVMScanBase(const Record& record, std::vector<ScanQuery*> queries
         mScanAst.queries.emplace_back(std::move(queryAst));
     }
     LOG_ASSERT(mScanAst.queries.size() == mQueries.size(), "Did not process every query");
+    LOG_ASSERT(mScanAst.conjunctProperties.size() == mScanAst.numConjunct, "Number of conjuncts does not match");
 }
 
 LLVMRowScanBase::LLVMRowScanBase(const Record& record, std::vector<ScanQuery*> queries)

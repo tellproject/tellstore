@@ -88,13 +88,13 @@ private:
 
     void buildScan(const ScanAST& scanAst);
 
-    void buildFixedField(const FieldAST& fieldAst);
+    void buildFixedField(const ScanAST& scanAst, const FieldAST& fieldAst);
 
     std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> buildFixedFieldEvaluation(llvm::Value* srcData,
             llvm::Value* nullData, llvm::Value* start, uint64_t vectorSize, std::vector<uint8_t>& conjunctsGenerated,
-            const FieldAST& fieldAst, const llvm::Twine& name);
+            const ScanAST& scanAst, const FieldAST& fieldAst, const llvm::Twine& name);
 
-    void buildVariableField(const FieldAST& fieldAst);
+    void buildVariableField(const ScanAST& scanAst, const FieldAST& fieldAst);
 
     void buildQuery(bool needsKey, const std::vector<QueryAST>& queries);
 

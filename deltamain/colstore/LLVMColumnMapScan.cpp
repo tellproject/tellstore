@@ -91,7 +91,7 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
             mFixedData = CreateInBoundsGEP(getParam(page), fixedOffset);
 
             for (; i != scanAst.fields.end() && i->second.isFixedSize; ++i) {
-                buildFixedField(i->second);
+                buildFixedField(scanAst, i->second);
             }
         }
 
@@ -105,12 +105,9 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
             mVariableData = CreateBitCast(mVariableData, mHeapEntryStructTy->getPointerTo());
 
             for (; i != scanAst.fields.end(); ++i) {
-                buildVariableField(i->second);
+                buildVariableField(scanAst, i->second);
             }
         }
-
-        mScalarConjunctsGenerated.clear();
-        mVectorConjunctsGenerated.clear();
     }
 
     // Query evaluation
@@ -122,7 +119,7 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
     CreateRetVoid();
 }
 
-void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
+void LLVMColumnMapScanBuilder::buildFixedField(const ScanAST& scanAst, const FieldAST& fieldAst) {
     auto start = getParam(startIdx);
     auto vectorSize = mRegisterWidth / (fieldAst.size * 8);
 
@@ -153,16 +150,18 @@ void LLVMColumnMapScanBuilder::buildFixedField(const FieldAST& fieldAst) {
     if (vectorSize != 1) {
         // Vectorized field evaluation
         std::tie(start, srcData, nullData) = buildFixedFieldEvaluation(srcData, nullData, start, vectorSize,
-                mVectorConjunctsGenerated, fieldAst, llvm::Twine("vector"));
+                mVectorConjunctsGenerated, scanAst, fieldAst, llvm::Twine("vector"));
     }
 
     // Scalar field evaluation
-    buildFixedFieldEvaluation(srcData, nullData, start, 1, mScalarConjunctsGenerated, fieldAst, llvm::Twine("scalar"));
+    buildFixedFieldEvaluation(srcData, nullData, start, 1, mScalarConjunctsGenerated, scanAst, fieldAst,
+            llvm::Twine("scalar"));
 }
 
 std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMapScanBuilder::buildFixedFieldEvaluation(
         llvm::Value* srcData, llvm::Value* nullData, llvm::Value* start, uint64_t vectorSize,
-        std::vector<uint8_t>& conjunctsGenerated, const FieldAST& fieldAst, const llvm::Twine& name) {
+        std::vector<uint8_t>& conjunctsGenerated, const ScanAST& scanAst, const FieldAST& fieldAst,
+        const llvm::Twine& name) {
     auto end = getParam(endIdx);
     if (vectorSize != 1) {
         auto count = CreateSub(end, start);
@@ -238,13 +237,44 @@ std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMapScanBuilder::b
         }
 
         // Store resulting conjunct value
-        auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
-        conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
-        conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
-        if (conjunctsGenerated[predicateAst.conjunct]) {
-            res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+        auto& conjunctProperties = scanAst.conjunctProperties[predicateAst.conjunct];
+        LOG_ASSERT(conjunctProperties.predicateCount > 0, "Conjunct must have predicates");
+
+        llvm::Value* conjunctPtr;
+        if (conjunctProperties.predicateCount == 1) {
+            auto queryIndex = conjunctProperties.queryIndex;
+            auto& query = scanAst.queries[queryIndex];
+            decltype(predicateAst.conjunct) conjunctIdx;
+            if (!query.shared) {
+                conjunctIdx = queryIndex;
+            } else {
+                for (conjunctIdx = query.conjunctOffset; conjunctIdx < predicateAst.conjunct; ++conjunctIdx) {
+                    if (scanAst.conjunctProperties[conjunctIdx].predicateCount < 2) {
+                        break;
+                    }
+                }
+            }
+
+            conjunctPtr = idx;
+            if (conjunctIdx > 0) {
+                conjunctPtr = CreateAdd(createConstMul(mCount, conjunctIdx), conjunctPtr);
+            }
+            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+            conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
+            if (conjunctsGenerated[conjunctIdx]) {
+                res = CreateAnd(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                conjunctsGenerated[conjunctIdx] = true;
+            }
         } else {
-            conjunctsGenerated[predicateAst.conjunct] = true;
+            conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
+            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+            conjunctPtr = CreateBitCast(conjunctPtr, conjunctTy->getPointerTo());
+            if (conjunctsGenerated[predicateAst.conjunct]) {
+                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                conjunctsGenerated[predicateAst.conjunct] = true;
+            }
         }
         CreateAlignedStore(res, conjunctPtr, 1u);
     }
@@ -292,7 +322,7 @@ std::tuple<llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMapScanBuilder::b
     return std::make_tuple(end, lhsEnd, nullEnd);
 }
 
-void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
+void LLVMColumnMapScanBuilder::buildVariableField(const ScanAST& scanAst, const FieldAST& fieldAst) {
     auto start = getParam(startIdx);
     auto end = getParam(endIdx);
 
@@ -505,13 +535,42 @@ void LLVMColumnMapScanBuilder::buildVariableField(const FieldAST& fieldAst) {
         }
 
         // Store resulting conjunct value
-        auto conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
-        conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
-        conjunctPtr = CreateBitCast(conjunctPtr, getInt8PtrTy());
-        if (mScalarConjunctsGenerated[predicateAst.conjunct]) {
-            res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+        auto& conjunctProperties = scanAst.conjunctProperties[predicateAst.conjunct];
+        LOG_ASSERT(conjunctProperties.predicateCount > 0, "Conjunct must have predicates");
+
+        llvm::Value* conjunctPtr;
+        if (conjunctProperties.predicateCount == 1) {
+            auto queryIndex = conjunctProperties.queryIndex;
+            auto& query = scanAst.queries[queryIndex];
+            decltype(predicateAst.conjunct) conjunctIdx;
+            if (!query.shared) {
+                conjunctIdx = queryIndex;
+            } else {
+                for (conjunctIdx = query.conjunctOffset; conjunctIdx < predicateAst.conjunct; ++conjunctIdx) {
+                    if (scanAst.conjunctProperties[conjunctIdx].predicateCount < 2) {
+                        break;
+                    }
+                }
+            }
+
+            conjunctPtr = idx;
+            if (conjunctIdx > 0) {
+                conjunctPtr = CreateAdd(createConstMul(mCount, conjunctIdx), conjunctPtr);
+            }
+            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+            if (mScalarConjunctsGenerated[conjunctIdx]) {
+                res = CreateAnd(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                mScalarConjunctsGenerated[conjunctIdx] = true;
+            }
         } else {
-            mScalarConjunctsGenerated[predicateAst.conjunct] = true;
+            conjunctPtr = CreateAdd(createConstMul(mCount, predicateAst.conjunct), idx);
+            conjunctPtr = CreateInBoundsGEP(getParam(resultData), conjunctPtr);
+            if (mScalarConjunctsGenerated[predicateAst.conjunct]) {
+                res = CreateOr(CreateAlignedLoad(conjunctPtr, 1u), res);
+            } else {
+                mScalarConjunctsGenerated[predicateAst.conjunct] = true;
+            }
         }
         CreateAlignedStore(res, conjunctPtr, 1u);
     }
@@ -646,6 +705,9 @@ std::tuple<llvm::Value*, llvm::Value*, llvm::Value*, llvm::Value*> LLVMColumnMap
         }
         resultPtr = CreateInBoundsGEP(getParam(resultData), resultPtr);
         resultPtr = CreateBitCast(resultPtr, conjunctTy->getPointerTo());
+        if (mScalarConjunctsGenerated[i]) {
+            res = CreateAnd(CreateAlignedLoad(resultPtr, 1u), res);
+        }
         CreateAlignedStore(res, resultPtr, 1u);
     }
 
@@ -708,19 +770,25 @@ void LLVMColumnMapScanBuilder::buildResult(const std::vector<QueryAST>& queries)
 
         LOG_ASSERT(query.conjunctOffset <= mergedOffset, "Query offsets must be in ascending order");
 
-        // Merge all conjunct of the query into the first conjunct if the conjuncts were not already merged
+        // Merge all conjunct of the query into the final or first conjunct if the conjuncts were not already merged
+        auto mergeConjunct = (query.shared ? query.conjunctOffset : i);
         if (mergedOffset == query.conjunctOffset) {
-            for (decltype(query.numConjunct) j = query.numConjunct - 1u; j > 0u; --j) {
+            decltype(query.numConjunct) startOffset = (query.shared ? 1 : 0);
+            for (auto j = startOffset; j < query.numConjunct; ++j) {
                 auto src = query.conjunctOffset + j;
-                auto dest = src - 1;
+                if (!mScalarConjunctsGenerated[src]) {
+                    continue;
+                }
 
-                buildConjunctMerge(vectorSize, src, dest);
+                buildConjunctMerge(vectorSize, src, mergeConjunct);
             }
             mergedOffset += query.numConjunct;
         }
 
         // Merge last conjunct of the query into the final result conjunct
-        buildConjunctMerge(vectorSize, query.conjunctOffset, i);
+        if (query.shared) {
+            buildConjunctMerge(vectorSize, mergeConjunct, i);
+        }
     }
 }
 
@@ -746,11 +814,11 @@ void LLVMColumnMapScanBuilder::buildConjunctMerge(uint64_t vectorSize, uint32_t 
         auto lhsEnd = CreateAdd(start, count);
         lhsEnd = CreateInBoundsGEP(lhsBase, lhsEnd);
 
-        rhsStart = buildConjunctMerge(lhsStart, lhsEnd, rhsStart, vectorSize, "conj." + llvm::Twine(dest) + ".vector");
+        rhsStart = buildConjunctMerge(lhsStart, lhsEnd, rhsStart, vectorSize, "conj." + llvm::Twine(src) + ".vector");
         lhsStart = lhsEnd;
     }
     auto lhsEnd = CreateInBoundsGEP(lhsBase, getParam(endIdx));
-    buildConjunctMerge(lhsStart, lhsEnd, rhsStart, 1, "conj." + llvm::Twine(dest) + ".scalar");
+    buildConjunctMerge(lhsStart, lhsEnd, rhsStart, 1, "conj." + llvm::Twine(src) + ".scalar");
 }
 
 llvm::Value* LLVMColumnMapScanBuilder::buildConjunctMerge(llvm::Value* lhsStart, llvm::Value* lhsEnd,
