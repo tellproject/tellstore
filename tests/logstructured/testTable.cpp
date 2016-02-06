@@ -54,7 +54,7 @@ protected:
             : mPageManager(PageManager::construct(4 * TELL_PAGE_SIZE)),
               mHashMap(1024),
               mSchema(TableType::TRANSACTIONAL),
-              mTable(*mPageManager, mSchema, 1, mVersionManager, mHashMap),
+              mTable(*mPageManager, "testTable", mSchema, 1, mVersionManager, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
     }

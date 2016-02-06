@@ -77,13 +77,37 @@ private:
 };
 
 /**
+ * @brief Response for a Get-Tables request
+ */
+class GetTablesResponse final : public crossbow::infinio::RpcResponseResult<GetTablesResponse, std::vector<Table>> {
+    using Base = crossbow::infinio::RpcResponseResult<GetTablesResponse, std::vector<Table>>;
+
+public:
+    using Base::Base;
+
+private:
+    friend Base;
+
+    static constexpr ResponseType MessageType = ResponseType::GET_TABLES;
+
+    static const std::error_category& errorCategory() {
+        return error::get_error_category();
+    }
+
+    void processResponse(crossbow::buffer_reader& message);
+};
+
+/**
  * @brief Response for a Get-Table request
  */
 class GetTableResponse final : public crossbow::infinio::RpcResponseResult<GetTableResponse, Table> {
     using Base = crossbow::infinio::RpcResponseResult<GetTableResponse, Table>;
 
 public:
-    using Base::Base;
+    GetTableResponse(crossbow::infinio::Fiber& fiber, const crossbow::string& tableName)
+            : Base(fiber),
+              mTableName(tableName) {
+    }
 
 private:
     friend Base;
@@ -95,6 +119,8 @@ private:
     }
 
     void processResponse(crossbow::buffer_reader& message);
+
+    crossbow::string mTableName;
 };
 
 /**
@@ -276,6 +302,8 @@ public:
 
     std::shared_ptr<CreateTableResponse> createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name,
             const Schema& schema);
+
+    std::shared_ptr<GetTablesResponse> getTables(crossbow::infinio::Fiber& fiber);
 
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name);
 

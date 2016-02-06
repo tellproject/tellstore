@@ -115,10 +115,11 @@ void LazyRecordWriter::seal() {
     mRecord = nullptr;
 }
 
-Table::Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
-        HashTable& hashMap)
+Table::Table(PageManager& pageManager, const crossbow::string& tableName, const Schema& schema, uint64_t tableId,
+        VersionManager& versionManager, HashTable& hashMap)
         : mVersionManager(versionManager),
           mHashMap(hashMap),
+          mTableName(tableName),
           mRecord(schema),
           mTableId(tableId),
           mLog(pageManager) {

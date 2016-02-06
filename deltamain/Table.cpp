@@ -32,9 +32,12 @@ namespace store {
 namespace deltamain {
 
 template <typename Context>
-Table<Context>::Table(PageManager& pageManager, const Schema& schema, uint64_t /* idx */, uint64_t insertTableCapacity)
+Table<Context>::Table(PageManager& pageManager, const crossbow::string& name, const Schema& schema, uint64_t idx,
+        uint64_t insertTableCapacity)
     : mPageManager(pageManager)
+    , mTableName(name)
     , mRecord(std::move(schema))
+    , mTableId(idx)
     , mInsertTable(insertTableCapacity)
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)

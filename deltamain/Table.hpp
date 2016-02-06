@@ -67,12 +67,13 @@ public:
     using MainRecord = typename Context::MainRecord;
     using ConstMainRecord = typename Context::ConstMainRecord;
 
-    Table(PageManager& pageManager, const Schema& schema, uint64_t idx, uint64_t insertTableCapacity);
+    Table(PageManager& pageManager, const crossbow::string& name, const Schema& schema, uint64_t idx,
+            uint64_t insertTableCapacity);
 
     ~Table();
 
-    const Context& context() const {
-        return mContext;
+    const crossbow::string& tableName() const {
+        return mTableName;
     }
 
     const Record& record() const {
@@ -81,6 +82,14 @@ public:
 
     const Schema& schema() const {
         return mRecord.schema();
+    }
+
+    uint64_t tableId() const {
+        return mTableId;
+    }
+
+    const Context& context() const {
+        return mContext;
     }
 
     TableType type() const {
@@ -154,7 +163,11 @@ private:
     bool internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& snapshot, int& ec);
 
     PageManager& mPageManager;
+
+    crossbow::string mTableName;
     Record mRecord;
+    uint64_t mTableId;
+
     DynamicInsertTable mInsertTable;
     Log<OrderedLogImpl> mInsertLog;
     Log<OrderedLogImpl> mUpdateLog;

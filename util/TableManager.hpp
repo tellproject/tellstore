@@ -152,13 +152,23 @@ public:
             }
         }
 
-        {
-            auto ptr = crossbow::allocator::construct<Table>(mPageManager, schema, idx, std::forward<Args>(args)...);
-            LOG_ASSERT(ptr, "Unable to allocate table");
-            __attribute__((unused)) auto res = mTables.insert(std::make_pair(idx, ptr));
-            LOG_ASSERT(res.second, "Insert with unique id failed");
-        }
+        auto ptr = crossbow::allocator::construct<Table>(mPageManager, name, schema, idx, std::forward<Args>(args)...);
+        LOG_ASSERT(ptr, "Unable to allocate table");
+        __attribute__((unused)) auto res = mTables.insert(std::make_pair(idx, ptr));
+        LOG_ASSERT(res.second, "Insert with unique id failed");
+
         return true;
+    }
+
+    std::vector<const Table*> getTables() const {
+        typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
+        std::vector<const Table*> result;
+        result.reserve(mTables.size());
+
+        for (auto& e : mTables) {
+            result.emplace_back(e.second);
+        }
+        return result;
     }
 
     const Table* getTable(uint64_t id) const {

@@ -79,11 +79,11 @@ public:
     using ScanProcessor = Scan::ScanProcessor;
     using GarbageCollector = Scan::GarbageCollector;
 
-    Table(PageManager& pageManager, const Schema& schema, uint64_t tableId, VersionManager& versionManager,
-            HashTable& hashMap);
+    Table(PageManager& pageManager, const crossbow::string& tableName, const Schema& schema, uint64_t tableId,
+            VersionManager& versionManager, HashTable& hashMap);
 
-    uint64_t id() const {
-        return mTableId;
+    const crossbow::string& tableName() const {
+        return mTableName;
     }
 
     const Record& record() const {
@@ -92,6 +92,10 @@ public:
 
     const Schema& schema() const {
         return mRecord.schema();
+    }
+
+    uint64_t tableId() const {
+        return mTableId;
     }
 
     /**
@@ -176,6 +180,8 @@ private:
 
     VersionManager& mVersionManager;
     HashTable& mHashMap;
+
+    crossbow::string mTableName;
     Record mRecord;
     const uint64_t mTableId;
 

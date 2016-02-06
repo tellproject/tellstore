@@ -50,11 +50,32 @@ void CreateTableResponse::processResponse(crossbow::buffer_reader& message) {
     setResult(tableId);
 }
 
+void GetTablesResponse::processResponse(crossbow::buffer_reader& message) {
+    std::vector<Table> result;
+
+    auto resultSize = message.read<uint64_t>();
+    result.reserve(resultSize);
+
+    for (decltype(resultSize) i = 0; i < resultSize; ++i) {
+        auto tableId = message.read<uint64_t>();
+
+        auto tableNameLength = message.read<uint32_t>();
+        crossbow::string tableName(message.read(tableNameLength), tableNameLength);
+        message.align(8u);
+
+        auto schema = Schema::deserialize(message);
+
+        result.emplace_back(tableId, std::move(tableName), std::move(schema));
+    }
+
+    setResult(std::move(result));
+}
+
 void GetTableResponse::processResponse(crossbow::buffer_reader& message) {
     auto tableId = message.read<uint64_t>();
     auto schema = Schema::deserialize(message);
 
-    setResult(tableId, std::move(schema));
+    setResult(tableId, std::move(mTableName), std::move(schema));
 }
 
 void GetResponse::processResponse(crossbow::buffer_reader& message) {
@@ -256,9 +277,19 @@ std::shared_ptr<CreateTableResponse> ClientSocket::createTable(crossbow::infinio
     return response;
 }
 
+std::shared_ptr<GetTablesResponse> ClientSocket::getTables(crossbow::infinio::Fiber& fiber) {
+    auto response = std::make_shared<GetTablesResponse>(fiber);
+
+    sendRequest(response, RequestType::GET_TABLES, 0u, []
+            (crossbow::buffer_writer& /* message */, std::error_code& /* ec */) {
+    });
+
+    return response;
+}
+
 std::shared_ptr<GetTableResponse> ClientSocket::getTable(crossbow::infinio::Fiber& fiber,
         const crossbow::string& name) {
-    auto response = std::make_shared<GetTableResponse>(fiber);
+    auto response = std::make_shared<GetTableResponse>(fiber, name);
 
     auto nameLength = name.size();
     uint32_t messageLength = sizeof(uint32_t) + nameLength;

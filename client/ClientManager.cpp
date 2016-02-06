@@ -59,6 +59,10 @@ Table ClientHandle::createTable(const crossbow::string& name, Schema schema) {
     return mProcessor.createTable(mFiber, name, std::move(schema));
 }
 
+std::shared_ptr<GetTablesResponse> ClientHandle::getTables() {
+    return mProcessor.getTables(mFiber);
+}
+
 std::shared_ptr<GetTableResponse> ClientHandle::getTable(const crossbow::string& name) {
     return mProcessor.getTable(mFiber, name);
 }
@@ -218,7 +222,7 @@ Table BaseClientProcessor::createTable(crossbow::infinio::Fiber& fiber, const cr
         LOG_ASSERT(tableId == 0u || tableId == id, "Table IDs returned from shards do not match");
         tableId = id;
     }
-    return Table(tableId, std::move(schema));
+    return Table(tableId, name, std::move(schema));
 }
 
 std::shared_ptr<ScanIterator> BaseClientProcessor::scan(crossbow::infinio::Fiber& fiber, uint64_t tableId,

@@ -192,10 +192,12 @@ void TestClient::addTable(ClientHandle& client) {
     schema.addField(FieldType::TEXT, "text2", true);
 
     auto startTime = std::chrono::steady_clock::now();
-    mTable = client.createTable("testTable", std::move(schema));
+    mTable = client.createTable("testTable", schema);
     auto endTime = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);
     LOG_INFO("Adding table took %1%ns", duration.count());
+
+    client.createTable("testTable2", std::move(schema));
 }
 
 void TestClient::executeTransaction(ClientHandle& client, uint64_t startKey, uint64_t endKey, bool check) {

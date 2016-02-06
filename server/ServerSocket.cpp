@@ -59,6 +59,10 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
         handleCreateTable(messageId, request);
     } break;
 
+    case crossbow::to_underlying(RequestType::GET_TABLES): {
+        handleGetTables(messageId, request);
+    } break;
+
     case crossbow::to_underlying(RequestType::GET_TABLE): {
         handleGetTable(messageId, request);
     } break;
@@ -128,6 +132,34 @@ void ServerSocket::handleCreateTable(crossbow::infinio::MessageId messageId, cro
     writeResponse(messageId, ResponseType::CREATE_TABLE, messageLength, [tableId]
             (crossbow::buffer_writer& message, std::error_code& /* ec */) {
         message.write<uint64_t>(tableId);
+    });
+}
+
+void ServerSocket::handleGetTables(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request) {
+    auto tables = mStorage.getTables();
+
+    uint32_t messageLength = sizeof(uint64_t);
+    for (auto table : tables) {
+        messageLength += sizeof(uint64_t) + sizeof(uint32_t);
+        messageLength += table->tableName().size();
+        messageLength = crossbow::align(messageLength, 8u);
+        messageLength += table->schema().serializedLength();
+    }
+
+    writeResponse(messageId, ResponseType::GET_TABLES, messageLength, [&tables]
+            (crossbow::buffer_writer& message, std::error_code& /* ec */) {
+        message.write<uint64_t>(tables.size());
+        for (auto table : tables) {
+            message.write<uint64_t>(table->tableId());
+
+            auto& tableName = table->tableName();
+            message.write<uint32_t>(tableName.size());
+            message.write(tableName.data(), tableName.size());
+            message.align(8u);
+
+            auto& schema = table->schema();
+            schema.serialize(message);
+        }
     });
 }
 

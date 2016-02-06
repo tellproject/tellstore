@@ -120,6 +120,18 @@ private:
     void handleCreateTable(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
 
     /**
+     * The response consists of the following format:
+     * - 8 bytes: Number of elements in the list
+     * - For every table in the storage
+     *   - 8 bytes: The table ID
+     *   - 4 bytes: Length of the table name
+     *   - x bytes: The table name
+     *   - y bytes: Variable padding to make message 8 byte aligned
+     *   - x bytes: The table schema
+     */
+    void handleGetTables(crossbow::infinio::MessageId messageId, crossbow::buffer_reader& request);
+
+    /**
      * The get table ID request has the following format:
      * - 2 bytes: Length of the table name string
      * - x bytes: The table name string

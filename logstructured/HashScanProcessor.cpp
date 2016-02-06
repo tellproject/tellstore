@@ -77,7 +77,7 @@ HashScanProcessor::HashScanProcessor(Table& table, const std::vector<ScanQuery*>
 
 void HashScanProcessor::process() {
     mTable.mHashMap.forEach(mStart, mEnd, [this] (uint64_t tableId, uint64_t key, void* ptr) {
-        if (tableId != mTable.id()) {
+        if (tableId != mTable.tableId()) {
             return;
         }
 

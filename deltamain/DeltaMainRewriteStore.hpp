@@ -71,6 +71,11 @@ struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
         return tableManager.createTable(name, schema, idx, tableManager.config().hashMapCapacity);
     }
 
+    std::vector<const Table*> getTables() const
+    {
+        return tableManager.getTables();
+    }
+
     const Table* getTable(uint64_t id) const
     {
         return tableManager.getTable(id);

@@ -83,6 +83,8 @@ public:
 
     Table createTable(const crossbow::string& name, Schema schema);
 
+    std::shared_ptr<GetTablesResponse> getTables();
+
     std::shared_ptr<GetTableResponse> getTable(const crossbow::string& name);
 
     std::shared_ptr<GetResponse> get(const Table& table, uint64_t key);
@@ -141,6 +143,10 @@ public:
     void commit(crossbow::infinio::Fiber& fiber, const commitmanager::SnapshotDescriptor& snapshot);
 
     Table createTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name, Schema schema);
+
+    std::shared_ptr<GetTablesResponse> getTables(crossbow::infinio::Fiber& fiber) {
+        return mTellStoreSocket.at(0)->getTables(fiber);
+    }
 
     std::shared_ptr<GetTableResponse> getTable(crossbow::infinio::Fiber& fiber, const crossbow::string& name) {
         return mTellStoreSocket.at(0)->getTable(fiber, name);

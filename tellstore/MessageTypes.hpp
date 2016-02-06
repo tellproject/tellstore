@@ -40,6 +40,7 @@ const crossbow::string& handshakeString();
  */
 enum class RequestType : uint32_t {
     CREATE_TABLE = 0x1u,
+    GET_TABLES,
     GET_TABLE,
     GET,
     UPDATE,
@@ -56,6 +57,7 @@ enum class RequestType : uint32_t {
  */
 enum class ResponseType : uint32_t {
     CREATE_TABLE = 0x01u,
+    GET_TABLES,
     GET_TABLE,
     GET,
     MODIFICATION,

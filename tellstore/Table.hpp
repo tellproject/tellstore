@@ -93,8 +93,18 @@ public:
               mRecord(std::move(schema)) {
     }
 
+    Table(uint64_t tableId, crossbow::string tableName, Schema schema)
+            : mTableId(tableId),
+              mTableName(std::move(tableName)),
+              mRecord(std::move(schema)) {
+    }
+
     uint64_t tableId() const {
         return mTableId;
+    }
+
+    const crossbow::string& tableName() const {
+        return mTableName;
     }
 
     const Record& record() const {
@@ -112,6 +122,7 @@ public:
 
 private:
     uint64_t mTableId;
+    crossbow::string mTableName;
     Record mRecord;
 };
 

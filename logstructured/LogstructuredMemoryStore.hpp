@@ -67,6 +67,10 @@ public:
         return mTableManager.createTable(name, schema, idx, mVersionManager, mHashMap);
     }
 
+    std::vector<const Table*> getTables() const {
+        return mTableManager.getTables();
+    }
+
     const Table* getTable(uint64_t id) const {
         return mTableManager.getTable(id);
     }
