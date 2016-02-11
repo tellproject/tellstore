@@ -66,11 +66,11 @@ void LLVMColumnMapScanBuilder::buildScan(const ScanAST& scanAst) {
     mCount = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(0) });
     mCount = CreateZExt(CreateAlignedLoad(mCount, 4u), getInt64Ty());
 
+    mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
+    mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
+
     // Field evaluation
     if (!scanAst.fields.empty()) {
-        mScalarConjunctsGenerated.resize(scanAst.numConjunct, false);
-        mVectorConjunctsGenerated.resize(scanAst.numConjunct, false);
-
         if (scanAst.needsNull) {
             // -> auto headerOffset = static_cast<uint64_t>(mainPage->headerOffset);
             auto headerOffset = CreateInBoundsGEP(mMainPage, { getInt64(0), getInt32(1) });
