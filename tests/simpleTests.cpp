@@ -49,6 +49,7 @@ protected:
               mTableId(0u) {
         StorageConfig config;
         config.totalMemory = 0x10000000ull;
+        config.numScanThreads = 1u;
         config.hashMapCapacity = 0x100000ull;
         mStorage.reset(new Impl(config));
 
@@ -227,7 +228,7 @@ public:
               mGo(false) {
         StorageConfig config;
         config.totalMemory = 0x100000000ull;
-        config.numScanThreads = 0;
+        config.numScanThreads = 1u;
         config.hashMapCapacity = 0x2000000ull;
         mStorage.reset(new Impl(config));
     }

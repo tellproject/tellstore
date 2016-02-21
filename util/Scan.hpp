@@ -155,6 +155,7 @@ public:
         , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
         , stopScans(false) {
         if (mNumThreads == 0) {
+            LOG_WARN("No scan threads set - Scan will be unavailable");
             return;
         }
 
@@ -168,7 +169,9 @@ public:
 
     ~ScanManager() {
         stopScans.store(true);
-        mMasterThread.join();
+        if (mNumThreads != 0u) {
+            mMasterThread.join();
+        }
     }
 
     int scan(uint64_t tableId, Table* table, ScanQuery* query) {
