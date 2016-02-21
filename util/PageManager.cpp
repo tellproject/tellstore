@@ -67,11 +67,7 @@ void* PageManager::alloc() {
     LOG_ASSERT(!success || (page >= mData && page < reinterpret_cast<char*>(mData) + mSize), "Page points out of bound");
     LOG_ASSERT(!success || (reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
             "Pointer points not to beginning of page");
-    if (!success) {
-        return nullptr;
-    }
-    memset(page, 0, TELL_PAGE_SIZE);
-    return page;
+    return success ? page : nullptr;
 }
 
 void PageManager::free(void* page) {
@@ -79,6 +75,7 @@ void PageManager::free(void* page) {
     LOG_ASSERT(page >= mData && page < reinterpret_cast<char*>(mData) + mSize, "Page points out of bound");
     LOG_ASSERT((reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
             "Pointer points not to beginning of page");
+    memset(page, 0, TELL_PAGE_SIZE);
     freeEmpty(page);
 }
 
