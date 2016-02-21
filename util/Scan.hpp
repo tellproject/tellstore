@@ -149,11 +149,16 @@ public:
         : mNumThreads(numThreads)
         , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
         , stopScans(false) {
+        if (mNumThreads == 0u) {
+            LOG_WARN("No scan threads set - Scan will be unavailable");
+        }
     }
 
     ~ScanManager() {
         stopScans.store(true);
-        mMasterThread.join();
+        if (mNumThreads != 0u) {
+            mMasterThread.join();
+        }
     }
 
     void run();
