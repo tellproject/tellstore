@@ -25,8 +25,6 @@
 #include <util/Log.hpp>
 #include <util/PageManager.hpp>
 
-#include <crossbow/allocator.hpp>
-
 #include <gtest/gtest.h>
 
 #include <boost/dynamic_bitset.hpp>
@@ -42,11 +40,10 @@ namespace {
 class TestBase : public ::testing::Test {
 protected:
     TestBase(size_t pageCount)
-            : mPageManager(PageManager::construct(pageCount * TELL_PAGE_SIZE)) {
+            : mPageManager(pageCount * TELL_PAGE_SIZE) {
     }
 
-    crossbow::allocator mAlloc;
-    PageManager::Ptr mPageManager;
+    PageManager mPageManager;
 };
 
 class LogPageTest : public TestBase {
@@ -57,11 +54,11 @@ protected:
     }
 
     virtual void SetUp() {
-        mPage = new(mPageManager->alloc()) LogPage();
+        mPage = new(mPageManager.alloc()) LogPage();
     }
 
     virtual void TearDown() {
-        mPageManager->free(mPage);
+        mPageManager.free(mPage);
     }
 
     LogPage* mPage;
@@ -154,7 +151,7 @@ class BaseLogTest : public TestBase {
 protected:
     BaseLogTest()
             : TestBase(10),
-              mLog(*mPageManager) {
+              mLog(mPageManager) {
     }
 
     Log<Impl> mLog;
@@ -263,8 +260,8 @@ TEST_F(UnorderedLogTest, append) {
  * @test Check that appending two pages works
  */
 TEST_F(UnorderedLogTest, appendPage) {
-    auto page1 = new(mPageManager->alloc()) LogPage();
-    auto page2 = new(mPageManager->alloc()) LogPage();
+    auto page1 = new(mPageManager.alloc()) LogPage();
+    auto page2 = new(mPageManager.alloc()) LogPage();
     page2->next().store(page1);
     mLog.appendPage(page2, page1);
 
@@ -295,11 +292,11 @@ TEST_F(UnorderedLogTest, appendPage) {
  * @test Check that appending pages multiple times works
  */
 TEST_F(UnorderedLogTest, appendMultiplePage) {
-    auto page1 = new(mPageManager->alloc()) LogPage();
+    auto page1 = new(mPageManager.alloc()) LogPage();
     mLog.appendPage(page1);
     EXPECT_EQ(2u, mLog.pages()) << "Page count not incremented";
 
-    auto page2 = new(mPageManager->alloc()) LogPage();
+    auto page2 = new(mPageManager.alloc()) LogPage();
     mLog.appendPage(page2);
     EXPECT_EQ(3u, mLog.pages()) << "Page count not incremented";
 
@@ -331,7 +328,7 @@ TEST_F(UnorderedLogTest, appendPageWriteToHead) {
     mLog.seal(entry1);
     EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
-    auto page1 = new(mPageManager->alloc()) LogPage();
+    auto page1 = new(mPageManager.alloc()) LogPage();
     auto entry2 = page1->append(16);
     ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
     mLog.seal(entry2);
@@ -372,7 +369,7 @@ TEST_F(UnorderedLogTest, appendPageNewHead) {
     mLog.seal(entry1);
     EXPECT_TRUE(entry1->sealed()) << "Failed to seal element";
 
-    auto page1 = new(mPageManager->alloc()) LogPage();
+    auto page1 = new(mPageManager.alloc()) LogPage();
     auto entry2 = page1->append(16);
     ASSERT_NE(nullptr, entry2) << "Failed to allocate entry";
     mLog.seal(entry2);
@@ -574,9 +571,14 @@ TEST_F(UnorderedLogFilledTest, logIterator) {
  * Erases the second page between head and tail.
  */
 TEST_F(UnorderedLogFilledTest, erase) {
+    std::vector<void*> obsoletePages;
+
     auto head = mLog.head();
     auto tail = head->next().load()->next().load();
-    mLog.erase(head, tail);
+    mLog.erase(head, tail, obsoletePages);
+
+    EXPECT_EQ(1u, obsoletePages.size()) << "Number of obsolete pages must be 1";
+    mPageManager.free(obsoletePages);
 
     auto i = mLog.begin();
     auto end = mLog.end();
@@ -657,6 +659,7 @@ TEST_F(OrderedLogFilledTest, logIterator) {
  * @test Check that truncation works correctly when truncating over a page
  */
 TEST_F(OrderedLogFilledTest, truncateLogDifferentPage) {
+    std::vector<void*> obsoletePages;
     auto tail = mLog.tail();
     auto begin = mLog.begin();
 
@@ -670,8 +673,11 @@ TEST_F(OrderedLogFilledTest, truncateLogDifferentPage) {
     ++i;
     EXPECT_EQ(mEntry3, &(*i)) << "Iterator not pointing to third entry";
 
-    EXPECT_TRUE(mLog.truncateLog(begin, i));
+    EXPECT_TRUE(mLog.truncateLog(begin, i, obsoletePages));
     EXPECT_EQ(mLog.tail(), tail->next()) << "New tail not pointing to next page";
+
+    EXPECT_EQ(1u, obsoletePages.size()) << "Number of obsolete pages must be 1";
+    mPageManager.free(obsoletePages);
 
     auto j = mLog.begin();
     EXPECT_EQ(mEntry3, &(*j)) << "Iterator not pointing to third entry";
@@ -682,6 +688,7 @@ TEST_F(OrderedLogFilledTest, truncateLogDifferentPage) {
  * @test Check that truncation works correctly on the same page
  */
 TEST_F(OrderedLogFilledTest, truncateLogSamePage) {
+    std::vector<void*> obsoletePages;
     auto tail = mLog.tail();
     auto begin = mLog.begin();
 
@@ -692,8 +699,9 @@ TEST_F(OrderedLogFilledTest, truncateLogSamePage) {
     ++i;
     EXPECT_EQ(mEntry2, &(*i)) << "Iterator not pointing to second entry";
 
-    EXPECT_TRUE(mLog.truncateLog(begin, i));
+    EXPECT_TRUE(mLog.truncateLog(begin, i, obsoletePages));
     EXPECT_EQ(mLog.tail(), tail) << "New tail not pointing to same page";
+    EXPECT_TRUE(obsoletePages.empty()) << "No obsolete page";
 
     auto j = mLog.begin();
     EXPECT_EQ(mEntry2, &(*j)) << "Iterator not pointing to second entry";
@@ -704,6 +712,7 @@ TEST_F(OrderedLogFilledTest, truncateLogSamePage) {
  * @test Check that truncation only succeeds if the tail has not changed in the meantime
  */
 TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
+    std::vector<void*> obsoletePages;
     auto tail = mLog.tail();
     auto begin = mLog.begin();
 
@@ -711,13 +720,16 @@ TEST_F(OrderedLogFilledTest, truncateLogInvalidTail) {
     auto i = begin;
     ++i; ++i;
 
-    EXPECT_TRUE(mLog.truncateLog(begin, i));
+    EXPECT_TRUE(mLog.truncateLog(begin, i, obsoletePages));
     EXPECT_EQ(mLog.tail(), tail->next()) << "Iterator not pointing to end";
+    mPageManager.free(obsoletePages);
+    obsoletePages.clear();
 
     // Advance iterator to same page
     auto j = begin;
     j++;
-    EXPECT_FALSE(mLog.truncateLog(begin, j));
+    EXPECT_FALSE(mLog.truncateLog(begin, j, obsoletePages));
+    EXPECT_TRUE(obsoletePages.empty()) << "Failed truncate must not have obsolete pages";
 }
 
 template <typename Impl>
@@ -727,7 +739,7 @@ protected:
 
     LogTestThreaded()
             : TestBase(pageCount),
-              mLog(*mPageManager) {
+              mLog(mPageManager) {
     }
 
     void assertWritten(size_t count) {
@@ -826,13 +838,13 @@ TEST_F(UnorderedLogThreadedTest, DISABLED_append) {
     }
     for (size_t i = headThreadCount; i < headThreadCount + appendThreadCount; ++i) {
         worker[i] = std::thread([values, this] () {
-            auto page = new(this->mPageManager->alloc()) LogPage();
+            auto page = new(this->mPageManager.alloc()) LogPage();
             auto end = values + valuesCount;
             for (auto i = values; i < end; ++i) {
                 auto entry = page->append(sizeof(i));
                 if (entry == nullptr) {
                     this->mLog.appendPage(page);
-                    page = new(this->mPageManager->alloc()) LogPage();
+                    page = new(this->mPageManager.alloc()) LogPage();
                     entry = page->append(sizeof(i));
                 }
                 memcpy(entry->data(), &i, sizeof(i));

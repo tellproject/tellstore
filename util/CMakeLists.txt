@@ -2,6 +2,7 @@
 # TellStore Util library
 ###################
 set(UTIL_SRCS
+    Allocator.cpp
     CuckooHash.cpp
     LLVMBuilder.cpp
     LLVMJIT.cpp
@@ -16,6 +17,7 @@ set(UTIL_SRCS
 )
 
 set(UTIL_PRIVATE_HDR
+    Allocator.hpp
     CuckooHash.hpp
     functional.hpp
     LLVMBuilder.hpp
@@ -89,7 +91,7 @@ target_include_directories(tellstore-util PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Link against Crossbow
 target_include_directories(tellstore-util PUBLIC ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tellstore-util PUBLIC crossbow_allocator crossbow_logger)
+target_link_libraries(tellstore-util PUBLIC crossbow_logger)
 
 # Link against TBB
 target_include_directories(tellstore-util PUBLIC ${TBB_INCLUDE_DIRS})

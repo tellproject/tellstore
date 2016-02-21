@@ -102,6 +102,10 @@ GcScanProcessor::GcScanProcessor(Table& table, const std::vector<ScanQuery*>& qu
           mRecycle(false) {
 }
 
+GcScanProcessor::~GcScanProcessor() {
+    mTable.releasePages(mObsoletePages);
+}
+
 void GcScanProcessor::process() {
     // Abort if the processor already is at the end
     if (mPageIt == mPageEnd) {
@@ -193,7 +197,7 @@ bool GcScanProcessor::advancePage() {
         // Advance to next page
         if (mRecycle) {
             ++mPageIt;
-            mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->());
+            mTable.mLog.erase(mPagePrev.operator->(), mPageIt.operator->(), mObsoletePages);
         } else {
             // Only store the garbage statistic when every entry in the page was sealed
             if (mSealed) {

@@ -26,7 +26,7 @@ macro(add_tellstored _name _implementation)
 
     # Link against Crossbow
     target_include_directories(tellstored-${_name} PRIVATE ${Crossbow_INCLUDE_DIRS})
-    target_link_libraries(tellstored-${_name} PRIVATE crossbow_allocator crossbow_infinio crossbow_logger)
+    target_link_libraries(tellstored-${_name} PRIVATE crossbow_infinio crossbow_logger)
 
     # Link against Jemalloc
     target_include_directories(tellstored-${_name} PRIVATE ${Jemalloc_INCLUDE_DIRS})

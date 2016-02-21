@@ -22,6 +22,7 @@
  */
 #pragma once
 
+#include "Allocator.hpp"
 #include "StorageConfig.hpp"
 #include "Scan.hpp"
 #include "VersionManager.hpp"
@@ -30,7 +31,6 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/concurrent_map.hpp>
 #include <crossbow/string.hpp>
 
@@ -63,16 +63,19 @@ class NoGC {
 public:
 };
 
-template<class Table, class GC>
+template<class Storage>
 class TableManager {
 private: // Private types
+    using Table = typename Storage::Table;
+    using GC = typename Storage::GC;
     using Clock = std::chrono::system_clock;
 private:
-    StorageConfig mConfig;
-    GC& mGC;
+    MemoryReclaimer& mMemoryManager;
     PageManager& mPageManager;
     VersionManager& mVersionManager;
-    ScanManager<Table> mScanManager;
+    GC& mGC;
+    StorageConfig mConfig;
+    ScanManager<Storage> mScanManager;
     std::atomic<bool> mShutDown;
     mutable tbb::spin_rw_mutex mTablesMutex;
     tbb::concurrent_unordered_map<crossbow::string, uint64_t> mNames;
@@ -106,17 +109,18 @@ private:
     }
 
 public:
-    TableManager(PageManager& pageManager, const StorageConfig& config, GC& gc, VersionManager& versionManager)
-        : mConfig(config)
-        , mGC(gc)
+    TableManager(Storage& storage, MemoryReclaimer& memoryManager, PageManager& pageManager,
+        VersionManager& versionManager, GC& gc, const StorageConfig& config)
+        : mMemoryManager(memoryManager)
         , mPageManager(pageManager)
         , mVersionManager(versionManager)
-        , mScanManager(config.numScanThreads)
+        , mGC(gc)
+        , mConfig(config)
+        , mScanManager(storage, config.numScanThreads)
         , mShutDown(false)
         , mLastTableIdx(0)
         , mGCThread(std::bind(&TableManager::gcThread, this))
     {
-        mScanManager.run();
     }
 
     ~TableManager() {
@@ -124,7 +128,7 @@ public:
         mStopCondition.notify_all();
         mGCThread.join();
         for (auto t : mTables) {
-            crossbow::allocator::destroy_now(t.second);
+            delete t.second;
         }
     }
 
@@ -142,7 +146,6 @@ public:
             return false;
         }
 
-        crossbow::allocator __;
         typename decltype(mTablesMutex)::scoped_lock _(mTablesMutex, false);
         idx = ++mLastTableIdx;
         {
@@ -152,7 +155,7 @@ public:
             }
         }
 
-        auto ptr = crossbow::allocator::construct<Table>(mPageManager, name, schema, idx, std::forward<Args>(args)...);
+        auto ptr = new Table(mMemoryManager, mPageManager, name, schema, idx, std::forward<Args>(args)...);
         LOG_ASSERT(ptr, "Unable to allocate table");
         __attribute__((unused)) auto res = mTables.insert(std::make_pair(idx, ptr));
         LOG_ASSERT(res.second, "Insert with unique id failed");
@@ -186,7 +189,6 @@ public:
     template <typename Fun>
     int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun)
     {
-        crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->get(key, snapshot, std::move(fun));
     }
@@ -194,7 +196,6 @@ public:
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot)
     {
-        crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->update(key, size, data, snapshot);
     }
@@ -203,21 +204,18 @@ public:
     int insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot)
     {
-        crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->insert(key, size, data, snapshot);
     }
 
     int remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
-        crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->remove(key, snapshot);
     }
 
     int revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
-        crossbow::allocator _;
         mVersionManager.addSnapshot(snapshot);
         return lookupTable(tableId)->revert(key, snapshot);
     }

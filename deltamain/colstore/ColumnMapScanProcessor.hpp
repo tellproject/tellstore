@@ -30,8 +30,6 @@
 #include <util/LLVMScan.hpp>
 #include <util/Log.hpp>
 
-#include <crossbow/allocator.hpp>
-
 #include <cstdint>
 #include <vector>
 

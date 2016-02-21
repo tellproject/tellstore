@@ -22,8 +22,6 @@
  */
 #include "Log.hpp"
 
-#include <crossbow/allocator.hpp>
-
 namespace tell {
 namespace store {
 
@@ -111,16 +109,13 @@ void BaseLogImpl::freeEmptyPageNow(LogPage* page) {
     mPageManager.free(page);
 }
 
-void BaseLogImpl::freePage(LogPage* begin, LogPage* end) {
-    auto& pageManager = mPageManager;
-    crossbow::allocator::invoke([begin, end, &pageManager]() {
-        auto page = begin;
-        while (page != end) {
-            auto next = page->next().load();
-            pageManager.free(page);
-            page = next;
-        }
-    });
+void BaseLogImpl::freePage(LogPage* begin, LogPage* end, std::vector<void*>& obsoletePages) {
+    auto page = begin;
+    while (page != end) {
+        auto next = page->next().load();
+        obsoletePages.emplace_back(page);
+        page = next;
+    }
 }
 
 UnorderedLogImpl::UnorderedLogImpl(PageManager& pageManager)
@@ -164,7 +159,7 @@ void UnorderedLogImpl::appendPage(LogPage* begin, LogPage* end) {
     }
 }
 
-void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
+void UnorderedLogImpl::erase(LogPage* begin, LogPage* end, std::vector<void*>& obsoletePages) {
     LOG_ASSERT(begin != nullptr, "Begin page must not be null");
 
     if (begin == end) {
@@ -184,7 +179,7 @@ void UnorderedLogImpl::erase(LogPage* begin, LogPage* end) {
     }
     mPages.fetch_sub(pages);
 
-    freePage(next, end);
+    freePage(next, end, obsoletePages);
 }
 
 LogEntry* UnorderedLogImpl::appendEntry(uint32_t size, uint32_t entrySize, uint32_t type) {
@@ -272,14 +267,14 @@ void OrderedLogImpl::seal(LogEntry* entry) {
     advanceSealedHead(sealedHead);
 }
 
-bool OrderedLogImpl::truncateLog(LogIterator oldTail, LogIterator newTail) {
+bool OrderedLogImpl::truncateLog(LogIterator oldTail, LogIterator newTail, std::vector<void*>& obsoletePages) {
     LogPosition old(oldTail.page(), oldTail.offset());
     if (!mTail.compare_exchange_strong(old, LogPosition(newTail.page(), newTail.offset()))) {
         return false;
     }
 
     if (oldTail.page() != newTail.page()) {
-        freePage(oldTail.page(), newTail.page());
+        freePage(oldTail.page(), newTail.page(), obsoletePages);
     }
 
     return true;

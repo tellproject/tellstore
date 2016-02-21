@@ -231,7 +231,7 @@ public:
 
     DynamicInsertTableEntry* allocateHead();
 
-    void truncate(DynamicInsertTableEntry* endList);
+    DynamicInsertTableEntry* truncate(DynamicInsertTableEntry* endList);
 
 private:
     DynamicInsertTableEntry* allocateHead(DynamicInsertTableEntry* headList, size_t headSize);

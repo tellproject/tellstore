@@ -26,7 +26,6 @@
 
 #include <util/StorageConfig.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/infinio/InfinibandService.hpp>
 #include <crossbow/logger.hpp>
 #include <crossbow/program_options.hpp>
@@ -82,9 +81,6 @@ int main(int argc, const char** argv) {
     LOG_INFO("--- Total Memory: %1%GB", double(storageConfig.totalMemory) / double(1024 * 1024 * 1024));
     LOG_INFO("--- Scan Threads: %1%", storageConfig.numScanThreads);
     LOG_INFO("--- Hash Map Capacity: %1%", storageConfig.hashMapCapacity);
-
-    // Initialize allocator
-    crossbow::allocator::init();
 
     LOG_INFO("Initialize storage");
     tell::store::Storage storage(storageConfig);

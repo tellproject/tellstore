@@ -26,7 +26,6 @@
 #include <util/LLVMScan.hpp>
 #include <util/ScanQuery.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>

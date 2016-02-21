@@ -22,13 +22,13 @@
  */
 #pragma once
 
-#include <config.h>
+#include "Allocator.hpp"
 #include "ScanQuery.hpp"
 
+#include <config.h>
 #include <tellstore/ErrorCode.hpp>
 #include <tellstore/Record.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
 #include <crossbow/singleconsumerqueue.hpp>
 
@@ -49,8 +49,8 @@ template<class Table>
 class ScanThread : crossbow::non_copyable, crossbow::non_movable {
 public:
     ScanThread()
-        : mData(0),
-          mThread(&ScanThread<Table>::operator(), this) {
+            : mData(0),
+              mThread(&ScanThread<Table>::operator(), this) {
     }
 
     void stop();
@@ -133,11 +133,15 @@ void ScanThread<Table>::notify(void* data, ScanThread::PointerTag tag) {
     mWaitCondition.notify_one();
 }
 
-template<class Table>
+template<class Storage>
 class ScanManager : crossbow::non_copyable, crossbow::non_movable {
+    using Table = typename Storage::Table;
     using ScanRequest = std::tuple<uint64_t, Table*, ScanQuery*>;
 
     size_t mNumThreads;
+
+    std::unique_ptr<MemoryConsumer> mMemoryConsumer;
+
     crossbow::SingleConsumerQueue<ScanRequest, MAX_QUERY_SHARING> queryQueue;
     std::vector<ScanRequest> mEnqueuedQueries;
     std::atomic<bool> stopScans;
@@ -145,18 +149,27 @@ class ScanManager : crossbow::non_copyable, crossbow::non_movable {
     std::vector<std::unique_ptr<ScanThread<Table>>> mSlaves;
     std::thread mMasterThread;
 public:
-    ScanManager(size_t numThreads)
+    ScanManager(Storage& storage, size_t numThreads)
         : mNumThreads(numThreads)
+        , mMemoryConsumer(storage.createMemoryConsumer())
         , mEnqueuedQueries(MAX_QUERY_SHARING, ScanRequest(0u, nullptr, nullptr))
         , stopScans(false) {
+        if (mNumThreads == 0) {
+            return;
+        }
+
+        mSlaves.reserve(mNumThreads - 1);
+        for (decltype(mNumThreads) i = 0; i < mNumThreads - 1; ++i) {
+            mSlaves.emplace_back(new ScanThread<Table>());
+        }
+
+        mMasterThread = std::thread(&ScanManager<Storage>::operator(), this);
     }
 
     ~ScanManager() {
         stopScans.store(true);
         mMasterThread.join();
     }
-
-    void run();
 
     int scan(uint64_t tableId, Table* table, ScanQuery* query) {
         return (queryQueue.tryWrite(std::make_tuple(tableId, table, query)) ? 0 : error::server_overlad);
@@ -168,22 +181,8 @@ private:
     bool masterThread();
 };
 
-template<class Table>
-void ScanManager<Table>::run() {
-    if (mNumThreads == 0) {
-        return;
-    }
-
-    mSlaves.reserve(mNumThreads - 1);
-    for (decltype(mNumThreads) i = 0; i < mNumThreads - 1; ++i) {
-        mSlaves.emplace_back(new ScanThread<Table>());
-    }
-
-    mMasterThread = std::thread(&ScanManager<Table>::operator(), this);
-}
-
-template<class Table>
-void ScanManager<Table>::operator()() {
+template<class Storage>
+void ScanManager<Storage>::operator()() {
     while (!stopScans.load()) {
         if (!masterThread()) {
             std::this_thread::yield();
@@ -194,8 +193,8 @@ void ScanManager<Table>::operator()() {
     }
 }
 
-template<class Table>
-bool ScanManager<Table>::masterThread() {
+template<class Storage>
+bool ScanManager<Storage>::masterThread() {
     // A map of all queries we get during this scan phase. Key is the table id, value is:
     //  - the Table object
     //  - the total size
@@ -244,7 +243,7 @@ bool ScanManager<Table>::masterThread() {
         }
         auto prepareTime = std::chrono::steady_clock::now();
 
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(mMemoryConsumer.get());
 
         auto processors = scan.startScan(mNumThreads);
         for (decltype(mSlaves.size()) i = 0; i < mSlaves.size(); ++i) {
@@ -262,6 +261,8 @@ bool ScanManager<Table>::masterThread() {
             while (slave->isBusy()) std::this_thread::yield();
         }
         auto endTime = std::chrono::steady_clock::now();
+
+        memoryLock.release();
 
         auto prepareDuration = std::chrono::duration_cast<std::chrono::milliseconds>(prepareTime - startTime);
         auto processDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - prepareTime);

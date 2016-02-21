@@ -479,7 +479,7 @@ public:
      * @param begin The first page to be deleted
      * @param end The page succeeding the last deleted pages
      */
-    void freePage(LogPage* begin, LogPage* end);
+    void freePage(LogPage* begin, LogPage* end, std::vector<void*>& obsoletePages);
 
 protected:
     BaseLogImpl(PageManager& pageManager)
@@ -594,7 +594,7 @@ public:
      * @param begin The page preceeding the first deleted page
      * @param end The page succeeding the last deleted page
      */
-    void erase(LogPage* begin, LogPage* end);
+    void erase(LogPage* begin, LogPage* end, std::vector<void*>& obsoletePages);
 
 protected:
     UnorderedLogImpl(PageManager& pageManager);
@@ -812,7 +812,7 @@ public:
      * @param newTail The new tail
      * @return True if the truncation succeeded
      */
-    bool truncateLog(LogIterator oldTail, LogIterator newTail);
+    bool truncateLog(LogIterator oldTail, LogIterator newTail, std::vector<void*>& obsoletePages);
 
 protected:
     OrderedLogImpl(PageManager& pageManager);

@@ -25,7 +25,6 @@
 
 #include <util/Log.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/logger.hpp>
 
 namespace tell {
@@ -181,7 +180,7 @@ T InsertTable::execOnElement(uint64_t key, T notFound, F fun) {
 
 DynamicInsertTable::DynamicInsertTable(size_t minimumCapacity)
         : mMinimumCapacity(minimumCapacity),
-          mHeadList(crossbow::allocator::construct<DynamicInsertTableEntry>(nullptr, minimumCapacity)) {
+          mHeadList(new DynamicInsertTableEntry(nullptr, minimumCapacity)) {
     LOG_ASSERT(minimumCapacity > 1, "Minimum capacity must be larger than 1");
     LOG_ASSERT(isPowerOf2(minimumCapacity), "Minimum capacity must be power of 2");
 }
@@ -190,7 +189,7 @@ DynamicInsertTable::~DynamicInsertTable() {
     auto headList = mHeadList.exchange(nullptr);
     while (headList != nullptr) {
         auto previousList = headList->nextList.load();
-        crossbow::allocator::destroy_now(headList);
+        delete headList;
         headList = previousList;
     }
 }
@@ -288,24 +287,19 @@ DynamicInsertTableEntry* DynamicInsertTable::allocateHead() {
     return allocateHead(headList, capacity);
 }
 
-void DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
-    // Truncate the insert hash table and free all tables using the epoch mechanism
-    auto oldList = endList->nextList.exchange(nullptr);
-    while (oldList != nullptr) {
-        auto previousList = oldList->nextList.load();
-        crossbow::allocator::destroy(oldList);
-        oldList = previousList;
-    }
+DynamicInsertTableEntry* DynamicInsertTable::truncate(DynamicInsertTableEntry* endList) {
+    // Truncate the insert hash table
+    return endList->nextList.exchange(nullptr);
 }
 
 DynamicInsertTableEntry* DynamicInsertTable::allocateHead(DynamicInsertTableEntry* headList, size_t capacity) {
     LOG_ASSERT(isPowerOf2(capacity), "Capacity must be power of 2");
-    auto newHeadList = crossbow::allocator::construct<DynamicInsertTableEntry>(headList, capacity);
+    auto newHeadList = new DynamicInsertTableEntry(headList, capacity);
 
     // Set the newly allocated table as new head table
     // If this fails another hash table was allocated in the meantime by somebody else
     if (!mHeadList.compare_exchange_strong(headList, newHeadList)) {
-        crossbow::allocator::destroy_now(newHeadList);
+        delete newHeadList;
         newHeadList = headList;
     }
     return newHeadList;

@@ -26,6 +26,8 @@
 #include "ServerScanQuery.hpp"
 #include "Storage.hpp"
 
+#include <util/Allocator.hpp>
+
 #include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/byte_buffer.hpp>
@@ -53,9 +55,11 @@ class ServerSocket : public crossbow::infinio::RpcServerSocket<ServerManager, Se
 
 public:
     ServerSocket(ServerManager& manager, Storage& storage, crossbow::infinio::InfinibandProcessor& processor,
-            crossbow::infinio::InfinibandSocket socket, size_t maxBatchSize, uint64_t maxInflightScanBuffer)
+            MemoryConsumer* memoryConsumer, crossbow::infinio::InfinibandSocket socket, size_t maxBatchSize,
+            uint64_t maxInflightScanBuffer)
             : Base(manager, processor, std::move(socket), crossbow::string(), maxBatchSize),
               mStorage(storage),
+              mMemoryConsumer(memoryConsumer),
               mMaxInflightScanBuffer(maxInflightScanBuffer),
               mInflightScanBuffer(0u) {
     }
@@ -273,6 +277,8 @@ private:
 
     Storage& mStorage;
 
+    MemoryConsumer* mMemoryConsumer;
+
     /// Maximum number of scan buffers that are in flight on the socket at the same time
     uint64_t mMaxInflightScanBuffer;
 
@@ -298,6 +304,17 @@ private:
     friend Base;
     friend class ServerSocket;
 
+    struct Processor {
+        Processor(std::unique_ptr<crossbow::infinio::InfinibandProcessor> _eventProcessor,
+                std::unique_ptr<MemoryConsumer> _memoryConsumer)
+                : eventProcessor(std::move(_eventProcessor)),
+                  memoryConsumer(std::move(_memoryConsumer)) {
+        }
+
+        std::unique_ptr<crossbow::infinio::InfinibandProcessor> eventProcessor;
+        std::unique_ptr<MemoryConsumer> memoryConsumer;
+    };
+
     ServerSocket* createConnection(crossbow::infinio::InfinibandSocket socket, const crossbow::string& data);
 
     ScanBufferManager& scanBufferManager() {
@@ -311,7 +328,7 @@ private:
     ScanBufferManager mScanBufferManager;
     uint64_t mMaxInflightScanBuffer;
 
-    std::vector<std::unique_ptr<crossbow::infinio::InfinibandProcessor>> mProcessors;
+    std::vector<Processor> mProcessors;
 };
 
 } // namespace store

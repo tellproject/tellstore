@@ -53,6 +53,8 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
     auto startTime = std::chrono::steady_clock::now();
 #endif
 
+    MemoryConsumerLock memoryLock(mMemoryConsumer);
+
     switch (messageType) {
 
     case crossbow::to_underlying(RequestType::CREATE_TABLE): {
@@ -436,7 +438,7 @@ ServerManager::ServerManager(crossbow::infinio::InfinibandService& service, Stor
           mScanBufferManager(service, config),
           mMaxInflightScanBuffer(config.maxInflightScanBuffer) {
     for (decltype(config.numNetworkThreads) i = 0; i < config.numNetworkThreads; ++i) {
-        mProcessors.emplace_back(service.createProcessor());
+        mProcessors.emplace_back(service.createProcessor(), storage.createMemoryConsumer());
     }
 }
 
@@ -450,10 +452,11 @@ ServerSocket* ServerManager::createConnection(crossbow::infinio::InfinibandSocke
         return nullptr;
     }
     auto thread = *reinterpret_cast<const uint64_t*>(&data[handshake.size()]);
-    auto& processor = *mProcessors.at(thread % mProcessors.size());
+    auto& processor = mProcessors.at(thread % mProcessors.size());
 
     LOG_INFO("%1%] New client connection on processor %2%", socket->remoteAddress(), thread);
-    return new ServerSocket(*this, mStorage, processor, std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
+    return new ServerSocket(*this, mStorage, *processor.eventProcessor, processor.memoryConsumer.get(),
+            std::move(socket), mMaxBatchSize, mMaxInflightScanBuffer);
 }
 
 } // namespace store

@@ -25,8 +25,6 @@
 
 #include <util/VersionManager.hpp>
 
-#include <crossbow/logger.hpp>
-
 #include <boost/config.hpp>
 
 namespace tell {
@@ -115,14 +113,16 @@ void LazyRecordWriter::seal() {
     mRecord = nullptr;
 }
 
-Table::Table(PageManager& pageManager, const crossbow::string& tableName, const Schema& schema, uint64_t tableId,
-        VersionManager& versionManager, HashTable& hashMap)
-        : mVersionManager(versionManager),
+Table::Table(MemoryReclaimer& memoryManager, PageManager& pageManager, const crossbow::string& tableName,
+        const Schema& schema, uint64_t tableId, VersionManager& versionManager, HashTable& hashMap)
+        : mMemoryManager(memoryManager),
+          mPageManager(pageManager),
+          mVersionManager(versionManager),
           mHashMap(hashMap),
           mTableName(tableName),
           mRecord(schema),
           mTableId(tableId),
-          mLog(pageManager) {
+          mLog(mPageManager) {
 }
 
 int Table::insert(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot) {
@@ -295,6 +295,15 @@ int Table::internalUpdate(uint64_t key, size_t size, const char* data,
 
     // Element not found
     return error::invalid_write;
+}
+
+void Table::releasePages(const std::vector<void*>& pages) {
+    if (pages.empty()) {
+        return;
+    }
+
+    mMemoryManager.wait();
+    mPageManager.free(pages);
 }
 
 } // namespace logstructured

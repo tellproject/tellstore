@@ -66,14 +66,14 @@ const void* CuckooTable::get(uint64_t key) const {
     return nullptr;
 }
 
+Modifier CuckooTable::modifier(std::vector<void*>& obsoletePages) {
+    return Modifier(*this, obsoletePages);
+}
+
 auto CuckooTable::at(unsigned h, size_t idx) const -> const EntryT& {
     auto tIdx = idx / ENTRIES_PER_PAGE;
     auto pIdx = idx - tIdx * ENTRIES_PER_PAGE;
     return mPages[3*tIdx+h][pIdx];
-}
-
-Modifier CuckooTable::modifier() {
-    return Modifier(*this);
 }
 
 CuckooTable::CuckooTable(PageManager& pageManager,
@@ -89,23 +89,8 @@ size_t CuckooTable::capacity() const {
     return ENTRIES_PER_PAGE * mPages.size();
 }
 
-Modifier::~Modifier() {
-    if (mToDelete.empty()) {
-        return;
-    }
-
-    auto pages = std::move(mToDelete);
-    auto& pageManager = mTable.mPageManager;
-    crossbow::allocator::invoke([pages, &pageManager]() {
-        for (auto page : pages) {
-            pageManager.free(page);
-        }
-    });
-}
-
 CuckooTable* Modifier::done() const {
-    return crossbow::allocator::construct<CuckooTable>(mTable.mPageManager, std::move(mPages), hash1, hash2, hash3,
-            mSize);
+    return new CuckooTable(mPageManager, std::move(mPages), hash1, hash2, hash3, mSize);
 }
 
 const void* Modifier::get(uint64_t key) const
@@ -227,14 +212,14 @@ bool Modifier::cow(unsigned h, size_t idx) {
     if (pageWasModified[3*idx + h]) return false;
     pageWasModified[3*idx + h] = true;
     auto oldPage = mPages[3*idx + h];
-    auto page = mTable.mPageManager.alloc();
+    auto page = mPageManager.alloc();
     if (!page) {
         LOG_ERROR("PageManager ran out of space");
         std::terminate();
     }
     auto newPage = reinterpret_cast<EntryT*>(page);
     memcpy(newPage, oldPage, TELL_PAGE_SIZE);
-    mToDelete.push_back(oldPage);
+    mObsoletePages.emplace_back(oldPage);
     mPages[3*idx + h] = newPage;
     return true;
 }
@@ -256,7 +241,7 @@ void Modifier::rehash() {
     oldPages.swap(mPages);
     mPages.reserve(numPages);
     for (decltype(numPages) i = 0; i < numPages; ++i) {
-        auto page = mTable.mPageManager.alloc();
+        auto page = mPageManager.alloc();
         if (!page) {
             LOG_ERROR("PageManager ran out of space");
             std::terminate();
@@ -283,9 +268,9 @@ void Modifier::rehash() {
         }
         // If the page was modified it can be freed immediately (only the modifier had access to it)
         if (oldPageWasModified[i]) {
-            mTable.mPageManager.free(page);
+            mPageManager.free(page);
         } else {
-            mToDelete.push_back(page);
+            mObsoletePages.emplace_back(page);
         }
     }
 }

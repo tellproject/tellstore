@@ -31,16 +31,16 @@ using namespace tell::store;
 class CuckooTest : public ::testing::Test {
 protected:
     CuckooTest()
-            : pageManager(PageManager::construct(20 * TELL_PAGE_SIZE)),
-              table(crossbow::allocator::construct<CuckooTable>(*pageManager)) {
+            : pageManager(20 * TELL_PAGE_SIZE),
+              table(new CuckooTable(pageManager)) {
     }
 
     virtual ~CuckooTest() {
         table->destroy();
-        crossbow::allocator::destroy_now(table);
+        delete table;
     }
 
-    PageManager::Ptr pageManager;
+    PageManager pageManager;
 
     CuckooTable* table;
 };
@@ -58,17 +58,19 @@ TEST_F(CuckooTest, GetOnEmpty) {
 }
 
 TEST_F(CuckooTest, SimpleInsert) {
-    crossbow::allocator alloc;
+    std::vector<void*> obsoletePages;
     CuckooTable& currTable = *table;
     uint64_t key = 1937;
     std::unique_ptr<int> value(new int(8713));
-    auto modifier = currTable.modifier();
+    auto modifier = currTable.modifier(obsoletePages);
     ASSERT_TRUE(modifier.insert(key, value.get(), false)) << "Insertion of inexistent value not succeeded";
     auto oldTable = table;
     table = modifier.done();
     ASSERT_NE(table, nullptr) << "Modifier done returned nullptr";
     ASSERT_NE(table, oldTable) << "After modification, the table must change";
-    crossbow::allocator::destroy_now(oldTable);
+    ASSERT_FALSE(obsoletePages.empty()) << "After modification, pages must be obsolete";
+    delete oldTable;
+    pageManager.free(obsoletePages);
     CuckooTable& nTable = *table;
     int* ptr = reinterpret_cast<int*>(nTable.get(key));
     ASSERT_EQ(ptr, value.get()) << "Table get returned wrong value";
@@ -92,14 +94,15 @@ protected:
     }
     virtual ~CuckooTestFilled() {}
     virtual void SetUp() {
-        crossbow::allocator alloc;
-        auto m = table->modifier();
+        std::vector<void*> obsoletePages;
+        auto m = table->modifier(obsoletePages);
         for (auto e : entries) {
             m.insert(e, &value, false);
         }
         auto old = table;
         table = m.done();
-        crossbow::allocator::destroy_now(old);
+        delete old;
+        pageManager.free(obsoletePages);
     }
 };
 
@@ -113,18 +116,19 @@ TEST_F(CuckooTestFilled, AllExist) {
 }
 
 TEST_F(CuckooTestFilled, DoesNotReplace) {
+    std::vector<void*> obsoletePages;
     std::unique_ptr<int> value(new int(8713));
-    crossbow::allocator alloc;
-    Modifier m = table->modifier();
+    Modifier m = table->modifier(obsoletePages);
     for (auto e : entries) {
         ASSERT_FALSE(m.insert(e, value.get(), false)) << "Replaced value for " << e;
     }
+    ASSERT_TRUE(obsoletePages.empty());
 }
 
 TEST_F(CuckooTestFilled, TestResize) {
-    crossbow::allocator alloc;
+    std::vector<void*> obsoletePages;
     int oVal = 2;
-    Modifier m = table->modifier();
+    Modifier m = table->modifier(obsoletePages);
     size_t oldCapacity = m.capacity();
     decltype(entries) newEntries;
     std::mt19937 rnd(10);
@@ -141,7 +145,8 @@ TEST_F(CuckooTestFilled, TestResize) {
     ASSERT_NE(oldCapacity, m.capacity());
     auto oldTable = table;
     table = m.done();
-    crossbow::allocator::destroy_now(oldTable);
+    delete oldTable;
+    pageManager.free(obsoletePages);
     auto& t = *table;
     for (auto e : entries) {
         auto ptr = reinterpret_cast<int*>(t.get(e));

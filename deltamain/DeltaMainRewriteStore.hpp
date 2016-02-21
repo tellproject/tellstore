@@ -26,6 +26,7 @@
 #include "Table.hpp"
 
 #include <config.h>
+#include <util/Allocator.hpp>
 #include <util/PageManager.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
@@ -52,16 +53,13 @@ struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
     }
 
     DeltaMainRewriteStore(const StorageConfig& config)
-        : mPageManager(PageManager::construct(config.totalMemory))
-        , tableManager(*mPageManager, config, gc, mVersionManager)
+        : mPageManager(config.totalMemory)
+        , tableManager(*this, mMemoryManager, mPageManager, mVersionManager, gc, config)
     {
     }
 
-
-    DeltaMainRewriteStore(const StorageConfig& config, size_t totalMem)
-        : mPageManager(PageManager::construct(totalMem))
-        , tableManager(*mPageManager, config, gc, mVersionManager)
-    {
+    std::unique_ptr<MemoryConsumer> createMemoryConsumer() {
+        return mMemoryManager.createConsumer();
     }
 
     bool createTable(const crossbow::string &name,
@@ -130,10 +128,11 @@ struct DeltaMainRewriteStore : crossbow::non_copyable, crossbow::non_movable {
     }
 
 private:
-    PageManager::Ptr mPageManager;
+    MemoryReclaimer mMemoryManager;
+    PageManager mPageManager;
     GC gc;
     VersionManager mVersionManager;
-    TableManager<Table, GC> tableManager;
+    TableManager<DeltaMainRewriteStore<Context>> tableManager;
 };
 
 using DeltaMainRewriteRowStore = DeltaMainRewriteStore<deltamain::RowStoreContext>;

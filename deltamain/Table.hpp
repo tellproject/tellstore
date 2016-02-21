@@ -29,6 +29,7 @@
 #include "colstore/ColumnMapRecord.hpp"
 #include "rowstore/RowStoreContext.hpp"
 
+#include <util/Allocator.hpp>
 #include <util/CuckooHash.hpp>
 #include <util/Log.hpp>
 
@@ -37,12 +38,13 @@
 
 #include <commitmanager/SnapshotDescriptor.hpp>
 
-#include <crossbow/allocator.hpp>
+#include <crossbow/logger.hpp>
 
+#include <atomic>
+#include <cstdlib>
+#include <functional>
 #include <memory>
 #include <vector>
-#include <atomic>
-#include <functional>
 
 namespace tell {
 namespace commitmanager {
@@ -67,8 +69,17 @@ public:
     using MainRecord = typename Context::MainRecord;
     using ConstMainRecord = typename Context::ConstMainRecord;
 
-    Table(PageManager& pageManager, const crossbow::string& name, const Schema& schema, uint64_t idx,
-            uint64_t insertTableCapacity);
+    static void* operator new(size_t size) {
+        LOG_ASSERT(size % alignof(Table) == 0u, "Size must be multiple of alignment");
+        return ::aligned_alloc(alignof(Table), size);
+    }
+
+    static void operator delete(void* ptr) {
+        ::free(ptr);
+    }
+
+    Table(MemoryReclaimer& memoryManager, PageManager& pageManager, const crossbow::string& name, const Schema& schema,
+            uint64_t idx, uint64_t insertTableCapacity);
 
     ~Table();
 
@@ -162,6 +173,7 @@ private:
     template <typename Rec>
     bool internalRevert(void* ptr, const commitmanager::SnapshotDescriptor& snapshot, int& ec);
 
+    MemoryReclaimer& mMemoryManager;
     PageManager& mPageManager;
 
     crossbow::string mTableName;

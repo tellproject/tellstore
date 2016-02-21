@@ -28,7 +28,6 @@ target_link_libraries(tests PRIVATE gtest gtest_main)
 
 # Link against Crossbow
 target_include_directories(tests PRIVATE ${Crossbow_INCLUDE_DIRS})
-target_link_libraries(tests PRIVATE crossbow_allocator)
 
 # Link against Jemalloc
 target_include_directories(tests PRIVATE ${Jemalloc_INCLUDE_DIRS})

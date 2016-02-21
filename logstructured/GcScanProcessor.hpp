@@ -27,7 +27,6 @@
 #include <util/Log.hpp>
 #include <util/ScanQuery.hpp>
 
-#include <crossbow/allocator.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
@@ -79,6 +78,8 @@ public:
     GcScanProcessor(Table& table, const std::vector<ScanQuery*>& queries, const PageIterator& begin,
             const PageIterator& end, uint64_t minVersion, GcScan::RowScanFun rowScanFun,
             const std::vector<GcScan::RowMaterializeFun>& rowMaterializeFuns, uint32_t numConjuncts);
+
+    ~GcScanProcessor();
 
     /**
      * @brief Scans over all entries in the log
@@ -142,6 +143,8 @@ private:
 
     LogPage* mRecyclingHead;
     LogPage* mRecyclingTail;
+
+    std::vector<void*> mObsoletePages;
 
     /// Amount of garbage in the current page
     uint32_t mGarbage;

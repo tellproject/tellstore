@@ -32,17 +32,18 @@ namespace store {
 namespace deltamain {
 
 template <typename Context>
-Table<Context>::Table(PageManager& pageManager, const crossbow::string& name, const Schema& schema, uint64_t idx,
-        uint64_t insertTableCapacity)
-    : mPageManager(pageManager)
+Table<Context>::Table(MemoryReclaimer& memoryManager, PageManager& pageManager, const crossbow::string& name,
+        const Schema& schema, uint64_t idx, uint64_t insertTableCapacity)
+    : mMemoryManager(memoryManager)
+    , mPageManager(pageManager)
     , mTableName(name)
     , mRecord(std::move(schema))
     , mTableId(idx)
     , mInsertTable(insertTableCapacity)
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
-    , mMainTable(crossbow::allocator::construct<CuckooTable>(pageManager))
-    , mPages(crossbow::allocator::construct<PageList>(mInsertLog.begin(), mUpdateLog.begin()))
+    , mMainTable(new CuckooTable(pageManager))
+    , mPages(new PageList(mInsertLog.begin(), mUpdateLog.begin()))
     , mContext(mPageManager, mRecord)
 {}
 
@@ -52,11 +53,11 @@ Table<Context>::~Table() {
     for (auto page : pageList->pages) {
         mPageManager.free(page);
     }
-    crossbow::allocator::destroy_now(pageList);
+    delete pageList;
 
     auto ht = mMainTable.load();
     ht->destroy();
-    crossbow::allocator::destroy_now(ht);
+    delete ht;
 }
 
 template <typename Context>
@@ -221,16 +222,15 @@ template <typename Context>
 void Table<Context>::runGC(uint64_t minVersion) {
     LOG_TRACE("Starting garbage collection [minVersion = %1%]", minVersion);
 
-    crossbow::allocator _;
+    std::vector<void*> obsoletePages;
+
     auto oldMainTable = mMainTable.load();
-    auto mainTableModifier = oldMainTable->modifier();
+    auto mainTableModifier = oldMainTable->modifier(obsoletePages);
 
     PageModifier pageListModifier(mContext, mPageManager, mainTableModifier, minVersion);
 
-    auto pageList = crossbow::allocator::construct<PageList>();
+    auto pageList = new PageList();
     pageList->updateEnd = mUpdateLog.sealedEnd();
-
-    std::vector<void*> obsoletePages;
     auto oldPageList = mPages.load();
     for (auto oldPage: oldPageList->pages) {
         if (pageListModifier.clean(oldPage)) {
@@ -260,29 +260,32 @@ void Table<Context>::runGC(uint64_t minVersion) {
     pageList->pages = pageListModifier.done();
 
     // The garbage collection is finished - we can now reset the read only table
-    __attribute__((unused)) auto insertRes = mInsertLog.truncateLog(insBegin, insEnd);
+    __attribute__((unused)) auto insertRes = mInsertLog.truncateLog(insBegin, insEnd, obsoletePages);
     LOG_ASSERT(insertRes, "Truncating insert log did not succeed");
-    __attribute__((unused)) auto updateRes = mUpdateLog.truncateLog(mUpdateLog.begin(), oldPageList->updateEnd);
+    __attribute__((unused)) auto updateRes = mUpdateLog.truncateLog(mUpdateLog.begin(), oldPageList->updateEnd,
+            obsoletePages);
     LOG_ASSERT(updateRes, "Truncating update log did not succeed");
 
     pageList->insertEnd = insEnd;
 
     mMainTable.store(mainTableModifier.done());
-    crossbow::allocator::destroy(oldMainTable);
-
     mPages.store(pageList);
-    crossbow::allocator::destroy(oldPageList);
 
-    // Free all obsolete pages from the old main using the epoch mechanism
-    auto& pageManager = mPageManager;
-    crossbow::allocator::invoke([obsoletePages, &pageManager]() {
-        for (auto page : obsoletePages) {
-            pageManager.free(page);
-        }
-    });
+    // Truncate the insert hash table
+    auto obsoleteHashEntries = mInsertTable.truncate(insertHeadList);
 
-    // Truncate the insert hash table and free all tables using the epoch mechanism
-    mInsertTable.truncate(insertHeadList);
+    // Wait until it is safe to release memory
+    mMemoryManager.wait();
+
+    delete oldMainTable;
+    delete oldPageList;
+    while (obsoleteHashEntries != nullptr) {
+        auto previousList = obsoleteHashEntries->nextList.load();
+        delete obsoleteHashEntries;
+        obsoleteHashEntries = previousList;
+    }
+
+    mPageManager.free(obsoletePages);
 
     LOG_TRACE("Completing garbage collection");
 }

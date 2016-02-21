@@ -56,11 +56,7 @@ PageManager::PageManager(size_t size)
 }
 
 PageManager::~PageManager() {
-    // TODO Fix this behavior
-    // Wait for all pages to be released
-    // This is required as the epoch might delete the PageManager while a previous epoch is being deleted (with a
-    // reference to this page manager).
-    while (mPages.capacity() != mPages.size());
+    LOG_ASSERT(mPages.capacity() == mPages.size(), "Not all pages released");
     munmap(mData, mSize);
 }
 
@@ -84,6 +80,12 @@ void PageManager::free(void* page) {
     LOG_ASSERT((reinterpret_cast<char*>(page) - reinterpret_cast<char*>(mData)) % TELL_PAGE_SIZE == 0,
             "Pointer points not to beginning of page");
     freeEmpty(page);
+}
+
+void PageManager::free(const std::vector<void*>& pages) {
+    for (auto page : pages) {
+        free(page);
+    }
 }
 
 void PageManager::freeEmpty(void* page) {

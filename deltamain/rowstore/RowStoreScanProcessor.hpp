@@ -27,8 +27,6 @@
 #include <util/Log.hpp>
 #include <util/ScanQuery.hpp>
 
-#include <crossbow/allocator.hpp>
-
 #include <cstdint>
 #include <vector>
 

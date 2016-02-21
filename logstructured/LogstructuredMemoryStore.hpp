@@ -26,6 +26,7 @@
 #include "Table.hpp"
 
 #include <config.h>
+#include <util/Allocator.hpp>
 #include <util/PageManager.hpp>
 #include <util/TableManager.hpp>
 #include <util/VersionManager.hpp>
@@ -57,10 +58,14 @@ public:
     }
 
     LogstructuredMemoryStore(const StorageConfig& config)
-            : mPageManager(PageManager::construct(config.totalMemory)),
+            : mPageManager(config.totalMemory),
               mGc(*this),
-              mTableManager(*mPageManager, config, mGc, mVersionManager),
+              mTableManager(*this, mMemoryManager, mPageManager, mVersionManager, mGc, config),
               mHashMap(config.hashMapCapacity) {
+    }
+
+    std::unique_ptr<MemoryConsumer> createMemoryConsumer() {
+        return mMemoryManager.createConsumer();
     }
 
     bool createTable(const crossbow::string& name, const Schema& schema, uint64_t& idx) {
@@ -116,10 +121,11 @@ public:
     }
 
 private:
-    PageManager::Ptr mPageManager;
+    MemoryReclaimer mMemoryManager;
+    PageManager mPageManager;
     GC mGc;
     VersionManager mVersionManager;
-    TableManager<Table, GC> mTableManager;
+    TableManager<LogstructuredMemoryStore> mTableManager;
 
     Table::HashTable mHashMap;
 };

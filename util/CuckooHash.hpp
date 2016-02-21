@@ -30,8 +30,6 @@
 #include "PageManager.hpp"
 #include "functional.hpp"
 
-#include <crossbow/allocator.hpp>
-
 namespace tell {
 namespace store {
 
@@ -81,7 +79,6 @@ public:
     void destroy();
 
     friend class Modifier;
-    friend class crossbow::allocator;
 
 private:
     CuckooTable(PageManager& pageManager,
@@ -98,7 +95,7 @@ public:
         return const_cast<void*>(const_cast<const CuckooTable*>(this)->get(key));
     }
 
-    Modifier modifier();
+    Modifier modifier(std::vector<void*>& obsoletePages);
 
     size_t capacity() const;
 
@@ -108,22 +105,22 @@ private: // helper functions
 
 class Modifier {
     friend class CuckooTable;
-    friend class crossbow::allocator;
 
     using EntryT = typename CuckooTable::EntryT;
     static constexpr size_t ENTRIES_PER_PAGE = CuckooTable::ENTRIES_PER_PAGE;
 private:
-    CuckooTable& mTable;
+    PageManager& mPageManager;
+    std::vector<void*>& mObsoletePages;
     std::vector<bool> pageWasModified;
     mutable std::vector<EntryT*> mPages;
     cuckoo_hash_function hash1;
     cuckoo_hash_function hash2;
     cuckoo_hash_function hash3;
     size_t mSize;
-    std::vector<void*> mToDelete;
 private:
-    Modifier(CuckooTable& table)
-        : mTable(table),
+    Modifier(CuckooTable& table, std::vector<void*>& obsoletePages)
+        : mPageManager(table.mPageManager),
+          mObsoletePages(obsoletePages),
           pageWasModified(table.mPages.size(), false),
           mPages(table.mPages),
           hash1(table.hash1),
@@ -134,7 +131,6 @@ private:
     }
 
 public:
-    ~Modifier();
     CuckooTable* done() const;
 
     /**

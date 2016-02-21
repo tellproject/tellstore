@@ -25,9 +25,9 @@
 #include <deltamain/DeltaMainRewriteStore.hpp>
 #include <logstructured/LogstructuredMemoryStore.hpp>
 
-#include "DummyCommitManager.hpp"
+#include <util/Allocator.hpp>
 
-#include <crossbow/allocator.hpp>
+#include "DummyCommitManager.hpp"
 
 #include <gtest/gtest.h>
 
@@ -52,11 +52,13 @@ protected:
         config.hashMapCapacity = 0x100000ull;
         mStorage.reset(new Impl(config));
 
+        mMemoryConsumer = mStorage->createMemoryConsumer();
+
         mSchema.addField(FieldType::INT, "foo", true);
     }
 
     virtual void SetUp() final override {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(mMemoryConsumer.get());
         ASSERT_TRUE(mStorage->createTable("testTable", mSchema, mTableId)) << "Creating table failed";
         EXPECT_TRUE(correctTableId("testTable", mTableId));
     }
@@ -72,8 +74,9 @@ protected:
     }
 
     std::unique_ptr<Impl> mStorage;
-
     DummyCommitManager mCommitManager;
+
+    std::unique_ptr<MemoryConsumer> mMemoryConsumer;
 
     Schema mSchema;
 
@@ -85,7 +88,6 @@ using StorageTestImplementations = ::testing::Types<DeltaMainRewriteRowStore, De
 TYPED_TEST_CASE(StorageTest, StorageTestImplementations);
 
 TYPED_TEST(StorageTest, insert_and_get) {
-    crossbow::allocator _; // needed to free memory
     Record record(this->mSchema);
 
     // Force GC - since we did not do anything yet, this should
@@ -94,6 +96,7 @@ TYPED_TEST(StorageTest, insert_and_get) {
     this->mStorage->forceGC();
     auto tx = this->mCommitManager.startTx();
     {
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
@@ -102,6 +105,7 @@ TYPED_TEST(StorageTest, insert_and_get) {
         ASSERT_TRUE(!res) << "This insert must not fail!";
     }
     {
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         std::unique_ptr<char[]> dest;
         auto res = this->mStorage->get(this->mTableId, 1, tx, [&tx, &dest]
                 (size_t size, uint64_t version, bool isNewest) {
@@ -124,7 +128,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 1 can insert a new tuple
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 12)
@@ -138,7 +142,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 2 can not read the tuple written by transaction 1
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         std::unique_ptr<char[]> dest;
         auto res = this->mStorage->get(this->mTableId, 1, tx2, [&dest] (size_t size, uint64_t version, bool isNewest) {
             dest.reset(new char[size]);
@@ -149,7 +153,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 2 can not insert a new tuple already written by transaction 1
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
@@ -160,7 +164,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 2 can not update the tuple written by transaction 1
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
@@ -177,7 +181,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 3 can read the tuple written by transaction 1
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         std::unique_ptr<char[]> dest;
         auto res = this->mStorage->get(this->mTableId, 1, tx3, [&tx1, &dest]
                 (size_t size, uint64_t version, bool isNewest) {
@@ -191,7 +195,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 3 updates tuple written by transaction 1
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         size_t size;
         std::unique_ptr<char[]> rec(record.create(GenericTuple({
                 std::make_pair<crossbow::string, boost::any>("foo", 13)
@@ -202,7 +206,7 @@ TYPED_TEST(StorageTest, concurrent_transactions) {
 
     // Transaction 2 should not be able to see all versions
     {
-        crossbow::allocator _;
+        MemoryConsumerLock memoryLock(this->mMemoryConsumer.get());
         std::unique_ptr<char[]> dest;
         auto res = this->mStorage->get(this->mTableId, 1, tx2, [&tx1, &dest]
                 (size_t size, uint64_t version, bool isNewest) {
@@ -249,6 +253,7 @@ public:
     }
 
     void run(uint64_t startKey, uint64_t endKey) {
+        auto  memoryConsumer = mStorage->createMemoryConsumer();
         while (!mGo.load()) {
         }
 
@@ -256,6 +261,7 @@ public:
         auto transaction = mCommitManager.startTx();
 
         for (auto key = startKey; key < endKey; ++key) {
+            MemoryConsumerLock memoryLock(memoryConsumer.get());
             auto ec = mStorage->insert(mTableId, key, mTupleSize, mTuple[key % mTuple.size()].get(), transaction);
             ASSERT_FALSE(ec);
 

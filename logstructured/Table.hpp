@@ -35,6 +35,7 @@
 #include "ChainedVersionRecord.hpp"
 #include "VersionRecordIterator.hpp"
 
+#include <util/Allocator.hpp>
 #include <util/Log.hpp>
 #include <util/OpenAddressingHash.hpp>
 
@@ -44,9 +45,11 @@
 #include <commitmanager/SnapshotDescriptor.hpp>
 
 #include <crossbow/enum_underlying.hpp>
+#include <crossbow/logger.hpp>
 #include <crossbow/non_copyable.hpp>
 
 #include <cstdint>
+#include <cstdlib>
 
 namespace tell {
 namespace store {
@@ -79,8 +82,17 @@ public:
     using ScanProcessor = Scan::ScanProcessor;
     using GarbageCollector = Scan::GarbageCollector;
 
-    Table(PageManager& pageManager, const crossbow::string& tableName, const Schema& schema, uint64_t tableId,
-            VersionManager& versionManager, HashTable& hashMap);
+    static void* operator new(size_t size) {
+        LOG_ASSERT(size % alignof(Table) == 0u, "Size must be multiple of alignment");
+        return ::aligned_alloc(alignof(Table), size);
+    }
+
+    static void operator delete(void* ptr) {
+        ::free(ptr);
+    }
+
+    Table(MemoryReclaimer& memoryManager, PageManager& pageManager, const crossbow::string& tableName,
+            const Schema& schema, uint64_t tableId, VersionManager& versionManager, HashTable& hashMap);
 
     const crossbow::string& tableName() const {
         return mTableName;
@@ -178,6 +190,10 @@ private:
     int internalUpdate(uint64_t key, size_t size, const char* data, const commitmanager::SnapshotDescriptor& snapshot,
             bool deletion);
 
+    void releasePages(const std::vector<void*>& pages);
+
+    MemoryReclaimer& mMemoryManager;
+    PageManager& mPageManager;
     VersionManager& mVersionManager;
     HashTable& mHashMap;
 

@@ -26,6 +26,7 @@
 
 #include "../DummyCommitManager.hpp"
 
+#include <util/Allocator.hpp>
 #include <util/OpenAddressingHash.hpp>
 #include <util/PageManager.hpp>
 #include <util/VersionManager.hpp>
@@ -33,8 +34,6 @@
 #include <tellstore/Record.hpp>
 
 #include <commitmanager/SnapshotDescriptor.hpp>
-
-#include <crossbow/allocator.hpp>
 
 #include <gtest/gtest.h>
 
@@ -51,10 +50,10 @@ namespace {
 class TableTest : public ::testing::Test {
 protected:
     TableTest()
-            : mPageManager(PageManager::construct(4 * TELL_PAGE_SIZE)),
+            : mPageManager(4 * TELL_PAGE_SIZE),
               mHashMap(1024),
               mSchema(TableType::TRANSACTIONAL),
-              mTable(*mPageManager, "testTable", mSchema, 1, mVersionManager, mHashMap),
+              mTable(mMemoryManager, mPageManager, "testTable", mSchema, 1, mVersionManager, mHashMap),
               mTx(mCommitManager.startTx()),
               mField("Test Field") {
     }
@@ -86,8 +85,8 @@ protected:
         assertElement(key, tx, expected, tx.version(), expectedNewest);
     }
 
-    crossbow::allocator mAlloc;
-    PageManager::Ptr mPageManager;
+    MemoryReclaimer mMemoryManager;
+    PageManager mPageManager;
     VersionManager mVersionManager;
     Table::HashTable mHashMap;
     Schema mSchema;
