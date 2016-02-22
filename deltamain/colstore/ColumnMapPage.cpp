@@ -64,10 +64,11 @@ ColumnMapMainPage::ColumnMapMainPage(const ColumnMapContext& context, uint32_t _
 }
 
 ColumnMapPageModifier::ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager,
-        Modifier& mainTableModifier, uint64_t minVersion)
+        CuckooTable& mainTable, Modifier& mainTableModifier, uint64_t minVersion)
         : mContext(context),
           mRecord(mContext.record()),
           mPageManager(pageManager),
+          mMainTable(mainTable),
           mMainTableModifier(mainTableModifier),
           mMinVersion(minVersion),
           mUpdatePage(nullptr),
@@ -153,7 +154,7 @@ START:
                         continue;
                     }
 
-                    __attribute__((unused)) auto res = mMainTableModifier.remove(entries[baseIdx].key);
+                    __attribute__((unused)) auto res = mMainTable.remove(entries[baseIdx].key);
                     LOG_ASSERT(res, "Removing key from hash table did not succeed");
                 } else {
                     LOG_ASSERT(mFillIdx != mFillEndIdx, "Elements written without advancing the fill index");
@@ -162,7 +163,7 @@ START:
                     auto fillEntry = mFillPage->entryData() + mFillEndIdx;
                     mPointerActions.emplace_back(&entries[baseIdx].newest, newest, fillEntry);
 
-                    __attribute__((unused)) auto res = mMainTableModifier.insert(entries[baseIdx].key, fillEntry, true);
+                    __attribute__((unused)) auto res = mMainTable.update(entries[baseIdx].key, fillEntry);
                     LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
                     mUpdateEndIdx = mUpdateIdx;
@@ -253,13 +254,13 @@ START:
                 i = baseIdx;
                 continue;
             }
-            __attribute__((unused)) auto res = mMainTableModifier.remove(entries[baseIdx].key);
+            __attribute__((unused)) auto res = mMainTable.remove(entries[baseIdx].key);
             LOG_ASSERT(res, "Removing key from hash table did not succeed");
         } else {
             auto fillEntry = mFillPage->entryData() + mFillEndIdx;
             mPointerActions.emplace_back(&entries[baseIdx].newest, newest, fillEntry);
 
-            __attribute__((unused)) auto res = mMainTableModifier.insert(entries[baseIdx].key, fillEntry, true);
+            __attribute__((unused)) auto res = mMainTable.update(entries[baseIdx].key, fillEntry);
             LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
             // No updates and copy region starts at end from previous - simply extend copy region from main
@@ -365,7 +366,7 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
         auto fillEntry = mFillPage->entryData() + mFillEndIdx;
         mPointerActions.emplace_back(&oldRecord.value()->newest, oldRecord.newest(), fillEntry);
 
-        __attribute__((unused)) auto res = mMainTableModifier.insert(oldRecord.key(), fillEntry, false);
+        __attribute__((unused)) auto res = mMainTableModifier.insert(oldRecord.key(), fillEntry);
         LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
         mUpdateEndIdx = mUpdateIdx;

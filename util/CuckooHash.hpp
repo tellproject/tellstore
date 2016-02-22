@@ -48,7 +48,7 @@ class Modifier;
 */
 class CuckooTable {
 private:
-    using EntryT = std::pair<uint64_t, void*>;
+    using EntryT = std::pair<uint64_t, std::atomic<void*>>;
 
     static constexpr size_t ENTRIES_PER_PAGE = TELL_PAGE_SIZE / sizeof(EntryT);
     static_assert(isPowerOf2(ENTRIES_PER_PAGE), "Entries per page needs to be a power of two");
@@ -95,12 +95,20 @@ public:
         return const_cast<void*>(const_cast<const CuckooTable*>(this)->get(key));
     }
 
+    bool update(uint64_t key, void* value);
+
+    bool remove(uint64_t key);
+
     Modifier modifier(std::vector<void*>& obsoletePages);
 
     size_t capacity() const;
 
 private: // helper functions
     const EntryT& at(unsigned h, size_t idx) const;
+
+    EntryT& at(unsigned h, size_t idx) {
+        return const_cast<EntryT&>(const_cast<const CuckooTable*>(this)->at(h, idx));
+    }
 };
 
 class Modifier {
@@ -137,15 +145,13 @@ public:
     * inserts or replaces a value. Will return true iff the key
     * did exist before in the hash table
     */
-    bool insert(uint64_t key, void* value, bool replace = false);
+    bool insert(uint64_t key, void* value);
 
     const void* get(uint64_t key) const;
 
     void* get(uint64_t key) {
         return const_cast<void*>(const_cast<const Modifier*>(this)->get(key));
     }
-
-    bool remove(uint64_t key);
 
     EntryT& at(unsigned h, size_t idx, size_t& pageIdx);
     const EntryT& at(unsigned h, size_t idx, size_t& pageIdx) const;

@@ -227,7 +227,7 @@ void Table<Context>::runGC(uint64_t minVersion) {
     auto oldMainTable = mMainTable.load();
     auto mainTableModifier = oldMainTable->modifier(obsoletePages);
 
-    PageModifier pageListModifier(mContext, mPageManager, mainTableModifier, minVersion);
+    PageModifier pageListModifier(mContext, mPageManager, *oldMainTable, mainTableModifier, minVersion);
 
     auto pageList = new PageList();
     pageList->updateEnd = mUpdateLog.sealedEnd();

@@ -63,7 +63,7 @@ TEST_F(CuckooTest, SimpleInsert) {
     uint64_t key = 1937;
     std::unique_ptr<int> value(new int(8713));
     auto modifier = currTable.modifier(obsoletePages);
-    ASSERT_TRUE(modifier.insert(key, value.get(), false)) << "Insertion of inexistent value not succeeded";
+    ASSERT_TRUE(modifier.insert(key, value.get())) << "Insertion of inexistent value not succeeded";
     auto oldTable = table;
     table = modifier.done();
     ASSERT_NE(table, nullptr) << "Modifier done returned nullptr";
@@ -97,7 +97,7 @@ protected:
         std::vector<void*> obsoletePages;
         auto m = table->modifier(obsoletePages);
         for (auto e : entries) {
-            m.insert(e, &value, false);
+            m.insert(e, &value);
         }
         auto old = table;
         table = m.done();
@@ -120,7 +120,7 @@ TEST_F(CuckooTestFilled, DoesNotReplace) {
     std::unique_ptr<int> value(new int(8713));
     Modifier m = table->modifier(obsoletePages);
     for (auto e : entries) {
-        ASSERT_FALSE(m.insert(e, value.get(), false)) << "Replaced value for " << e;
+        ASSERT_FALSE(m.insert(e, value.get())) << "Replaced value for " << e;
     }
     ASSERT_TRUE(obsoletePages.empty());
 }
@@ -140,7 +140,7 @@ TEST_F(CuckooTestFilled, TestResize) {
             --i;
             continue;
         }
-        ASSERT_TRUE(m.insert(nVal, &oVal, false));
+        ASSERT_TRUE(m.insert(nVal, &oVal));
     }
     ASSERT_NE(oldCapacity, m.capacity());
     auto oldTable = table;

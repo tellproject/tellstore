@@ -36,6 +36,7 @@
 namespace tell {
 namespace store {
 
+class CuckooTable;
 class Modifier;
 class PageManager;
 
@@ -139,9 +140,10 @@ private:
 
 class RowStorePageModifier {
 public:
-    RowStorePageModifier(const RowStoreContext& /* context */, PageManager& pageManager, Modifier& mainTableModifier,
-            uint64_t minVersion)
+    RowStorePageModifier(const RowStoreContext& /* context */, PageManager& pageManager, CuckooTable& mainTable,
+            Modifier& mainTableModifier, uint64_t minVersion)
             : mPageManager(pageManager),
+              mMainTable(mainTable),
               mMainTableModifier(mainTableModifier),
               mMinVersion(minVersion),
               mFillPage(nullptr) {
@@ -165,6 +167,7 @@ private:
 
     PageManager& mPageManager;
 
+    CuckooTable& mMainTable;
     Modifier& mMainTableModifier;
 
     uint64_t mMinVersion;

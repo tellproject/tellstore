@@ -34,6 +34,7 @@
 namespace tell {
 namespace store {
 
+class CuckooTable;
 class Modifier;
 class PageManager;
 class Record;
@@ -228,8 +229,8 @@ struct alignas(8) ColumnMapMainPage {
  */
 class ColumnMapPageModifier {
 public:
-    ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager, Modifier& mainTableModifier,
-            uint64_t minVersion);
+    ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager, CuckooTable& mainTable,
+            Modifier& mainTableModifier, uint64_t minVersion);
 
     ~ColumnMapPageModifier();
 
@@ -369,6 +370,7 @@ private:
 
     PageManager& mPageManager;
 
+    CuckooTable& mMainTable;
     Modifier& mMainTableModifier;
 
     uint64_t mMinVersion;

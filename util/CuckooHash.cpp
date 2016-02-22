@@ -66,6 +66,36 @@ const void* CuckooTable::get(uint64_t key) const {
     return nullptr;
 }
 
+bool CuckooTable::update(uint64_t key, void* value) {
+    LOG_ASSERT(value != nullptr, "Value must not be null");
+    auto cnt = 0u;
+    for (auto& hasher : {hash1, hash2, hash3}) {
+        auto idx = hasher(key);
+        auto& entry = at(cnt, idx);
+        if (entry.first == key && entry.second != nullptr) {
+            entry.second = value;
+            return true;
+        }
+        ++cnt;
+    }
+    return false;
+}
+
+bool CuckooTable::remove(uint64_t key) {
+    auto cnt = 0u;
+    for (auto& hasher : {hash1, hash2, hash3}) {
+        auto idx = hasher(key);
+        auto& entry = at(cnt, idx);
+        if (entry.first == key && entry.second != nullptr) {
+            entry.second = nullptr;
+            --mSize;
+            return true;
+        }
+        ++cnt;
+    }
+    return false;
+}
+
 Modifier CuckooTable::modifier(std::vector<void*>& obsoletePages) {
     return Modifier(*this, obsoletePages);
 }
@@ -102,46 +132,36 @@ const void* Modifier::get(uint64_t key) const
         auto& entry = at(cnt, idx, pageIdx);
         if (entry.first == key) {
             return entry.second;
-            break;
         }
         ++cnt;
     }
     return nullptr;
 }
 
-bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
+bool Modifier::insert(uint64_t key, void* value) {
     LOG_ASSERT(value != nullptr, "Value must not be null");
 
     // we first check, whether the value exists
-    bool res = false;
-    bool increment = true;
-    unsigned cnt = 0;
+    auto cnt = 0u;
     for (auto& h : {hash1, hash2, hash3}) {
         size_t pageIdx;
         auto idx = h(key);
         auto& entry = at(cnt, idx, pageIdx);
-        if (entry.first == key && entry.second != nullptr) {
-            if (replace) {
-                auto e = &entry;
-                if (cow(cnt, pageIdx)) {
-                    e = &at(cnt, idx, pageIdx);
-                }
-                e->second = value;
-                increment = false;
-                res = true;
+        if (entry.first == key) {
+            if (entry.second != nullptr) {
+                return false;
             }
-            goto END;
+            entry.second = value;
+            return true;
         }
         ++cnt;
     }
-    if (replace) {
-        goto END;
-    }
+
     // actual insert comes here
     while (true) {
         // we retry 20 times at the moment
-        for (int i = 0; i < 20; ++i) {
-            cnt = 0;
+        for (auto i = 0; i < 20; ++i) {
+            cnt = 0u;
             for (auto& h : {hash1, hash2, hash3}) {
                 size_t pageIdx;
                 auto idx = h(key);
@@ -153,46 +173,25 @@ bool Modifier::insert(uint64_t key, void* value, bool replace /*= false*/) {
                     }
                     e->first = key;
                     e->second = value;
-                    res = true;
-                    goto END;
-                } else {
-                    assert(e->first != key);
-                    if (cow(cnt, pageIdx)) {
-                        e = &at(cnt, idx, pageIdx);
-                    }
-                    std::pair<uint64_t, void*> p = *e;
-                    e->first = key;
-                    e->second = value;
-                    key = p.first;
-                    value = p.second;
+                    ++mSize;
+                    return true;
                 }
+
+                assert(e->first != key);
+                if (cow(cnt, pageIdx)) {
+                    e = &at(cnt, idx, pageIdx);
+                }
+                EntryT p;
+                p.first = e->first;
+                p.second = e->second.load();
+                e->first = key;
+                e->second = value;
+                key = p.first;
+                value = p.second;
                 ++cnt;
             }
         }
         rehash();
-    }
-END:
-    if (res && increment)
-        ++mSize;
-    return res;
-}
-
-bool Modifier::remove(uint64_t key) {
-    size_t pIdx;
-    unsigned cnt = 0;
-    for (auto& hash : {hash1, hash2, hash3}) {
-        auto idx = hash(key);
-        auto& entry = at(cnt, idx, pIdx);
-        auto e = &entry;
-        if (e->first == key && e->second != nullptr) {
-            if (cow(cnt, pIdx)) {
-                e = &at(cnt, idx, pIdx);
-            }
-            e->second = nullptr;
-            --mSize;
-            return true;
-        }
-        ++cnt;
     }
     return false;
 }

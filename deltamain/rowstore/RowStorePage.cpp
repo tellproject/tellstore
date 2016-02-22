@@ -94,7 +94,7 @@ bool RowStorePageModifier::clean(RowStoreMainPage* page) {
             });
         } else {
             if (!collectElements(oldRecord)) {
-                __attribute__((unused)) auto res = mMainTableModifier.remove(oldRecord.key());
+                __attribute__((unused)) auto res = mMainTable.remove(oldRecord.key());
                 LOG_ASSERT(res, "Removing key from hash table did not succeed");
                 continue;
             }
@@ -175,7 +175,9 @@ template <typename Rec>
 void RowStorePageModifier::recycleEntry(Rec& oldRecord, RowStoreMainEntry* newRecord, bool replace) {
     LOG_ASSERT(newRecord != nullptr, "Can not recycle an old record to null");
 
-    __attribute__((unused)) auto res = mMainTableModifier.insert(oldRecord.key(), newRecord, replace);
+    __attribute__((unused)) auto res = replace
+            ? mMainTable.update(oldRecord.key(), newRecord)
+            : mMainTableModifier.insert(oldRecord.key(), newRecord);
     LOG_ASSERT(res, "Inserting key into hash table did not succeed");
 
     while (!oldRecord.tryUpdate(reinterpret_cast<uintptr_t>(newRecord)
