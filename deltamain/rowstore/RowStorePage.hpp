@@ -151,9 +151,7 @@ public:
 
     bool append(InsertRecord& oldRecord);
 
-    std::vector<RowStoreMainPage*> done() {
-        return std::move(mPageList);
-    }
+    std::vector<RowStoreMainPage*> done();
 
 private:
     template <typename Rec>

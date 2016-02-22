@@ -70,26 +70,22 @@ ColumnMapPageModifier::ColumnMapPageModifier(const ColumnMapContext& context, Pa
           mPageManager(pageManager),
           mMainTableModifier(mainTableModifier),
           mMinVersion(minVersion),
+          mUpdatePage(nullptr),
           mUpdateStartIdx(0u),
           mUpdateEndIdx(0u),
           mUpdateIdx(0u),
+          mUpdateDirty(false),
+          mFillPage(nullptr),
+          mFillHeap(nullptr),
           mFillEndIdx(0u),
           mFillIdx(0u),
-          mFillSize(0u) {
-    auto page = mPageManager.alloc();
-    if (!page) {
-        LOG_ERROR("PageManager ran out of space");
-        std::terminate();
-    }
-    mUpdatePage = new (page) ColumnMapMainPage(mContext, mContext.staticCapacity());
+          mFillSize(0u),
+          mFillDirty(false) {
+}
 
-    page = mPageManager.alloc();
-    if (!page) {
-        LOG_ERROR("PageManager ran out of space");
-        std::terminate();
-    }
-    mFillPage = new (page) ColumnMapMainPage();
-    mFillHeap = mFillPage->heapData();
+ColumnMapPageModifier::~ColumnMapPageModifier() {
+    releasePage(mFillPage, mFillDirty);
+    releasePage(mUpdatePage, mUpdateDirty);
 }
 
 bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
@@ -97,6 +93,8 @@ bool ColumnMapPageModifier::clean(ColumnMapMainPage* page) {
         mPageList.emplace_back(page);
         return false;
     }
+
+    lazyInitializePages();
 
     auto entries = page->entryData();
     auto sizes = page->sizeData();
@@ -233,6 +231,8 @@ START:
 
             new (mFillPage->entryData() + mFillIdx) ColumnMapMainEntry(entries[baseIdx].key, entries[i].version);
             ++mFillIdx;
+            mFillDirty = true;
+
             ++copyEndIdx;
 
             // Check if the element is already the oldest readable element
@@ -306,6 +306,8 @@ START:
 }
 
 bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
+    lazyInitializePages();
+
     while (true) {
         LOG_ASSERT(mFillIdx == mFillEndIdx, "Current fill index must be at the end index");
         LOG_ASSERT(mUpdateIdx == mUpdateEndIdx, "Current update index must be at the end index");
@@ -374,13 +376,12 @@ bool ColumnMapPageModifier::append(InsertRecord& oldRecord) {
 
 std::vector<ColumnMapMainPage*> ColumnMapPageModifier::done() {
     if (mFillEndIdx != 0u) {
-        flushFillPage();
-    } else {
-        mPageManager.free(mFillPage);
+        flush();
     }
-    mPageManager.free(mUpdatePage);
 
-    return std::move(mPageList);
+    std::vector<ColumnMapMainPage*> pageList;
+    mPageList.swap(pageList);
+    return std::move(pageList);
 }
 
 bool ColumnMapPageModifier::needsCleaning(const ColumnMapMainPage* page) {
@@ -515,7 +516,9 @@ void ColumnMapPageModifier::writeUpdate(const UpdateLogEntry* entry) {
     }
 
     ++mFillIdx;
+    mFillDirty = true;
     ++mUpdateIdx;
+    mUpdateDirty = true;
 }
 
 void ColumnMapPageModifier::writeInsert(const InsertLogEntry* entry) {
@@ -527,7 +530,9 @@ void ColumnMapPageModifier::writeInsert(const InsertLogEntry* entry) {
     writeData(entry->data(), logEntry->size() - sizeof(InsertLogEntry));
 
     ++mFillIdx;
+    mFillDirty = true;
     ++mUpdateIdx;
+    mUpdateDirty = true;
 }
 
 void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
@@ -587,30 +592,9 @@ void ColumnMapPageModifier::writeData(const char* data, uint32_t size) {
 }
 
 void ColumnMapPageModifier::flush() {
-    flushFillPage();
-
-    if (mUpdateIdx != 0u) {
-        memset(mUpdatePage, 0, TELL_PAGE_SIZE);
-        new (mUpdatePage) ColumnMapMainPage(mContext, mContext.staticCapacity());
-        mUpdateStartIdx = 0u;
-        mUpdateEndIdx = 0u;
-        mUpdateIdx = 0u;
-    }
-
-    auto page = mPageManager.alloc();
-    if (!page) {
-        LOG_ERROR("PageManager ran out of space");
-        std::terminate();
-    }
-    mFillPage = new (page) ColumnMapMainPage();
-    mFillHeap = mFillPage->heapData();
-    mFillEndIdx = 0u;
-    mFillIdx = 0u;
-    mFillSize = 0u;
-}
-
-void ColumnMapPageModifier::flushFillPage() {
+    LOG_ASSERT(mFillPage, "Fill page must not be null");
     LOG_ASSERT(mFillEndIdx > 0, "Trying to flush empty page");
+    LOG_ASSERT(mFillDirty, "Fill page must be dirty when modified");
 
     // Enqueue any pending update actions
     if (mUpdateStartIdx != mUpdateEndIdx) {
@@ -704,6 +688,70 @@ void ColumnMapPageModifier::flushFillPage() {
         }
     }
     mPointerActions.clear();
+
+    // Clean pages
+    if (mUpdateDirty) {
+        LOG_ASSERT(mUpdatePage, "Update page must not be null");
+        memset(mUpdatePage, 0, TELL_PAGE_SIZE);
+        new (mUpdatePage) ColumnMapMainPage(mContext, mContext.staticCapacity());
+        mUpdateStartIdx = 0u;
+        mUpdateEndIdx = 0u;
+        mUpdateIdx = 0u;
+        mUpdateDirty = false;
+    }
+
+    auto page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mFillPage = new (page) ColumnMapMainPage();
+    mFillHeap = mFillPage->heapData();
+    mFillEndIdx = 0u;
+    mFillIdx = 0u;
+    mFillSize = 0u;
+    mFillDirty = false;
+}
+
+void ColumnMapPageModifier::lazyInitializePages() {
+    if (mUpdatePage) {
+        LOG_ASSERT(mFillPage, "Fill page must not be null");
+        return;
+    }
+
+    auto page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mUpdatePage = new (page) ColumnMapMainPage(mContext, mContext.staticCapacity());
+
+    page = mPageManager.alloc();
+    if (!page) {
+        LOG_ERROR("PageManager ran out of space");
+        std::terminate();
+    }
+    mFillPage = new (page) ColumnMapMainPage();
+    mFillHeap = mFillPage->heapData();
+}
+
+void ColumnMapPageModifier::releasePage(ColumnMapMainPage* page, bool dirty) {
+    if (page == nullptr) {
+        return;
+    }
+
+    if (dirty) {
+        mPageManager.free(page);
+    } else {
+        // Clear the sentinel ColumnMapHeapEntry
+        if (mRecord.varSizeFieldCount() != 0) {
+            auto variableData = page->variableData();
+            --variableData;
+            memset(variableData, 0u, sizeof(ColumnMapHeapEntry));
+        }
+        memset(page, 0u, sizeof(ColumnMapMainPage));
+        mPageManager.freeEmpty(page);
+    }
 }
 
 } // namespace deltamain

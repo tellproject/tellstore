@@ -127,6 +127,14 @@ bool RowStorePageModifier::append(InsertRecord& oldRecord) {
     return true;
 }
 
+std::vector<RowStoreMainPage*> RowStorePageModifier::done() {
+    mFillPage = nullptr;
+
+    std::vector<RowStoreMainPage*> pageList;
+    mPageList.swap(pageList);
+    return std::move(pageList);
+}
+
 template <typename Rec>
 bool RowStorePageModifier::collectElements(Rec& rec) {
     while (true) {
@@ -178,18 +186,10 @@ void RowStorePageModifier::recycleEntry(Rec& oldRecord, RowStoreMainEntry* newRe
 
 template <typename Fun>
 RowStoreMainEntry* RowStorePageModifier::internalAppend(Fun fun) {
-    if (!mFillPage) {
-        auto page = mPageManager.alloc();
-        if (!page) {
-            LOG_ERROR("PageManager ran out of space");
-            std::terminate();
+    if (mFillPage) {
+        if (auto newRecord = fun()) {
+            return newRecord;
         }
-        mFillPage = new (page) RowStoreMainPage();
-        mPageList.emplace_back(mFillPage);
-    }
-
-    if (auto newRecord = fun()) {
-        return newRecord;
     }
 
     auto page = mPageManager.alloc();
@@ -200,12 +200,9 @@ RowStoreMainEntry* RowStorePageModifier::internalAppend(Fun fun) {
     mFillPage = new (page) RowStoreMainPage();
     mPageList.emplace_back(mFillPage);
 
-    if (auto newRecord = fun()) {
-        return newRecord;
-    }
-
-    LOG_ASSERT(false, "Insert on new allocated page failed");
-    return nullptr;
+    auto newRecord = fun();
+    LOG_ASSERT(newRecord != nullptr, "Insert on new allocated page failed");
+    return newRecord;
 }
 
 } // namespace deltamain

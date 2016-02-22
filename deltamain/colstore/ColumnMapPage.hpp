@@ -231,6 +231,8 @@ public:
     ColumnMapPageModifier(const ColumnMapContext& context, PageManager& pageManager, Modifier& mainTableModifier,
             uint64_t minVersion);
 
+    ~ColumnMapPageModifier();
+
     /**
      * @brief Rewrite and clean the page from garbage
      *
@@ -344,17 +346,22 @@ private:
 
     /**
      * @brief Flush the current fill page and allocate a new fill page
-     */
-    void flush();
-
-    /**
-     * @brief Flush the current fill page
      *
      * Writes back all data from the enqueued cleaning actions into the fill page, performs the correction on the
      * offsets into the variable sized field and changes the pointers from the old record to point to the newly written
      * elements.
      */
-    void flushFillPage();
+    void flush();
+
+    /**
+     * @brief Acquires the fill and update page
+     */
+    void lazyInitializePages();
+
+    /**
+     * @brief Zeroes out an empty page so that it can get released as clean to the page manager.
+     */
+    void releasePage(ColumnMapMainPage* page, bool dirty);
 
     const ColumnMapContext& mContext;
 
@@ -384,6 +391,9 @@ private:
     /// Current index into the update page
     uint32_t mUpdateIdx;
 
+    /// Whether the update page is dirty
+    bool mUpdateDirty;
+
     /// Current fill page
     ColumnMapMainPage* mFillPage;
 
@@ -398,6 +408,9 @@ private:
 
     /// Current amount of data to be written
     uint32_t mFillSize;
+
+    /// Whether the fill page is dirty
+    bool mFillDirty;
 };
 
 } // namespace deltamain
