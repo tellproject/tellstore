@@ -39,12 +39,12 @@ Table<Context>::Table(MemoryReclaimer& memoryManager, PageManager& pageManager, 
     , mTableName(name)
     , mRecord(std::move(schema))
     , mTableId(idx)
-    , mInsertTable(insertTableCapacity)
+    , mContext(mPageManager, mRecord)
     , mInsertLog(pageManager)
     , mUpdateLog(pageManager)
+    , mInsertTable(insertTableCapacity)
     , mMainTable(new CuckooTable(pageManager))
     , mPages(new PageList(mInsertLog.begin(), mUpdateLog.begin()))
-    , mContext(mPageManager, mRecord)
 {}
 
 template <typename Context>

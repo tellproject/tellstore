@@ -180,13 +180,15 @@ private:
     Record mRecord;
     uint64_t mTableId;
 
-    DynamicInsertTable mInsertTable;
-    Log<OrderedLogImpl> mInsertLog;
-    Log<OrderedLogImpl> mUpdateLog;
+    Context mContext;
+
+    alignas(64) Log<OrderedLogImpl> mInsertLog;
+    alignas(64) Log<OrderedLogImpl> mUpdateLog;
+
+    alignas(64) DynamicInsertTable mInsertTable;
     std::atomic<CuckooTable*> mMainTable;
     std::atomic<PageList*> mPages;
 
-    Context mContext;
 };
 
 template <typename Context>
