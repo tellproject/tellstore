@@ -34,7 +34,7 @@
 namespace tell {
 namespace store {
 
-class ScanAST;
+struct ScanAST;
 
 /**
  * @brief Helper class creating the row store scan function
