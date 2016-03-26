@@ -190,41 +190,52 @@ public:
     int get(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot, Fun fun)
     {
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->get(key, snapshot, std::move(fun));
+        return executeTable(tableId, [key, &snapshot, &fun] (Table* table) {
+            return table->get(key, snapshot, fun);
+        });
     }
 
     int update(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot)
     {
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->update(key, size, data, snapshot);
+        return executeTable(tableId, [key, size, data, &snapshot] (Table* table) {
+            return table->update(key, size, data, snapshot);
+        });
     }
-
 
     int insert(uint64_t tableId, uint64_t key, size_t size, const char* data,
             const commitmanager::SnapshotDescriptor& snapshot)
     {
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->insert(key, size, data, snapshot);
+        return executeTable(tableId, [key, size, data, &snapshot] (Table* table) {
+            return table->insert(key, size, data, snapshot);
+        });
     }
 
     int remove(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->remove(key, snapshot);
+        return executeTable(tableId, [key, &snapshot] (Table* table) {
+            return table->remove(key, snapshot);
+        });
     }
 
     int revert(uint64_t tableId, uint64_t key, const commitmanager::SnapshotDescriptor& snapshot)
     {
         mVersionManager.addSnapshot(snapshot);
-        return lookupTable(tableId)->revert(key, snapshot);
+        return executeTable(tableId, [key, &snapshot] (Table* table) {
+            return table->revert(key, snapshot);
+        });
     }
 
     int scan(uint64_t tableId, ScanQuery* query) {
         if (query && query->snapshot()) {
             mVersionManager.addSnapshot(*query->snapshot());
         }
-        return mScanManager.scan(tableId, lookupTable(tableId), query);
+        return executeTable(tableId, [this, tableId, query] (Table* table) {
+            return mScanManager.scan(tableId, table, query);
+        });
     }
 
     void forceGC() {
@@ -241,6 +252,15 @@ private:
 
     Table* lookupTable(uint64_t tableId) {
         return const_cast<Table*>(const_cast<const TableManager*>(this)->lookupTable(tableId));
+    }
+
+    template <typename Fun>
+    int executeTable(uint64_t tableId, Fun fun) {
+        auto table = lookupTable(tableId);
+        if (!table) {
+            return error::invalid_table;
+        }
+        return fun(table);
     }
 };
 

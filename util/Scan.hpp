@@ -230,8 +230,8 @@ bool ScanManager<Storage>::masterThread() {
         std::vector<ScanQuery*> queries;
         std::tie(table, queries) = std::move(q.second);
 
-        auto startTime = std::chrono::steady_clock::now();
-        auto queryCount = queries.size();
+        //auto startTime = std::chrono::steady_clock::now();
+        //auto queryCount = queries.size();
         typename Table::Scan scan(table, std::move(queries));
 
         if (!mSlaves.empty()) {
@@ -244,7 +244,7 @@ bool ScanManager<Storage>::masterThread() {
             auto& slave = mSlaves.front();
             while (slave->isBusy()) std::this_thread::yield();
         }
-        auto prepareTime = std::chrono::steady_clock::now();
+        //auto prepareTime = std::chrono::steady_clock::now();
 
         MemoryConsumerLock memoryLock(mMemoryConsumer.get());
 
@@ -263,15 +263,15 @@ bool ScanManager<Storage>::masterThread() {
             // the master can delete the processors savely (which will be done as soon as the scope is left).
             while (slave->isBusy()) std::this_thread::yield();
         }
-        auto endTime = std::chrono::steady_clock::now();
+        //auto endTime = std::chrono::steady_clock::now();
 
         memoryLock.release();
 
-        auto prepareDuration = std::chrono::duration_cast<std::chrono::milliseconds>(prepareTime - startTime);
-        auto processDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - prepareTime);
-        auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-        LOG_INFO("Scan took %1%ms for %2% queries [prepare = %3%, process = %4%]",
-                 totalDuration.count(), queryCount, prepareDuration.count(), processDuration.count());
+        //auto prepareDuration = std::chrono::duration_cast<std::chrono::milliseconds>(prepareTime - startTime);
+        //auto processDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - prepareTime);
+        //auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+        //LOG_INFO("Scan took %1%ms for %2% queries [prepare = %3%, process = %4%]",
+        //         totalDuration.count(), queryCount, prepareDuration.count(), processDuration.count());
     }
     return true;
 }

@@ -360,6 +360,14 @@ public:
         return mFixedSizeFields.size() + mVarSizeFields.size();
     }
 
+    const Field& operator[] (id_t idx) const {
+        if (idx < mFixedSizeFields.size()) {
+            return mFixedSizeFields[idx];
+        } else {
+            return mVarSizeFields[idx - mFixedSizeFields.size()];
+        }
+    }
+
     id_t idOf(const crossbow::string& name) const {
         id_t res = 0;
         for (const auto& field : mFixedSizeFields) {
