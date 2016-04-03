@@ -33,6 +33,8 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include <tbb/cache_aligned_allocator.h>
+
 #include <boost/functional/hash.hpp>
 
 #include <cstdint>
@@ -314,7 +316,7 @@ protected:
 
     const Record& mRecord;
 
-    std::vector<ScanQueryProcessor> mQueries;
+    std::vector<ScanQueryProcessor, tbb::cache_aligned_allocator<ScanQueryProcessor>> mQueries;
 
     LLVMRowScanBase::RowScanFun mRowScanFun;
 
@@ -322,7 +324,7 @@ protected:
 
     uint32_t mNumConjuncts;
 
-    std::vector<char> mResult;
+    std::vector<char, tbb::cache_aligned_allocator<char>> mResult;
 };
 
 } // namespace store

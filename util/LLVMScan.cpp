@@ -330,7 +330,8 @@ LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const s
         : mRecord(record),
           mRowScanFun(rowScanFunc),
           mRowMaterializeFuns(rowMaterializeFuns),
-          mNumConjuncts(numConjuncts) {
+          mNumConjuncts(numConjuncts),
+          mResult(mNumConjuncts, 0u) {
     LOG_ASSERT(mNumConjuncts >= queries.size(), "More queries than conjuncts");
 
     mQueries.reserve(queries.size());
@@ -341,9 +342,8 @@ LLVMRowScanProcessorBase::LLVMRowScanProcessorBase(const Record& record, const s
 
 void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom, uint64_t validTo, const char* data,
         uint32_t length) {
-    if (mResult.size() < mNumConjuncts) {
-        mResult.resize(mNumConjuncts, 0u);
-    }
+    LOG_ASSERT(mResult.size() >= mNumConjuncts, "Result array must be larger or equal than number of conjuncts");
+
     mRowScanFun(key, validFrom, validTo, data, &mResult.front());
 
     for (decltype(mQueries.size()) i = 0; i < mQueries.size(); ++i) {
@@ -352,8 +352,9 @@ void LLVMRowScanProcessorBase::processRowRecord(uint64_t key, uint64_t validFrom
             continue;
         }
 
-        mQueries[i].writeRecord(key, length, validFrom, validTo, [this, i, data, length] (char* dest) {
-            return mRowMaterializeFuns[i](data, length, dest);
+        auto fun = mRowMaterializeFuns[i];
+        mQueries[i].writeRecord(key, length, validFrom, validTo, [fun, data, length] (char* dest) {
+            return fun(data, length, dest);
         });
     }
 }
