@@ -31,7 +31,6 @@
 #include <crossbow/enum_underlying.hpp>
 #include <crossbow/infinio/InfinibandBuffer.hpp>
 #include <crossbow/logger.hpp>
-#include <boost/format.hpp>
 
 namespace tell {
 namespace store {
@@ -46,13 +45,6 @@ void ServerSocket::writeScanProgress(uint16_t scanId, bool done, size_t offset) 
     });
 }
 
-namespace {
-
-std::atomic<unsigned> requests(0);
-std::chrono::steady_clock::time_point lastMeasurement = std::chrono::steady_clock::now();
-
-}
-
 void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t messageType,
         crossbow::buffer_reader& request) {
 #ifdef NDEBUG
@@ -60,18 +52,6 @@ void ServerSocket::onRequest(crossbow::infinio::MessageId messageId, uint32_t me
     LOG_TRACE("MID %1%] Handling request of type %2%", messageId.userId(), messageType);
     auto startTime = std::chrono::steady_clock::now();
 #endif
-    {
-        auto reqs = requests.fetch_add(1) + 1;
-        auto n = std::chrono::steady_clock::now();
-        auto l = lastMeasurement;
-        if (n > l
-                && std::chrono::duration_cast<std::chrono::seconds>(n - l).count() >= 60
-                && requests.compare_exchange_strong(reqs, 0))
-        {
-            lastMeasurement = n;
-            std::cout << boost::format("%1% requests") % reqs  << std::endl;
-        }
-    }
 
     switch (messageType) {
 
