@@ -29,7 +29,7 @@ namespace tell {
 namespace store {
 namespace {
 
-const uint16_t gMaxTupleCount = 250;
+const uint16_t gMaxTupleCount = 4u * 1024u;
 
 Record buildScanRecord(ScanQueryType queryType, const char* queryData, const char* queryDataEnd, const Record& record) {
     switch (queryType) {
