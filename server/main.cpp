@@ -92,6 +92,7 @@ int main(int argc, const char** argv) {
     LOG_INFO("Initialize network server");
     crossbow::infinio::InfinibandService service(infinibandLimits);
     tell::store::ServerManager server(service, storage, serverConfig);
+    LOG_INFO("Storage ready");
     service.run();
 
     LOG_INFO("Exiting TellStore server");
